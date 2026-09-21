@@ -1,10 +1,12 @@
 package emat;
 
+import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.evolution.tree.Node;
 import beast.base.spec.evolution.likelihood.TreeLikelihood;
 
+@Description("Implements the genetic prior for EMATs. Missations and site-rate variation is not yet supported.")
 public class MutationStateTreeLikelihood extends TreeLikelihood {
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "", Input.Validate.REQUIRED);
@@ -21,7 +23,7 @@ public class MutationStateTreeLikelihood extends TreeLikelihood {
     }
 
     @Override
-    protected void calcLogP() {
+    public double calculateLogP() {
         double logP = 0.0;
 
         // add root contributions
@@ -45,9 +47,8 @@ public class MutationStateTreeLikelihood extends TreeLikelihood {
             logP += branchLogP;
         }
 
-        // add mutation contributions
-
-        this.logP = logP;
+        this.logP = logP
+        return logP;
     }
 
     /**

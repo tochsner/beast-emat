@@ -19,12 +19,12 @@ public class Mutations extends StateNode {
     TreeInterface tree;
     Alignment alignment;
 
+    int numStates;
+    int numNodes;
+
     private List<Mutation>[] mutationsAboveNode;
     private double[][] timeSpentPerState;
     private int[][][] numberOfMutations;
-
-    int numStates;
-    int numNodes;
 
     @Override
     public void initAndValidate() {
@@ -41,8 +41,8 @@ public class Mutations extends StateNode {
             this.mutationsAboveNode[i] = new ArrayList<>();
         }
 
-        this.timeSpentPerState = new double[numNodes][numStates];
-        this.numberOfMutations = new int[numNodes][numStates][numStates];
+        this.timeSpentPerState = new double[this.numNodes][this.numStates];
+        this.numberOfMutations = new int[this.numNodes][this.numStates][this.numStates];
     }
 
     /* State Management */
@@ -57,7 +57,7 @@ public class Mutations extends StateNode {
 
         Arrays.fill(this.timeSpentPerState[nodeNr], 0.0);
 
-        for (int otherNodeNr = 0; otherNodeNr < numNodes; otherNodeNr++) {
+        for (int otherNodeNr = 0; otherNodeNr < this.numStates; otherNodeNr++) {
             Arrays.fill(this.numberOfMutations[nodeNr][otherNodeNr], 0);
         }
 
@@ -87,20 +87,23 @@ public class Mutations extends StateNode {
         }
 
         Node node = this.tree.getNode(nodeNr);
-        Node parent = node.getParent();
 
-        double start = node.getHeight();
-        double end = parent.getHeight();
-
-        // check that the first mutation is correct
-
-        if (mutations.getFirst().timeOfPreviousMutation() != node.getHeight()) {
-            throw new RuntimeException("First mutation on branch does not have the correct timeOfPreviousMutation");
+        if (node.isRoot()) {
+            throw new RuntimeException("There is no branch above the root node that could carry mutations.");
         }
 
-        // check that all times are on the branch
+        double start = node.getHeight();
+        double end = node.getParent().getHeight();
+
+        // check that every mutation belongs to this branch and lies on it
 
         for (Mutation mutation : mutations) {
+            if (mutation.nodeNr() != nodeNr) {
+                throw new RuntimeException("Mutation is annotated with a different branch.");
+            }
+            if (mutation.oldState() == mutation.newState()) {
+                throw new RuntimeException("Mutation does not change the state of its site.");
+            }
             if (mutation.timeOfPreviousMutation() < start) {
                 throw new RuntimeException("timeOfPreviousMutation is earlier than the branch.");
             }
@@ -113,16 +116,32 @@ public class Mutations extends StateNode {
             if (end < mutation.time()) {
                 throw new RuntimeException("time is later than the branch.");
             }
+            if (mutation.time() < mutation.timeOfPreviousMutation()) {
+                throw new RuntimeException("Mutation happens before the previous mutation at its site.");
+            }
         }
 
-        // check that consecutive mutations match
+        // check that the mutations are sorted by ascending time
+
+        for (int i = 1; i < mutations.size(); i++) {
+            if (mutations.get(i).time() < mutations.get(i - 1).time()) {
+                throw new RuntimeException("Mutations are not sorted by ascending time.");
+            }
+        }
+
+        // check that consecutive mutations at the same site match
 
         Map<Integer, Mutation> lastMutationAtSite = new HashMap<>();
         for (Mutation mutation : mutations) {
-            Mutation lastMutation = lastMutationAtSite.get(mutation.site());
-            lastMutationAtSite.put(mutation.site(), mutation);
+            Mutation lastMutation = lastMutationAtSite.put(mutation.site(), mutation);
 
-            if (lastMutation == null) continue;
+            if (lastMutation == null) {
+                // the first mutation at a site has no predecessor, so it starts at the branch start
+                if (mutation.timeOfPreviousMutation() != start) {
+                    throw new RuntimeException("First mutation at a site does not start at the beginning of the branch.");
+                }
+                continue;
+            }
 
             // check that the state is consistent
 
