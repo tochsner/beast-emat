@@ -1,4 +1,4 @@
-package my.beast.example;
+package emat;
 
 import beast.base.spec.domain.PositiveReal;
 import beast.base.spec.domain.Real;
