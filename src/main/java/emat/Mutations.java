@@ -5,6 +5,7 @@ import beast.base.core.Input;
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
+import beast.base.inference.Operator;
 import beast.base.inference.StateNode;
 
 import java.io.PrintStream;
@@ -24,8 +25,7 @@ public class Mutations extends StateNode {
     int numSites;
 
     private List<Mutation>[] mutationsAboveNode;
-
-    private int[][] stateOccurrences;
+    private List<Mutation>[] storedMutationsAboveNode;
 
     @Override
     public void initAndValidate() {
@@ -40,66 +40,26 @@ public class Mutations extends StateNode {
 
         this.mutationsAboveNode = new List[this.numNodes];
         for (int i = 0; i < this.numNodes; i++) {
-            this.mutationsAboveNode[i] = new ArrayList<>();
+            this.mutationsAboveNode[i] = List.of();
         }
 
-        this.stateOccurrences = new int[this.numNodes][this.numStates];
+        this.storedMutationsAboveNode = new List[this.numNodes];
+        this.store();
     }
 
     /* State Management */
 
     /**
-     * Recomputes the state occurrences, the time spent per state and the number of
-     * mutations of every branch.
+     * Applies the given list of mutations to the branch above the given node.
      */
-    private void updateInternalState() {
-        Node root = this.tree.getRoot();
-
-        // walk downwards, so that a branch is always visited after its parent
-
-        Deque<Node> nodesToVisit = new ArrayDeque<>();
-        nodesToVisit.push(root);
-
-        while (!nodesToVisit.isEmpty()) {
-            Node node = nodesToVisit.pop();
-
-            for (Node child : node.getChildren()) {
-                this.updateBranchAboveNode(child);
-                nodesToVisit.push(child);
-            }
-        }
+    public void applyMutations(Node node, List<Mutation> mutations, Operator operator) {
+        this.startEditing(operator);
+        this.mutationsAboveNode[node.getNr()] = List.copyOf(mutations);
+        this.performSanityChecks(node.getNr());
     }
 
-    /**
-     * Recomputes the state occurrences at the given node, together with the time spent per
-     * state and the number of mutations on the branch above it. Assumes that the state
-     * occurrences at the parent node are already up to date.
-     */
-    private void updateBranchAboveNode(Node node) {
-        int nodeNr = node.getNr();
-        int parentNr = node.getParent().getNr();
-
-        // evolution runs forwards in time from the parent to the node
-
-        double branchStartHeight = node.getParent().getHeight();
-        double branchEndHeight = node.getHeight();
-        double branchLength = branchStartHeight - branchEndHeight;
-
-        int[] parentStateOccurrences = this.stateOccurrences[parentNr];
-        int[] nodeStateOccurrences = this.stateOccurrences[nodeNr];
-
-        // start from every site spending the whole branch in the state it has at the parent
-
-        for (int stateNr = 0; stateNr < this.numStates; stateNr++) {
-            nodeStateOccurrences[stateNr] = parentStateOccurrences[stateNr];
-        }
-
-        // move each mutated site into its new state for the rest of the branch
-
-        for (Mutation mutation : this.mutationsAboveNode[nodeNr]) {
-            nodeStateOccurrences[mutation.oldState()]--;
-            nodeStateOccurrences[mutation.newState()]++;
-        }
+    public int[] getReferenceSequence() {
+        return new int[this.alignment.getSiteCount()];
     }
 
     /**
@@ -194,25 +154,23 @@ public class Mutations extends StateNode {
         return this.mutationsAboveNode[node.getNr()];
     }
 
-    public int[] getStateOccurrences(Node node) {
-        return this.stateOccurrences[node.getNr()];
-    }
-
     /* StateNode methods */
 
     @Override
-    public void setEverythingDirty(boolean b) {
-
+    public void setEverythingDirty(boolean isDirty) {
+        this.setSomethingIsDirty(isDirty);
     }
 
     @Override
     protected void store() {
-
+        System.arraycopy(this.mutationsAboveNode, 0, this.storedMutationsAboveNode, 0, this.numNodes);
     }
 
     @Override
     public void restore() {
-
+        List<Mutation>[] mutationsAboveNode = this.mutationsAboveNode;
+        this.mutationsAboveNode = this.storedMutationsAboveNode;
+        this.storedMutationsAboveNode = mutationsAboveNode;
     }
 
     /* Unsupported StateNode methods */
@@ -258,7 +216,4 @@ public class Mutations extends StateNode {
         throw new UnsupportedOperationException();
     }
 
-    public int[] getReferenceSequence() {
-        return new int[this.alignment.getSiteCount()];
-    }
 }
