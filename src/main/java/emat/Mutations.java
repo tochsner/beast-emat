@@ -194,10 +194,6 @@ public class Mutations extends StateNode {
         return this.mutationsAboveNode[node.getNr()];
     }
 
-    public int[] getRootStateOccurrences() {
-        return this.getStateOccurrences(this.tree.getRoot());
-    }
-
     public int[] getStateOccurrences(Node node) {
         return this.stateOccurrences[node.getNr()];
     }
@@ -262,4 +258,7 @@ public class Mutations extends StateNode {
         throw new UnsupportedOperationException();
     }
 
+    public int[] getReferenceSequence() {
+        return new int[this.alignment.getSiteCount()];
+    }
 }

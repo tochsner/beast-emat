@@ -26,7 +26,7 @@ public class GeneticPrior extends TreeLikelihood {
         this.tree = this.treeInput.get();
         this.mutations = this.mutationsInput.get();
 
-        this.referenceSequence = new int[this.alignment.getSiteCount()];
+        this.referenceSequence = this.mutations.getReferenceSequence();
         this.totalMutationRatesPerNode = new double[this.tree.getNodeCount()];
 
         if (this.m_siteModel.getCategoryCount() != 1) {
@@ -36,40 +36,61 @@ public class GeneticPrior extends TreeLikelihood {
 
     @Override
     public double calculateLogP() {
+        this.updateTotalMutationRates();
+
         double logP = 0.0;
 
-        // add root contributions
-
-        double[] substitutionModelFrequencies = this.substitutionModel.getFrequencies();
-        int[] stateOccurrences = this.mutations.getRootStateOccurrences();
-
-        for (int stateNr = 0; stateNr < this.alignment.getMaxStateCount(); stateNr++) {
-            logP += stateOccurrences[stateNr] * Math.log(substitutionModelFrequencies[stateNr]);
-        }
-
-        // add branch contributions
-
-        for (int nodeNr = 0; nodeNr < this.tree.getNodeCount(); nodeNr++) {
+       for (int nodeNr = 0; nodeNr < this.tree.getNodeCount(); nodeNr++) {
             Node node = this.tree.getNode(nodeNr);
-            if (node.isRoot()) {
-                continue;
-            }
-
-            double branchLogP = this.calculateBranchContribution(node);
-            logP += branchLogP;
+            logP += this.calculateBranchContribution(node);
         }
 
         this.logP = logP;
         return logP;
     }
 
+    @Override
+    protected boolean requiresRecalculation() {
+        // the super class does not know about the mutations, so they have to be checked here
+        return this.mutations.somethingIsDirty() || super.requiresRecalculation();
+    }
+
     /**
      * Computes the likelihood contribution of a given branch.
-     * There are two relevant factors at play: (i) the probability that no change
-     * happens in-between the given mutations; (ii) the probability of the given
-     * mutations.
      */
     private double calculateBranchContribution(Node node) {
+        if (node.isRoot()) {
+            return this.calculateRootBranchContribution(node);
+        } else {
+            return this.calculateNonRootBranchContribution(node);
+        }
+    }
+
+    /** Computes the genetic prior for the root branch. */
+    private double calculateRootBranchContribution(Node root) {
+        double branchLogP = 0.0;
+        double[] substitutionModelFrequencies = this.substitutionModel.getFrequencies();
+
+        // add reference state contribution
+
+        for (int state : this.referenceSequence) {
+            branchLogP += Math.log(substitutionModelFrequencies[state]);
+        }
+
+        // add root mutation contributions
+
+        List<Mutation> mutations = this.mutations.getMutations(root);
+
+        for (Mutation mutation : mutations) {
+            branchLogP += Math.log(substitutionModelFrequencies[mutation.newState()])
+                    - Math.log(substitutionModelFrequencies[mutation.oldState()]);
+        }
+
+        return branchLogP;
+    }
+
+    /** Computes the genetic prior for a non-root branch. */
+    private double calculateNonRootBranchContribution(Node node) {
         Node parent = node.getParent();
         List<Mutation> mutations = this.mutations.getMutations(node);
         double branchRate = this.branchRateModel.getRateForBranch(node);
@@ -117,45 +138,43 @@ public class GeneticPrior extends TreeLikelihood {
         return substitutionRate * siteRate;
     }
 
-    /** Returns the total mutation rate λ for the given node. */
-    private double getTotalMutationRate(Node node) {
-        if (node == null) {
-            // we are asking for the reference sequence above the root
-            return computeReferenceMutationRate();
-        }
+    /**
+     * Recomputes the total mutation rate λ of every node. The root starts from the rate of
+     * the reference sequence above it.
+     */
+    private void updateTotalMutationRates() {
+        Node root = this.tree.getRoot();
 
-        if (this.totalMutationRatesPerNode[node.getNr()] == 0.0) {
-            this.totalMutationRatesPerNode[node.getNr()] = this.computeTotalMutationRate(node);
-        }
-
-        return this.totalMutationRatesPerNode[node.getNr()];
-    }
-
-    /** Computes the total mutation rate λ for the reference sequence. */
-    private double computeReferenceMutationRate() {
         double referenceMutationRate = 0.0;
-
         for (int i = 0; i < this.referenceSequence.length; i++) {
-            referenceMutationRate += this.getEscapeRate(
-                    this.tree.getRoot(), this.referenceSequence[i], i
-            );
+            referenceMutationRate += this.getEscapeRate(root, this.referenceSequence[i], i);
         }
 
-        return referenceMutationRate;
+        this.updateTotalMutationRates(root, referenceMutationRate);
     }
 
-    /** Computes the total mutation rate λ for the given node. */
-    private double computeTotalMutationRate(Node node) {
-        Node parent = node.getParent();
-        List<Mutation> mutations = this.mutations.getMutations(node);
-
-        double totalMutationRate = this.getTotalMutationRate(parent);
-        for (Mutation mutation : mutations) {
+    /**
+     * Recomputes the total mutation rate λ of the given node and of every node below it,
+     * given the rate of its parent. The mutations above the node shift the rate by the
+     * difference of the escape rates.
+     */
+    private void updateTotalMutationRates(Node node, double parentMutationRate) {
+        double totalMutationRate = parentMutationRate;
+        for (Mutation mutation : this.mutations.getMutations(node)) {
             totalMutationRate += this.getEscapeRate(node, mutation.newState(), mutation.site())
                     - this.getEscapeRate(node, mutation.oldState(), mutation.site());
         }
 
-        return totalMutationRate;
+        this.totalMutationRatesPerNode[node.getNr()] = totalMutationRate;
+
+        for (Node child : node.getChildren()) {
+            this.updateTotalMutationRates(child, totalMutationRate);
+        }
+    }
+
+    /** Returns the total mutation rate λ for the given node. */
+    private double getTotalMutationRate(Node node) {
+        return this.totalMutationRatesPerNode[node.getNr()];
     }
 
 }
