@@ -3,6 +3,7 @@ package emat;
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.alignment.Alignment;
+import beast.base.evolution.datatype.DataType;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.inference.Operator;
@@ -24,6 +25,8 @@ public class Mutations extends StateNode {
     int numNodes;
     int numSites;
 
+    int[] referenceSequence;
+
     private List<Mutation>[] mutationsAboveNode;
     private List<Mutation>[] storedMutationsAboveNode;
 
@@ -43,6 +46,8 @@ public class Mutations extends StateNode {
             this.mutationsAboveNode[i] = List.of();
         }
 
+        this.setReferenceSequence();
+
         this.storedMutationsAboveNode = new List[this.numNodes];
         this.store();
     }
@@ -59,7 +64,22 @@ public class Mutations extends StateNode {
     }
 
     public int[] getReferenceSequence() {
-        return new int[this.alignment.getSiteCount()];
+        return this.referenceSequence;
+    }
+
+    /**
+     * Uses the sequence of the first tip as the reference. Ambiguous or missing states are
+     * replaced by the first state they are compatible with, as missations are not yet
+     * supported.
+     */
+    public void setReferenceSequence() {
+        DataType dataType = this.alignment.getDataType();
+        this.referenceSequence = new int[this.numSites];
+
+        for (int site = 0; site < this.numSites; site++) {
+            int code = this.alignment.getPattern(0, this.alignment.getPatternIndex(site));
+            this.referenceSequence[site] = dataType.getStatesForCode(code)[0];
+        }
     }
 
     /**
@@ -173,28 +193,60 @@ public class Mutations extends StateNode {
         this.storedMutationsAboveNode = mutationsAboveNode;
     }
 
+    /** Returns a deep copy of the mutations. */
+    @Override
+    public Mutations copy() {
+        try {
+            Mutations copy = (Mutations) this.clone();
+            copy.mutationsAboveNode = this.mutationsAboveNode.clone();
+            copy.storedMutationsAboveNode = this.storedMutationsAboveNode.clone();
+            return copy;
+        } catch (CloneNotSupportedException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** Assigns all values of this to the other mutations (other := this). */
+    @Override
+    public void assignTo(StateNode other) {
+        Mutations target = (Mutations) other;
+        target.setID(this.getID());
+        target.index = this.index;
+        target.copyValuesFrom(this);
+    }
+
+    /** Assigns all values of the other mutations to this (this := other). */
+    @Override
+    public void assignFrom(StateNode other) {
+        Mutations source = (Mutations) other;
+        this.setID(source.getID());
+        this.copyValuesFrom(source);
+    }
+
+    /** Assigns only the mutations of the other mutations to this, e.g. when resuming a run. */
+    @Override
+    public void assignFromFragile(StateNode other) {
+        Mutations source = (Mutations) other;
+        System.arraycopy(source.mutationsAboveNode, 0, this.mutationsAboveNode, 0, this.numNodes);
+        this.setSomethingIsDirty(false);
+    }
+
+    /** Copies the tree, the alignment and the mutations of the given source into this. */
+    private void copyValuesFrom(Mutations source) {
+        this.tree = source.tree;
+        this.alignment = source.alignment;
+
+        this.numStates = source.numStates;
+        this.numNodes = source.numNodes;
+        this.numSites = source.numSites;
+
+        this.referenceSequence = source.referenceSequence;
+
+        this.mutationsAboveNode = source.mutationsAboveNode.clone();
+        this.storedMutationsAboveNode = source.storedMutationsAboveNode.clone();
+    }
+
     /* Unsupported StateNode methods */
-
-
-    @Override
-    public StateNode copy() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void assignTo(StateNode stateNode) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void assignFrom(StateNode stateNode) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void assignFromFragile(StateNode stateNode) {
-        throw new UnsupportedOperationException();
-    }
 
     @Override
     public void fromXML(org.w3c.dom.Node node) {
