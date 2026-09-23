@@ -30,6 +30,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
     int numStates;
 
     double[] rateMatrix;
+    double siteRate;
 
     double[] totalMutationRatesPerNode;
     int[] referenceSequence;
@@ -69,7 +70,11 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
     @Override
     public double calculateLogP() {
-        this.updateRateMatrix();
+        this.rateMatrix = this.computeRateMatrix();
+
+        // category 0 because we don't support site-rate variation yet
+        this.siteRate = this.siteModel.getRateForCategory(0, this.tree.getRoot());
+
         this.updateTotalMutationRates();
 
         double logP = 0.0;
@@ -150,20 +155,18 @@ public class GeneticPrior extends GenericTreeLikelihood {
     }
 
     /**
-     * Recomputes the rate matrix Q from the eigen decomposition of the substitution model,
+     * Computes the rate matrix Q from the eigen decomposition of the substitution model,
      * as Q = V diag(λ) V^-1. The rate matrices returned by general substitution models like
      * GTR are unreliable, as their eigen decomposition overwrites the stored matrix in place.
      * The substitution model is shared by all branches, so the matrix of the root is used.
      */
-    private void updateRateMatrix() {
+    double[] computeRateMatrix() {
         EigenDecomposition eigenDecomposition = this.substitutionModel.getEigenDecomposition(this.tree.getRoot());
         double[] eigenVectors = eigenDecomposition.getEigenVectors();
         double[] inverseEigenVectors = eigenDecomposition.getInverseEigenVectors();
         double[] eigenValues = eigenDecomposition.getEigenValues();
 
-        if (this.rateMatrix == null) {
-            this.rateMatrix = new double[this.numStates * this.numStates];
-        }
+        double[] rateMatrix = new double[this.numStates * this.numStates];
 
         for (int from = 0; from < this.numStates; from++) {
             for (int to = 0; to < this.numStates; to++) {
@@ -172,9 +175,11 @@ public class GeneticPrior extends GenericTreeLikelihood {
                     rate += eigenVectors[from * this.numStates + k] * eigenValues[k]
                             * inverseEigenVectors[k * this.numStates + to];
                 }
-                this.rateMatrix[from * this.numStates + to] = rate;
+                rateMatrix[from * this.numStates + to] = rate;
             }
         }
+
+        return rateMatrix;
     }
 
     /** Returns the rate of leaving the state on the given branch and site. */
@@ -184,12 +189,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
     /** Returns the rate of mutation the state from and to the given state on the given branch and site. */
     private double getMutationRate(Node node, int from, int to, int site) {
-        double substitutionRate = this.rateMatrix[from * this.numStates + to];
-
-        // category 0 because we don't support site-rate variation yet
-        double siteRate = this.siteModel.getRateForCategory(0, node);
-
-        return substitutionRate * siteRate;
+        return this.rateMatrix[from * this.numStates + to] * this.siteRate;
     }
 
     /**
