@@ -2,36 +2,62 @@ package emat;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
+import beast.base.evolution.alignment.Alignment;
+import beast.base.evolution.substitutionmodel.SubstitutionModel;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.evolution.tree.Node;
-import beast.base.spec.evolution.likelihood.TreeLikelihood;
+import beast.base.spec.evolution.branchratemodel.Base;
+import beast.base.spec.evolution.branchratemodel.StrictClockModel;
+import beast.base.spec.evolution.likelihood.GenericTreeLikelihood;
+import beast.base.spec.evolution.sitemodel.SiteModel;
 
 import java.util.List;
 
 @Description("Implements the genetic prior for EMATs. Missations and varying site rates are not yet supported.")
-public class GeneticPrior extends TreeLikelihood {
+public class GeneticPrior extends GenericTreeLikelihood {
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "", Input.Validate.REQUIRED);
 
     TreeInterface tree;
+    Alignment alignment;
     Mutations mutations;
+
+    SiteModel.Base siteModel;
+    SubstitutionModel substitutionModel;
+    Base branchRateModel;
 
     double[] totalMutationRatesPerNode;
     int[] referenceSequence;
 
     @Override
     public void initAndValidate() {
-        super.initAndValidate();
-
         this.tree = this.treeInput.get();
+        this.alignment = this.dataInput.get();
         this.mutations = this.mutationsInput.get();
+
+        // set up the evolutionary model
+
+        if (!(this.siteModelInput.get() instanceof SiteModel.Base)) {
+            throw new IllegalArgumentException("siteModel input should be of type SiteModel.Base");
+        }
+        this.siteModel = (SiteModel.Base) this.siteModelInput.get();
+        this.siteModel.setDataType(this.alignment.getDataType());
+        this.substitutionModel = this.siteModel.substModelInput.get();
+
+        if (this.siteModel.getCategoryCount() != 1) {
+            throw new IllegalArgumentException("GeneticPrior does not support site rate heterogeneity.");
+        }
+
+        if (this.branchRateModelInput.get() != null) {
+            this.branchRateModel = this.branchRateModelInput.get();
+        } else {
+            this.branchRateModel = new StrictClockModel();
+        }
+
+        // set up the mutation state
 
         this.referenceSequence = this.mutations.getReferenceSequence();
         this.totalMutationRatesPerNode = new double[this.tree.getNodeCount()];
-
-        if (this.m_siteModel.getCategoryCount() != 1) {
-            throw new IllegalArgumentException("GeneticPrior does not support site rate heterogeneity.");
-        }
     }
 
     @Override
@@ -47,12 +73,6 @@ public class GeneticPrior extends TreeLikelihood {
 
         this.logP = logP;
         return logP;
-    }
-
-    @Override
-    protected boolean requiresRecalculation() {
-        // the super class does not know about the mutations, so they have to be checked here
-        return this.mutations.somethingIsDirty() || super.requiresRecalculation();
     }
 
     /**
@@ -133,7 +153,7 @@ public class GeneticPrior extends TreeLikelihood {
         double substitutionRate = rateMatrix[from*numStates + to];
 
         // category 0 because we don't support site-rate variation yet
-        double siteRate = this.m_siteModel.getRateForCategory(0, node);
+        double siteRate = this.siteModel.getRateForCategory(0, node);
 
         return substitutionRate * siteRate;
     }
