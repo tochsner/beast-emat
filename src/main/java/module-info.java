@@ -1,3 +1,5 @@
+import emat.GeneticPrior;
+
 open module my.beast.example {
     requires beast.pkgmgmt;
     requires beast.base;
@@ -7,6 +9,6 @@ open module my.beast.example {
     exports emat;
 
     provides beast.base.core.BEASTInterface with
-        my.beast.example.MyDistribution,
-        my.beast.example.MyScaleOperator;
+        emat.Mutations,
+            GeneticPrior;
 }

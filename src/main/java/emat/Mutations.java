@@ -21,10 +21,11 @@ public class Mutations extends StateNode {
 
     int numStates;
     int numNodes;
+    int numSites;
 
     private List<Mutation>[] mutationsAboveNode;
-    private double[][] timeSpentPerState;
-    private int[][][] numberOfMutations;
+
+    private int[][] stateOccurrences;
 
     @Override
     public void initAndValidate() {
@@ -33,44 +34,72 @@ public class Mutations extends StateNode {
 
         // init state objects
 
-        this.numStates = this.getMaxStateCount();
+        this.numStates = this.alignment.getMaxStateCount();
         this.numNodes = this.tree.getNodeCount();
+        this.numSites = this.alignment.getSiteCount();
 
-        this.mutationsAboveNode = new List[numNodes];
-        for (int i = 0; i < numNodes; i++) {
+        this.mutationsAboveNode = new List[this.numNodes];
+        for (int i = 0; i < this.numNodes; i++) {
             this.mutationsAboveNode[i] = new ArrayList<>();
         }
 
-        this.timeSpentPerState = new double[this.numNodes][this.numStates];
-        this.numberOfMutations = new int[this.numNodes][this.numStates][this.numStates];
+        this.stateOccurrences = new int[this.numNodes][this.numStates];
     }
 
     /* State Management */
 
     /**
-     * Replaces the mutations on the branch above the given node.
+     * Recomputes the state occurrences, the time spent per state and the number of
+     * mutations of every branch.
      */
-    public void replaceMutationsAboveNode(int nodeNr, List<Mutation> mutations) {
-        this.mutationsAboveNode[nodeNr] = mutations;
+    private void updateInternalState() {
+        Node root = this.tree.getRoot();
 
-        // reset internal state
+        // walk downwards, so that a branch is always visited after its parent
 
-        Arrays.fill(this.timeSpentPerState[nodeNr], 0.0);
+        Deque<Node> nodesToVisit = new ArrayDeque<>();
+        nodesToVisit.push(root);
 
-        for (int otherNodeNr = 0; otherNodeNr < this.numStates; otherNodeNr++) {
-            Arrays.fill(this.numberOfMutations[nodeNr][otherNodeNr], 0);
+        while (!nodesToVisit.isEmpty()) {
+            Node node = nodesToVisit.pop();
+
+            for (Node child : node.getChildren()) {
+                this.updateBranchAboveNode(child);
+                nodesToVisit.push(child);
+            }
+        }
+    }
+
+    /**
+     * Recomputes the state occurrences at the given node, together with the time spent per
+     * state and the number of mutations on the branch above it. Assumes that the state
+     * occurrences at the parent node are already up to date.
+     */
+    private void updateBranchAboveNode(Node node) {
+        int nodeNr = node.getNr();
+        int parentNr = node.getParent().getNr();
+
+        // evolution runs forwards in time from the parent to the node
+
+        double branchStartHeight = node.getParent().getHeight();
+        double branchEndHeight = node.getHeight();
+        double branchLength = branchStartHeight - branchEndHeight;
+
+        int[] parentStateOccurrences = this.stateOccurrences[parentNr];
+        int[] nodeStateOccurrences = this.stateOccurrences[nodeNr];
+
+        // start from every site spending the whole branch in the state it has at the parent
+
+        for (int stateNr = 0; stateNr < this.numStates; stateNr++) {
+            nodeStateOccurrences[stateNr] = parentStateOccurrences[stateNr];
         }
 
-        // update internal state
+        // move each mutated site into its new state for the rest of the branch
 
-        for (Mutation mutation : mutations) {
-            this.timeSpentPerState[nodeNr][mutation.oldState()] += mutation.time() - mutation.timeOfPreviousMutation();
-            this.numberOfMutations[nodeNr][mutation.oldState()][mutation.newState()]++;
+        for (Mutation mutation : this.mutationsAboveNode[nodeNr]) {
+            nodeStateOccurrences[mutation.oldState()]--;
+            nodeStateOccurrences[mutation.newState()]++;
         }
-
-        // perform sanity checks
-
-        this.performSanityChecks(nodeNr);
     }
 
     /**
@@ -92,8 +121,10 @@ public class Mutations extends StateNode {
             throw new RuntimeException("There is no branch above the root node that could carry mutations.");
         }
 
-        double start = node.getHeight();
-        double end = node.getParent().getHeight();
+        // evolution runs forwards in time from the parent to the node
+
+        double branchStartHeight = node.getParent().getHeight();
+        double branchEndHeight = node.getHeight();
 
         // check that every mutation belongs to this branch and lies on it
 
@@ -104,28 +135,28 @@ public class Mutations extends StateNode {
             if (mutation.oldState() == mutation.newState()) {
                 throw new RuntimeException("Mutation does not change the state of its site.");
             }
-            if (mutation.timeOfPreviousMutation() < start) {
+            if (mutation.timeOfPreviousMutation() > branchStartHeight) {
                 throw new RuntimeException("timeOfPreviousMutation is earlier than the branch.");
             }
-            if (mutation.time() < start) {
+            if (mutation.time() > branchStartHeight) {
                 throw new RuntimeException("time is earlier than the branch.");
             }
-            if (end < mutation.timeOfPreviousMutation()) {
+            if (mutation.timeOfPreviousMutation() < branchEndHeight) {
                 throw new RuntimeException("timeOfPreviousMutation is later than the branch.");
             }
-            if (end < mutation.time()) {
+            if (mutation.time() < branchEndHeight) {
                 throw new RuntimeException("time is later than the branch.");
             }
-            if (mutation.time() < mutation.timeOfPreviousMutation()) {
+            if (mutation.time() > mutation.timeOfPreviousMutation()) {
                 throw new RuntimeException("Mutation happens before the previous mutation at its site.");
             }
         }
 
-        // check that the mutations are sorted by ascending time
+        // check that the mutations are sorted from the start of the branch to its end
 
         for (int i = 1; i < mutations.size(); i++) {
-            if (mutations.get(i).time() < mutations.get(i - 1).time()) {
-                throw new RuntimeException("Mutations are not sorted by ascending time.");
+            if (mutations.get(i).time() > mutations.get(i - 1).time()) {
+                throw new RuntimeException("Mutations are not sorted by descending height.");
             }
         }
 
@@ -137,7 +168,7 @@ public class Mutations extends StateNode {
 
             if (lastMutation == null) {
                 // the first mutation at a site has no predecessor, so it starts at the branch start
-                if (mutation.timeOfPreviousMutation() != start) {
+                if (mutation.timeOfPreviousMutation() != branchStartHeight) {
                     throw new RuntimeException("First mutation at a site does not start at the beginning of the branch.");
                 }
                 continue;
@@ -159,20 +190,16 @@ public class Mutations extends StateNode {
 
     /* Getter */
 
-    public int getMaxStateCount() {
-        return this.alignment.getMaxStateCount();
+    public List<Mutation> getMutations(Node node) {
+        return this.mutationsAboveNode[node.getNr()];
     }
 
     public int[] getRootStateOccurrences() {
-        return new int[] {};
+        return this.getStateOccurrences(this.tree.getRoot());
     }
 
-    public double[] getTimeSpentPerState(Node node) {
-        return this.timeSpentPerState[node.getNr()];
-    }
-
-    public int[][] getNumberOfMutations(Node node) {
-        return this.numberOfMutations[node.getNr()];
+    public int[] getStateOccurrences(Node node) {
+        return this.stateOccurrences[node.getNr()];
     }
 
     /* StateNode methods */
@@ -234,4 +261,5 @@ public class Mutations extends StateNode {
     public void close(PrintStream printStream) {
         throw new UnsupportedOperationException();
     }
+
 }
