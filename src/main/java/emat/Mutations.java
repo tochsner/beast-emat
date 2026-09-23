@@ -15,8 +15,8 @@ import java.util.*;
 @Description("Stores the explicit mutations on the given tree.")
 public class Mutations extends StateNode {
 
-    Input<TreeInterface> treeInput = new Input<>("tree", "", Input.Validate.REQUIRED);
-    Input<Alignment> alignmentInput = new Input<>("alignment", "", Input.Validate.REQUIRED);
+    final public Input<TreeInterface> treeInput = new Input<>("tree", "", Input.Validate.REQUIRED);
+    final public Input<Alignment> alignmentInput = new Input<>("alignment", "", Input.Validate.REQUIRED);
 
     TreeInterface tree;
     Alignment alignment;
@@ -61,6 +61,23 @@ public class Mutations extends StateNode {
         this.startEditing(operator);
         this.mutationsAboveNode[node.getNr()] = List.copyOf(mutations);
         this.performSanityChecks(node.getNr());
+    }
+
+    /**
+     * Replaces the mutations of every branch without going through an operator. This is
+     * meant for initialisation only, so the replaced mutations are also stored.
+     */
+    public void initialiseMutations(List<List<Mutation>> mutationsAboveNode) {
+        if (mutationsAboveNode.size() != this.numNodes) {
+            throw new IllegalArgumentException("Expected mutations for " + this.numNodes + " nodes.");
+        }
+
+        for (int nodeNr = 0; nodeNr < this.numNodes; nodeNr++) {
+            this.mutationsAboveNode[nodeNr] = List.copyOf(mutationsAboveNode.get(nodeNr));
+            this.performSanityChecks(nodeNr);
+        }
+
+        this.store();
     }
 
     public int[] getReferenceSequence() {
@@ -207,6 +224,14 @@ public class Mutations extends StateNode {
 
     public List<Mutation> getMutations(Node node) {
         return this.mutationsAboveNode[node.getNr()];
+    }
+
+    public TreeInterface getTree() {
+        return this.tree;
+    }
+
+    public Alignment getAlignment() {
+        return this.alignment;
     }
 
     /* StateNode methods */
