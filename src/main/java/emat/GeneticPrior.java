@@ -26,6 +26,10 @@ public class GeneticPrior extends GenericTreeLikelihood {
     SubstitutionModel substitutionModel;
     Base branchRateModel;
 
+    int numStates;
+
+    double[] rateMatrix;
+
     double[] totalMutationRatesPerNode;
     int[] referenceSequence;
 
@@ -54,6 +58,8 @@ public class GeneticPrior extends GenericTreeLikelihood {
             this.branchRateModel = new StrictClockModel();
         }
 
+        this.numStates = this.alignment.getMaxStateCount();
+
         // set up the mutation state
 
         this.referenceSequence = this.mutations.getReferenceSequence();
@@ -62,6 +68,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
     @Override
     public double calculateLogP() {
+        this.rateMatrix = this.substitutionModel.getRateMatrix(this.tree.getRoot());
         this.updateTotalMutationRates();
 
         double logP = 0.0;
@@ -148,9 +155,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
     /** Returns the rate of mutation the state from and to the given state on the given branch and site. */
     private double getMutationRate(Node node, int from, int to, int site) {
-        int numStates = this.alignment.getMaxStateCount();
-        double[] rateMatrix = this.substitutionModel.getRateMatrix(node);
-        double substitutionRate = rateMatrix[from*numStates + to];
+        double substitutionRate = this.rateMatrix[from * this.numStates + to];
 
         // category 0 because we don't support site-rate variation yet
         double siteRate = this.siteModel.getRateForCategory(0, node);
