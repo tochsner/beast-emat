@@ -12,5 +12,6 @@ open module my.beast.example {
         emat.Mutations,
             GeneticPrior,
             emat.ParsimonyMutationsInitialiser,
-            emat.MutationTimeOperator;
+            emat.MutationTimeOperator,
+            emat.SiteHistoryGibbsOperator;
 }
