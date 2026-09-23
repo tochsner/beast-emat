@@ -95,18 +95,7 @@ public class Mutations extends StateNode {
             return;
         }
 
-        Node node = this.tree.getNode(nodeNr);
-
-        if (node.isRoot()) {
-            throw new RuntimeException("There is no branch above the root node that could carry mutations.");
-        }
-
-        // evolution runs forwards in time from the parent to the node
-
-        double branchStartHeight = node.getParent().getHeight();
-        double branchEndHeight = node.getHeight();
-
-        // check that every mutation belongs to this branch and lies on it
+        // check that every mutation belongs to this branch and changes the state of its site
 
         for (Mutation mutation : mutations) {
             if (mutation.nodeNr() != nodeNr) {
@@ -115,6 +104,52 @@ public class Mutations extends StateNode {
             if (mutation.oldState() == mutation.newState()) {
                 throw new RuntimeException("Mutation does not change the state of its site.");
             }
+        }
+
+        Node node = this.tree.getNode(nodeNr);
+
+        if (node.isRoot()) {
+            this.performRootSanityChecks(mutations);
+        } else {
+            this.performNonRootSanityChecks(node, mutations);
+        }
+    }
+
+    /**
+     * Performs the sanity checks for mutations above the root. These encode the difference
+     * between the reference sequence and the root sequence, so their times are meaningless
+     * and only the states are checked.
+     */
+    private void performRootSanityChecks(List<Mutation> mutations) {
+        Map<Integer, Mutation> lastMutationAtSite = new HashMap<>();
+
+        for (Mutation mutation : mutations) {
+            Mutation lastMutation = lastMutationAtSite.put(mutation.site(), mutation);
+
+            // the first mutation at a site starts from the reference sequence
+            int previousState = lastMutation == null
+                    ? this.referenceSequence[mutation.site()]
+                    : lastMutation.newState();
+
+            if (previousState != mutation.oldState()) {
+                throw new RuntimeException("Site is not consistent among subsequent mutations.");
+            }
+        }
+    }
+
+    /**
+     * Performs the sanity checks for mutations above a non-root node. This checks that all
+     * mutations lie on the branch, are sorted, and are consistent wrt. states and times.
+     */
+    private void performNonRootSanityChecks(Node node, List<Mutation> mutations) {
+        // evolution runs forwards in time from the parent to the node
+
+        double branchStartHeight = node.getParent().getHeight();
+        double branchEndHeight = node.getHeight();
+
+        // check that every mutation lies on the branch
+
+        for (Mutation mutation : mutations) {
             if (mutation.timeOfPreviousMutation() > branchStartHeight) {
                 throw new RuntimeException("timeOfPreviousMutation is earlier than the branch.");
             }
