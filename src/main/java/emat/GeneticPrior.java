@@ -3,6 +3,7 @@ package emat;
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.alignment.Alignment;
+import beast.base.evolution.substitutionmodel.EigenDecomposition;
 import beast.base.evolution.substitutionmodel.SubstitutionModel;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.evolution.tree.Node;
@@ -68,7 +69,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
     @Override
     public double calculateLogP() {
-        this.rateMatrix = this.substitutionModel.getRateMatrix(this.tree.getRoot());
+        this.updateRateMatrix();
         this.updateTotalMutationRates();
 
         double logP = 0.0;
@@ -146,6 +147,34 @@ public class GeneticPrior extends GenericTreeLikelihood {
         branchLogP -= branchRate * rate * (previousHeight - node.getHeight());
 
         return branchLogP;
+    }
+
+    /**
+     * Recomputes the rate matrix Q from the eigen decomposition of the substitution model,
+     * as Q = V diag(λ) V^-1. The rate matrices returned by general substitution models like
+     * GTR are unreliable, as their eigen decomposition overwrites the stored matrix in place.
+     * The substitution model is shared by all branches, so the matrix of the root is used.
+     */
+    private void updateRateMatrix() {
+        EigenDecomposition eigenDecomposition = this.substitutionModel.getEigenDecomposition(this.tree.getRoot());
+        double[] eigenVectors = eigenDecomposition.getEigenVectors();
+        double[] inverseEigenVectors = eigenDecomposition.getInverseEigenVectors();
+        double[] eigenValues = eigenDecomposition.getEigenValues();
+
+        if (this.rateMatrix == null) {
+            this.rateMatrix = new double[this.numStates * this.numStates];
+        }
+
+        for (int from = 0; from < this.numStates; from++) {
+            for (int to = 0; to < this.numStates; to++) {
+                double rate = 0.0;
+                for (int k = 0; k < this.numStates; k++) {
+                    rate += eigenVectors[from * this.numStates + k] * eigenValues[k]
+                            * inverseEigenVectors[k * this.numStates + to];
+                }
+                this.rateMatrix[from * this.numStates + to] = rate;
+            }
+        }
     }
 
     /** Returns the rate of leaving the state on the given branch and site. */
