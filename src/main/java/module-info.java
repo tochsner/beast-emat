@@ -10,5 +10,6 @@ open module my.beast.example {
 
     provides beast.base.core.BEASTInterface with
         emat.Mutations,
-            GeneticPrior;
+            GeneticPrior,
+            emat.ParsimonyMutationsInitialiser;
 }

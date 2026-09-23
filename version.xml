@@ -2,7 +2,8 @@
     <depends on='BEAST.base' atleast='2.8.0'/>
 
     <service type="beast.base.core.BEASTInterface">
-        <provider classname="my.beast.example.MyDistribution"/>
-        <provider classname="my.beast.example.MyScaleOperator"/>
+        <provider classname="emat.Mutations"/>
+        <provider classname="emat.GeneticPrior"/>
+        <provider classname="emat.ParsimonyMutationsInitialiser"/>
     </service>
 </package>
