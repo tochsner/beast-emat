@@ -1,4 +1,5 @@
 import emat.initalisation.ParsimonyMutationsInitialiser;
+import emat.operators.IntervalScaleOperator;
 import emat.operators.MutationTimeOperator;
 import emat.operators.SiteHistoryGibbsOperator;
 import emat.operators.SubtreeSlideOperator;
@@ -25,5 +26,6 @@ open module my.beast.example {
             MutationTimeOperator,
             SiteHistoryGibbsOperator,
             SubtreeSlideOperator,
-            WilsonBaldingOperator;
+            WilsonBaldingOperator,
+            IntervalScaleOperator;
 }
