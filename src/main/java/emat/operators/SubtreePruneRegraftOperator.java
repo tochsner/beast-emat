@@ -3,14 +3,13 @@ package emat.operators;
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.operator.TreeOperator;
-import beast.base.evolution.substitutionmodel.EigenDecomposition;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import emat.helper.BranchMutations;
+import emat.helper.JukesCantorStochasticMapping;
 import emat.state.Mutation;
 import emat.helper.MutationPaths;
 import emat.state.Mutations;
-import emat.helper.StochasticMapping;
 import emat.prior.GeneticPrior;
 
 import java.util.HashMap;
@@ -19,8 +18,8 @@ import java.util.List;
 import java.util.Map;
 
 @Description("Prunes a subtree and regrafts it elsewhere without changing the root (docs/mcmc-moves.md §3). " +
-        "Only the history on the branch above the pruned subtree is resampled, by exact stochastic mapping " +
-        "under the model of the genetic prior. Missations are not supported. " +
+        "Only the history on the branch above the pruned subtree is resampled, by approximate Jukes-Cantor " +
+        "stochastic mapping (docs/mcmc-moves.md §3.4). Missations are not supported. " +
         "Subclasses choose the pruned subtree and the grafting point.")
 public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
@@ -30,12 +29,11 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     Mutations mutations;
     GeneticPrior geneticPrior;
     Tree tree;
-    StochasticMapping stochasticMapping;
+    JukesCantorStochasticMapping stochasticMapping;
 
-    // the model of the current proposal on the branch above X: R = rate scale * Q, and the eigen decomposition of Q
-    double rateScale;
+    // the model of the current proposal on the branch above X: R = branch rate * site rate * Q, and the fictitious Jukes-Cantor rate μ̃
     double[] branchRateMatrix;
-    EigenDecomposition eigenDecomposition;
+    double jukesCantorRate;
 
     /**
      * A new attachment point for the pruned subtree: the branch above the new sibling S' in
@@ -50,7 +48,9 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         this.mutations = this.mutationsInput.get();
         this.geneticPrior = this.geneticPriorInput.get();
         this.tree = this.treeInput.get();
-        this.stochasticMapping = new StochasticMapping(this.mutations.getAlignment().getMaxStateCount());
+        this.stochasticMapping = new JukesCantorStochasticMapping(
+                this.mutations.getAlignment().getMaxStateCount(), this.mutations.getReferenceSequence().length
+        );
     }
 
     /**
@@ -104,11 +104,9 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         Map<Integer, int[]> newParentChanges = MutationPaths.collectChanges(this.mutations, mrca, newParentBranchNode, newParentHeight);
         Map<Integer, int[]> newDifferingSites = MutationPaths.combineChanges(newParentChanges, subtreeChanges);
 
-        // the exact mapping needs the full sequences at both ends of the old and the new P–X branch
+        // sample the history on the new P'–X branch while the tree still holds the sequence of X, which the move keeps
 
-        int[] subtreeSequence = MutationPaths.getSequence(this.mutations, x);
-        int[] oldParentSequence = MutationPaths.getStartSequence(subtreeSequence, oldDifferingSites);
-        int[] newParentSequence = MutationPaths.getStartSequence(subtreeSequence, newDifferingSites);
+        List<Mutation> newSubtreeMutations = this.sampleBranchHistory(x, newParentHeight, newDifferingSites);
 
         // rearrange the mutations: join G–P–S into G–S, then split G'–S' into G'–P'–S'
 
@@ -137,15 +135,12 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
             this.mutations.applyMutations(entry.getKey(), entry.getValue(), this);
         }
 
-        // resample the history on the new P'–X branch
-
-        List<Mutation> newSubtreeMutations = this.sampleBranchHistory(x, newParentHeight, newParentSequence, subtreeSequence);
         this.mutations.applyMutations(x, newSubtreeMutations, this);
 
         // combine the grafting and the mutation proposal probabilities
 
-        double logForwardDensity = this.computeLogBranchHistoryDensity(x, newParentHeight, newSubtreeMutations, newParentSequence, subtreeSequence);
-        double logBackwardDensity = this.computeLogBranchHistoryDensity(x, oldParentHeight, oldSubtreeMutations, oldParentSequence, subtreeSequence);
+        double logForwardDensity = this.computeLogBranchHistoryDensity(x, newParentHeight, newSubtreeMutations, newDifferingSites.size());
+        double logBackwardDensity = this.computeLogBranchHistoryDensity(x, oldParentHeight, oldSubtreeMutations, oldDifferingSites.size());
 
         return graftingPoint.logHastingsRatio() + logBackwardDensity - logForwardDensity;
     }
@@ -170,52 +165,49 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     /* Stochastic Mapping */
 
     /**
-     * Takes the current model from the genetic prior. The branch above X keeps its rate
-     * under the move, so the rate matrix R of the old and the new P–X branch is the same.
+     * Takes the current model from the genetic prior. The branch above X keeps its rate and
+     * X keeps its sequence under the move, so the model of the old and the new P–X branch is
+     * the same. The fictitious Jukes-Cantor rate is μ̃ = λ(X) / L, with λ(X) the total
+     * mutation rate at X, which the genetic prior has cached for the current state.
      */
     private void updateModel(Node x) {
         Node root = this.tree.getRoot();
+        double branchRate = this.geneticPrior.branchRateModel.getRateForBranch(x);
 
-        this.rateScale = this.geneticPrior.branchRateModel.getRateForBranch(x)
-                * this.geneticPrior.siteModel.getRateForCategory(0, root);
-        this.eigenDecomposition = this.geneticPrior.substitutionModel.getEigenDecomposition(root);
-
+        double rateScale = branchRate * this.geneticPrior.siteModel.getRateForCategory(0, root);
         this.branchRateMatrix = this.geneticPrior.computeRateMatrix();
         for (int i = 0; i < this.branchRateMatrix.length; i++) {
-            this.branchRateMatrix[i] *= this.rateScale;
+            this.branchRateMatrix[i] *= rateScale;
         }
+
+        int numSites = this.mutations.getReferenceSequence().length;
+        this.jukesCantorRate = branchRate * this.geneticPrior.getTotalMutationRate(x) / numSites;
     }
 
     /**
-     * Samples a new history on the branch above X that starts at the given height, given
-     * the full sequences at both of its ends. This maps every site exactly under the model
-     * of the genetic prior (docs/mcmc-moves.md §3.3), so the genetic prior of the branch
-     * cancels in the acceptance probability, but its cost scales with the genome length.
-     * The returned mutations belong to X and are sorted by descending height.
+     * Samples a new history on the branch above X that starts at the given height, given the
+     * sites whose states differ between its ends. This maps every site under Jukes-Cantor
+     * with the rate μ̃ (docs/mcmc-moves.md §4), so its cost scales with the number of
+     * differing sites rather than the genome length, and the genetic prior corrects for the
+     * approximate model in the acceptance probability. The returned mutations belong to X
+     * and are sorted by descending height.
      */
-    protected List<Mutation> sampleBranchHistory(Node x, double startHeight, int[] startSequence, int[] endSequence) {
-        double[] transitionProbabilities = this.computeBranchTransitionProbabilities(x, startHeight);
-        return this.stochasticMapping.sampleSequenceHistory(
-                x.getNr(), startHeight, x.getHeight(), startSequence, endSequence, this.branchRateMatrix, transitionProbabilities
+    protected List<Mutation> sampleBranchHistory(Node x, double startHeight, Map<Integer, int[]> differingSites) {
+        return this.stochasticMapping.sampleBranchHistory(
+                x.getNr(), startHeight, x.getHeight(), this.jukesCantorRate, differingSites,
+                site -> MutationPaths.getState(this.mutations, x, site)
         );
     }
 
     /**
      * Computes the log probability α_mut that sampleBranchHistory proposes the given history
-     * on the branch above X that starts at the given height, given the full sequences at
-     * both of its ends.
+     * on the branch above X that starts at the given height, given the number of sites whose
+     * states differ between its ends.
      */
-    protected double computeLogBranchHistoryDensity(Node x, double startHeight, List<Mutation> branchMutations,
-                                                    int[] startSequence, int[] endSequence) {
-        double[] transitionProbabilities = this.computeBranchTransitionProbabilities(x, startHeight);
-        return this.stochasticMapping.computeLogSequenceHistoryDensity(
-                branchMutations, startHeight, x.getHeight(), startSequence, endSequence, this.branchRateMatrix, transitionProbabilities
+    protected double computeLogBranchHistoryDensity(Node x, double startHeight, List<Mutation> branchMutations, int numDifferingSites) {
+        return this.stochasticMapping.computeLogBranchHistoryDensity(
+                branchMutations, startHeight, x.getHeight(), this.jukesCantorRate, numDifferingSites
         );
-    }
-
-    /** Computes the transition probabilities exp(R t) of a branch from the given height down to X. */
-    private double[] computeBranchTransitionProbabilities(Node x, double startHeight) {
-        return this.stochasticMapping.computeTransitionProbabilities(this.eigenDecomposition, this.rateScale * (startHeight - x.getHeight()));
     }
 
     /* Tree Rearrangement */

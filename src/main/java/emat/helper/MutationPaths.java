@@ -129,15 +129,24 @@ public final class MutationPaths {
     }
 
     /**
-     * Returns the full sequence at the start of a path, given the full sequence at its end
-     * and the sites that differ between both, mapped to their states at the start and end.
+     * Returns the state of the given site at the given node, which is set by the lowest
+     * mutation at the site on the path from the node up to the root, or by the reference
+     * sequence if there is none. Its cost is the number of mutations on that path.
      */
-    public static int[] getStartSequence(int[] endSequence, Map<Integer, int[]> differingSites) {
-        int[] startSequence = endSequence.clone();
-        for (Map.Entry<Integer, int[]> entry : differingSites.entrySet()) {
-            startSequence[entry.getKey()] = entry.getValue()[0];
+    public static int getState(Mutations mutations, Node node, int site) {
+        for (Node branchNode = node; branchNode != null; branchNode = branchNode.getParent()) {
+            List<Mutation> branchMutations = mutations.getMutations(branchNode);
+
+            // the mutations are sorted by descending height, so walk upwards from the end
+            for (int i = branchMutations.size() - 1; i >= 0; i--) {
+                Mutation mutation = branchMutations.get(i);
+                if (mutation.site() == site) {
+                    return mutation.newState();
+                }
+            }
         }
-        return startSequence;
+
+        return mutations.getReferenceSequence()[site];
     }
 
 }

@@ -265,8 +265,11 @@ public class GeneticPrior extends GenericTreeLikelihood {
         return this.rateMatrix[from * this.numStates + to] * this.siteRate;
     }
 
-    /** Returns the total mutation rate λ at the end of the branch above the given node. */
-    private double getTotalMutationRate(Node node) {
+    /**
+     * Returns the total mutation rate λ at the end of the branch above the given node, as of
+     * the last calculation. It excludes the rate of the branch.
+     */
+    public double getTotalMutationRate(Node node) {
         return this.totalMutationRatesPerNode[node.getNr()];
     }
 
