@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.function.IntUnaryOperator;
 
 /**
@@ -43,7 +42,7 @@ public class JukesCantorStochasticMapping {
      * receive mutations. The mutations are sorted by descending height.
      */
     public List<Mutation> sampleBranchHistory(int nodeNr, double branchStartHeight, double branchEndHeight, double mutationRate,
-                                              Map<Integer, int[]> differingSites, IntUnaryOperator agreeingStates) {
+                                              SiteChanges differingSites, IntUnaryOperator agreeingStates) {
         // evolution runs forwards in time from the branch start to the branch end
 
         double duration = branchStartHeight - branchEndHeight;
@@ -58,12 +57,12 @@ public class JukesCantorStochasticMapping {
 
         // map the sites whose end states differ one by one, as they need at least one jump
 
-        for (Map.Entry<Integer, int[]> entry : differingSites.entrySet()) {
-            int startState = entry.getValue()[0];
-            int endState = entry.getValue()[1];
+        for (int slot = 0; slot < differingSites.getSize(); slot++) {
+            int startState = differingSites.getStartState(slot);
+            int endState = differingSites.getEndState(slot);
 
             int[] states = this.sampleJumpStates(expectedJumps, 1, startState, endState);
-            this.addSiteMutations(branchMutations, nodeNr, entry.getKey(), branchStartHeight, duration, states);
+            this.addSiteMutations(branchMutations, nodeNr, differingSites.getSite(slot), branchStartHeight, duration, states);
         }
 
         // map all sites whose end states agree at once (Algorithm 1)
@@ -112,7 +111,7 @@ public class JukesCantorStochasticMapping {
      * site after them is sampled in detail. On rejection, the sampling restarts at that site.
      */
     private void sampleAgreeingSiteHistories(List<Mutation> branchMutations, int nodeNr, double branchStartHeight, double duration,
-                                             double expectedJumps, Map<Integer, int[]> differingSites, IntUnaryOperator agreeingStates) {
+                                             double expectedJumps, SiteChanges differingSites, IntUnaryOperator agreeingStates) {
         // 1 - p* = P(n ≥ 2) / (1 - p1), computed without cancellation for short branches
 
         double multipleJumpsProbability = this.computePoissonTailProbability(expectedJumps, 2);
@@ -134,7 +133,7 @@ public class JukesCantorStochasticMapping {
 
             int siteIndex = (int) site;
 
-            if (differingSites.containsKey(siteIndex)) {
+            if (differingSites.containsSite(siteIndex)) {
                 // the differing sites are mapped separately, which is equivalent to filtering them out here
                 site++;
                 continue;

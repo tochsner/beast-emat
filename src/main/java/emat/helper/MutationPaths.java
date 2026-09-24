@@ -5,11 +5,7 @@ import emat.state.Mutation;
 import emat.state.Mutations;
 
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 /**
  * Reconstructs states along paths of an EMAT: the sites that differ between two points of
@@ -55,56 +51,84 @@ public final class MutationPaths {
     /**
      * Collects the changes on the path from the given ancestor down to the point at the
      * given height on the branch above the given node, ignoring mutations below that point.
-     * The changes map every site that mutates on the path to its state at the ancestor and
-     * at the point.
+     * The changes are written into the given map, which is cleared first, and map every site
+     * that mutates on the path to its state at the ancestor (start) and at the point (end).
      */
-    public static Map<Integer, int[]> collectChanges(Mutations mutations, Node ancestor, Node node, double height) {
-        Map<Integer, int[]> changes = new HashMap<>();
+    public static void collectChanges(Mutations mutations, Node ancestor, Node node, double height, SiteChanges changes) {
+        changes.clear();
 
         for (Node branchNode = node; branchNode != ancestor; branchNode = branchNode.getParent()) {
             List<Mutation> branchMutations = mutations.getMutations(branchNode);
 
-            // walk upwards, so the first mutation seen at a site sets its state at the point and the last one at the ancestor
-            for (int i = branchMutations.size() - 1; i >= 0; i--) {
-                Mutation mutation = branchMutations.get(i);
-                if (mutation.time() < height) {
-                    continue;
-                }
+            // the mutations are sorted by descending height, so the ones below the point are at the end
+            int i = branchMutations.size() - 1;
+            while (i >= 0 && branchMutations.get(i).time() < height) {
+                i--;
+            }
 
-                int[] states = changes.computeIfAbsent(mutation.site(), site -> new int[]{mutation.oldState(), mutation.newState()});
-                states[0] = mutation.oldState();
+            // walk upwards, so the first mutation seen at a site sets its state at the point and the last one at the ancestor
+            for (; i >= 0; i--) {
+                Mutation mutation = branchMutations.get(i);
+                int slot = changes.getSlot(mutation.site());
+                if (slot < 0) {
+                    changes.addSite(mutation.site(), mutation.oldState(), mutation.newState());
+                } else {
+                    changes.setStartState(slot, mutation.oldState());
+                }
             }
         }
-
-        return changes;
     }
 
     /**
      * Combines the changes along the two paths from a common ancestor down to the start and
-     * down to the end into the sites whose states differ between start and end, mapped to
-     * their states at the start and at the end. A site that changes on only one path keeps
-     * the state of the common ancestor on the other.
+     * down to the end into the sites whose states differ between start and end, which are
+     * written into the given map with their states at the start and at the end. The map is
+     * cleared first and must differ from both inputs. A site that changes on only one path
+     * keeps the state of the common ancestor on the other.
      */
-    public static Map<Integer, int[]> combineChanges(Map<Integer, int[]> startChanges, Map<Integer, int[]> endChanges) {
-        Set<Integer> sites = new HashSet<>(startChanges.keySet());
-        sites.addAll(endChanges.keySet());
+    public static void combineChanges(SiteChanges startChanges, SiteChanges endChanges, SiteChanges differingSites) {
+        differingSites.clear();
 
-        Map<Integer, int[]> differingSites = new HashMap<>();
+        // sites that change on the start path, and possibly on the end path
 
-        for (int site : sites) {
-            int[] startStates = startChanges.get(site);
-            int[] endStates = endChanges.get(site);
+        for (int slot = 0; slot < startChanges.getSize(); slot++) {
+            int site = startChanges.getSite(slot);
+            int startState = startChanges.getEndState(slot);
 
-            int ancestorState = startStates != null ? startStates[0] : endStates[0];
-            int startState = startStates != null ? startStates[1] : ancestorState;
-            int endState = endStates != null ? endStates[1] : ancestorState;
+            int endSlot = endChanges.getSlot(site);
+            int endState = endSlot >= 0 ? endChanges.getEndState(endSlot) : startChanges.getStartState(slot);
 
             if (startState != endState) {
-                differingSites.put(site, new int[]{startState, endState});
+                differingSites.addSite(site, startState, endState);
             }
         }
 
-        return differingSites;
+        // sites that change on the end path only
+
+        for (int slot = 0; slot < endChanges.getSize(); slot++) {
+            int site = endChanges.getSite(slot);
+            if (startChanges.containsSite(site)) {
+                continue;
+            }
+
+            int startState = endChanges.getStartState(slot);
+            int endState = endChanges.getEndState(slot);
+
+            if (startState != endState) {
+                differingSites.addSite(site, startState, endState);
+            }
+        }
+    }
+
+    /** Counts the sites whose states differ between the start and the end of the given changes. */
+    public static int countDifferingSites(SiteChanges changes) {
+        int numDifferingSites = 0;
+        for (int slot = 0; slot < changes.getSize(); slot++) {
+            if (changes.getStartState(slot) != changes.getEndState(slot)) {
+                numDifferingSites++;
+            }
+        }
+        return numDifferingSites;
     }
 
     /**

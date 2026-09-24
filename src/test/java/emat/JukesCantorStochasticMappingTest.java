@@ -2,12 +2,12 @@ package emat;
 
 import beast.base.util.Randomizer;
 import emat.helper.JukesCantorStochasticMapping;
+import emat.helper.SiteChanges;
 import emat.state.Mutation;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -75,7 +75,9 @@ public class JukesCantorStochasticMappingTest {
         Randomizer.setSeed(1);
 
         JukesCantorStochasticMapping mapping = new JukesCantorStochasticMapping(NUM_STATES, NUM_SITES);
-        Map<Integer, int[]> differingSites = Map.of(1, new int[]{0, 2}, 4, new int[]{3, 1});
+        SiteChanges differingSites = new SiteChanges(NUM_SITES);
+        differingSites.addSite(1, 0, 2);
+        differingSites.addSite(4, 3, 1);
 
         // sample histories and count the jumps per site, pooling the agreeing and the differing sites
 
@@ -98,10 +100,10 @@ public class JukesCantorStochasticMappingTest {
                 if (numJumps[site] > MAX_COMPARED_JUMPS) {
                     continue;
                 }
-                if (differingSites.containsKey(site)) {
-                    differingCounts[numJumps[site]] += 1.0 / (differingSites.size() * numSamples);
+                if (differingSites.containsSite(site)) {
+                    differingCounts[numJumps[site]] += 1.0 / (differingSites.getSize() * numSamples);
                 } else {
-                    agreeingCounts[numJumps[site]] += 1.0 / ((NUM_SITES - differingSites.size()) * numSamples);
+                    agreeingCounts[numJumps[site]] += 1.0 / ((NUM_SITES - differingSites.getSize()) * numSamples);
                 }
             }
         }
@@ -128,11 +130,11 @@ public class JukesCantorStochasticMappingTest {
      * Checks that the mutations are sorted by descending height within the branch, and that
      * the mutations of every site form a chain from its start to its end state.
      */
-    private void checkHistory(List<Mutation> branchMutations, Map<Integer, int[]> differingSites) {
+    private void checkHistory(List<Mutation> branchMutations, SiteChanges differingSites) {
         int[] states = new int[NUM_SITES];
         double[] previousHeights = new double[NUM_SITES];
         for (int site = 0; site < NUM_SITES; site++) {
-            states[site] = differingSites.containsKey(site) ? differingSites.get(site)[0] : site % NUM_STATES;
+            states[site] = differingSites.containsSite(site) ? differingSites.getStartState(differingSites.getSlot(site)) : site % NUM_STATES;
             previousHeights[site] = START_HEIGHT;
         }
 
@@ -148,7 +150,7 @@ public class JukesCantorStochasticMappingTest {
         }
 
         for (int site = 0; site < NUM_SITES; site++) {
-            int endState = differingSites.containsKey(site) ? differingSites.get(site)[1] : site % NUM_STATES;
+            int endState = differingSites.containsSite(site) ? differingSites.getEndState(differingSites.getSlot(site)) : site % NUM_STATES;
             assertEquals(endState, states[site]);
         }
     }

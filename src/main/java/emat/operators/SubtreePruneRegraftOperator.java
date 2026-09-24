@@ -9,10 +9,10 @@ import emat.helper.BranchMutations;
 import emat.helper.JukesCantorStochasticMapping;
 import emat.state.Mutation;
 import emat.helper.MutationPaths;
+import emat.helper.SiteChanges;
 import emat.state.Mutations;
 import emat.prior.GeneticPrior;
 
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +30,12 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     GeneticPrior geneticPrior;
     Tree tree;
     JukesCantorStochasticMapping stochasticMapping;
+    BranchMutations branchMutations;
+
+    // reusable site maps for the changes along the paths of the current proposal and the resulting differing sites
+    SiteChanges subtreeChanges;
+    SiteChanges newParentChanges;
+    SiteChanges differingSites;
 
     // the model of the current proposal on the branch above X: R = branch rate * site rate * Q, and the fictitious Jukes-Cantor rate μ̃
     double[] branchRateMatrix;
@@ -48,9 +54,14 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         this.mutations = this.mutationsInput.get();
         this.geneticPrior = this.geneticPriorInput.get();
         this.tree = this.treeInput.get();
-        this.stochasticMapping = new JukesCantorStochasticMapping(
-                this.mutations.getAlignment().getMaxStateCount(), this.mutations.getReferenceSequence().length
-        );
+
+        int numSites = this.mutations.getReferenceSequence().length;
+        this.stochasticMapping = new JukesCantorStochasticMapping(this.mutations.getAlignment().getMaxStateCount(), numSites);
+        this.branchMutations = new BranchMutations(numSites);
+
+        this.subtreeChanges = new SiteChanges(numSites);
+        this.newParentChanges = new SiteChanges(numSites);
+        this.differingSites = new SiteChanges(numSites);
     }
 
     /**
@@ -89,9 +100,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         // find the sites that differ between the ends of the old P–X branch, which are exactly the changes on it
 
         List<Mutation> oldSubtreeMutations = this.mutations.getMutations(x);
-        Map<Integer, int[]> oldDifferingSites = MutationPaths.combineChanges(
-                new HashMap<>(), MutationPaths.collectChanges(this.mutations, parent, x, x.getHeight())
-        );
+        MutationPaths.collectChanges(this.mutations, parent, x, x.getHeight(), this.subtreeChanges);
+        int oldNumDifferingSites = MutationPaths.countDifferingSites(this.subtreeChanges);
 
         // P' lies on the branch above this node in the current tree, which is the old P branch if P shifts upwards
 
@@ -100,25 +110,25 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         // find the MRCA of X and P', then the changes from it down to both, which the new P'–X branch has to compensate
 
         Node mrca = MutationPaths.findMrca(x, newParentBranchNode.getParent());
-        Map<Integer, int[]> subtreeChanges = MutationPaths.collectChanges(this.mutations, mrca, x, x.getHeight());
-        Map<Integer, int[]> newParentChanges = MutationPaths.collectChanges(this.mutations, mrca, newParentBranchNode, newParentHeight);
-        Map<Integer, int[]> newDifferingSites = MutationPaths.combineChanges(newParentChanges, subtreeChanges);
+        MutationPaths.collectChanges(this.mutations, mrca, x, x.getHeight(), this.subtreeChanges);
+        MutationPaths.collectChanges(this.mutations, mrca, newParentBranchNode, newParentHeight, this.newParentChanges);
+        MutationPaths.combineChanges(this.newParentChanges, this.subtreeChanges, this.differingSites);
 
         // sample the history on the new P'–X branch while the tree still holds the sequence of X, which the move keeps
 
-        List<Mutation> newSubtreeMutations = this.sampleBranchHistory(x, newParentHeight, newDifferingSites);
+        List<Mutation> newSubtreeMutations = this.sampleBranchHistory(x, newParentHeight, this.differingSites);
 
         // rearrange the mutations: join G–P–S into G–S, then split G'–S' into G'–P'–S'
 
         Map<Node, List<Mutation>> newBranchMutations = new LinkedHashMap<>();
 
-        List<Mutation> joinedMutations = BranchMutations.joinBranches(
+        List<Mutation> joinedMutations = this.branchMutations.joinBranches(
                 this.mutations.getMutations(parent), this.mutations.getMutations(sibling), sibling.getNr(), grandparent.getHeight()
         );
         newBranchMutations.put(sibling, joinedMutations);
 
         List<Mutation> newSiblingMutations = isHeightShift ? joinedMutations : this.mutations.getMutations(newSibling);
-        BranchMutations.Split split = BranchMutations.splitBranch(newSiblingMutations, newParentHeight, parent.getNr(), newSibling.getNr());
+        BranchMutations.Split split = this.branchMutations.splitBranch(newSiblingMutations, newParentHeight, parent.getNr(), newSibling.getNr());
         newBranchMutations.put(parent, split.upperMutations());
         newBranchMutations.put(newSibling, split.lowerMutations());
 
@@ -139,8 +149,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         // combine the grafting and the mutation proposal probabilities
 
-        double logForwardDensity = this.computeLogBranchHistoryDensity(x, newParentHeight, newSubtreeMutations, newDifferingSites.size());
-        double logBackwardDensity = this.computeLogBranchHistoryDensity(x, oldParentHeight, oldSubtreeMutations, oldDifferingSites.size());
+        double logForwardDensity = this.computeLogBranchHistoryDensity(x, newParentHeight, newSubtreeMutations, this.differingSites.getSize());
+        double logBackwardDensity = this.computeLogBranchHistoryDensity(x, oldParentHeight, oldSubtreeMutations, oldNumDifferingSites);
 
         return graftingPoint.logHastingsRatio() + logBackwardDensity - logForwardDensity;
     }
@@ -192,7 +202,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
      * approximate model in the acceptance probability. The returned mutations belong to X
      * and are sorted by descending height.
      */
-    protected List<Mutation> sampleBranchHistory(Node x, double startHeight, Map<Integer, int[]> differingSites) {
+    protected List<Mutation> sampleBranchHistory(Node x, double startHeight, SiteChanges differingSites) {
         return this.stochasticMapping.sampleBranchHistory(
                 x.getNr(), startHeight, x.getHeight(), this.jukesCantorRate, differingSites,
                 site -> MutationPaths.getState(this.mutations, x, site)

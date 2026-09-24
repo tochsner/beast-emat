@@ -11,7 +11,6 @@ import emat.state.Mutation;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -103,9 +102,8 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
             oldIndex++;
         }
 
-        int oldNumDifferences = MutationPaths.combineChanges(
-                new HashMap<>(), MutationPaths.collectChanges(this.mutations, parent, x, x.getHeight())
-        ).size();
+        MutationPaths.collectChanges(this.mutations, parent, x, x.getHeight(), this.subtreeChanges);
+        int oldNumDifferences = MutationPaths.countDifferingSites(this.subtreeChanges);
 
         Region oldRegion = this.createRegion(this.sibling, oldIndex, oldNumDifferences);
 
