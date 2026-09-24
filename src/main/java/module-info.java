@@ -1,3 +1,4 @@
+import emat.alignment.FitchFilteredAlignment;
 import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.IntervalScaleOperator;
 import emat.operators.MutationDirectedSprOperator;
@@ -16,6 +17,7 @@ open module my.beast.example {
     requires org.apache.commons.statistics.distribution;
     requires java.xml;
 
+    exports emat.alignment;
     exports emat.prior;
     exports emat.operators;
     exports emat.helper;
@@ -24,6 +26,7 @@ open module my.beast.example {
 
     provides beast.base.core.BEASTInterface with
             Mutations,
+            FitchFilteredAlignment,
             GeneticPrior,
             ParsimonyMutationsInitialiser,
             MutationTimeOperator,
