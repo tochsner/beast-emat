@@ -30,6 +30,9 @@ public class Mutations extends StateNode {
     private List<Mutation>[] mutationsAboveNode;
     private List<Mutation>[] storedMutationsAboveNode;
 
+    // whether the mutations above a node changed since the mutations were last marked clean
+    private boolean[] isBranchDirty;
+
     // whether the stored mutations hold a snapshot that the current proposal has not restored yet
     private boolean hasStoredMutations = false;
 
@@ -51,6 +54,9 @@ public class Mutations extends StateNode {
 
         this.setReferenceSequence();
 
+        this.isBranchDirty = new boolean[this.numNodes];
+        Arrays.fill(this.isBranchDirty, true);
+
         this.storedMutationsAboveNode = new List[this.numNodes];
         this.storeMutations();
     }
@@ -63,6 +69,7 @@ public class Mutations extends StateNode {
     public void applyMutations(Node node, List<Mutation> mutations, Operator operator) {
         this.startEditing(operator);
         this.mutationsAboveNode[node.getNr()] = List.copyOf(mutations);
+        this.isBranchDirty[node.getNr()] = true;
         this.performSanityChecks(node.getNr());
     }
 
@@ -79,6 +86,7 @@ public class Mutations extends StateNode {
             this.mutationsAboveNode[nodeNr] = List.copyOf(mutationsAboveNode.get(nodeNr));
             this.performSanityChecks(nodeNr);
         }
+        Arrays.fill(this.isBranchDirty, true);
 
         this.storeMutations();
     }
@@ -229,6 +237,14 @@ public class Mutations extends StateNode {
         return this.mutationsAboveNode[node.getNr()];
     }
 
+    /**
+     * Returns whether the mutations above the given node may have changed since the
+     * mutations were last marked clean, i.e. since the end of the previous MCMC step.
+     */
+    public boolean isDirty(Node node) {
+        return this.isBranchDirty[node.getNr()];
+    }
+
     public TreeInterface getTree() {
         return this.tree;
     }
@@ -246,6 +262,7 @@ public class Mutations extends StateNode {
     @Override
     public void setEverythingDirty(boolean isDirty) {
         this.setSomethingIsDirty(isDirty);
+        Arrays.fill(this.isBranchDirty, isDirty);
         if (!isDirty) {
             this.hasStoredMutations = false;
         }
@@ -293,6 +310,7 @@ public class Mutations extends StateNode {
             Mutations copy = (Mutations) this.clone();
             copy.mutationsAboveNode = this.mutationsAboveNode.clone();
             copy.storedMutationsAboveNode = this.storedMutationsAboveNode.clone();
+            copy.isBranchDirty = this.isBranchDirty.clone();
             return copy;
         } catch (CloneNotSupportedException e) {
             throw new RuntimeException(e);
@@ -321,6 +339,7 @@ public class Mutations extends StateNode {
     public void assignFromFragile(StateNode other) {
         Mutations source = (Mutations) other;
         System.arraycopy(source.mutationsAboveNode, 0, this.mutationsAboveNode, 0, this.numNodes);
+        Arrays.fill(this.isBranchDirty, true);
         this.setSomethingIsDirty(false);
     }
 
@@ -337,6 +356,9 @@ public class Mutations extends StateNode {
 
         this.mutationsAboveNode = source.mutationsAboveNode.clone();
         this.storedMutationsAboveNode = source.storedMutationsAboveNode.clone();
+
+        this.isBranchDirty = new boolean[this.numNodes];
+        Arrays.fill(this.isBranchDirty, true);
     }
 
     /* Unsupported StateNode methods */

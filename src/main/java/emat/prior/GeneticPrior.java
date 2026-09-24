@@ -47,17 +47,10 @@ public class GeneticPrior extends GenericTreeLikelihood {
     double[] branchLogPs;
     double[] storedBranchLogPs;
 
-    // the root that the cached values were computed for, or -1 if there are none
-    int cachedRootNr = -1;
-    int storedCachedRootNr = -1;
+    // whether the caches hold the values of a previous calculation
+    boolean isInitialised = false;
 
     int[] referenceSequence;
-
-    // the log frequencies and the total mutation rate of the reference sequence, which only change with the model
-    double referenceLogP;
-    double storedReferenceLogP;
-    double referenceMutationRate;
-    double storedReferenceMutationRate;
 
     @Override
     public void initAndValidate() {
@@ -90,8 +83,6 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
         this.referenceSequence = this.mutations.getReferenceSequence();
 
-        // set up the caches
-
         int numNodes = this.tree.getNodeCount();
         this.totalMutationRatesPerNode = new double[numNodes];
         this.storedTotalMutationRatesPerNode = new double[numNodes];
@@ -102,117 +93,65 @@ public class GeneticPrior extends GenericTreeLikelihood {
     /**
      * Computes the genetic prior and caches it as logP. Only the branches whose contribution
      * may have changed since the previous call are recomputed: those whose node is dirty in
-     * the tree, whose mutations are dirty, or whose parent's total mutation rate changed. An SPR
-     * move therefore only touches the few branches around the pruned and the grafted subtree.
-     * Everything is recomputed if the evolutionary model or the root changed.
+     * the tree, whose mutations are dirty, or whose parent's total mutation rate changed. An
+     * SPR move therefore only touches the few branches around the pruned and the grafted
+     * subtree. Everything is recomputed on the first call or if the evolutionary model changed.
      */
     @Override
     public double calculateLogP() {
         Node root = this.tree.getRoot();
 
-        // fetch and cache current rates
+        // fetch and cache rates
 
         this.rateMatrix = this.computeRateMatrix();
         // category 0 because we don't support site-rate variation yet
         this.siteRate = this.siteModel.getRateForCategory(0, root);
 
-        // update each branch contribution
+        // update the branch contributions if needed
 
-        boolean isEverythingDirty = this.cachedRootNr != root.getNr()
+        boolean isEverythingDirty = !this.isInitialised
                 || this.siteModel.somethingIsDirty()
                 || (this.substitutionModel instanceof CalculationNode calculationNode && calculationNode.somethingIsDirty())
                 || this.branchRateModel.somethingIsDirty();
 
-        if (isEverythingDirty) {
-            this.updateReferenceContributions(root);
-        }
         this.updateBranches(root, false, isEverythingDirty);
-        this.cachedRootNr = root.getNr();
+        this.isInitialised = true;
 
-        // sum up and return each branch contribution
+        // sum in node order, so that rounding does not depend on which branches were updated
 
-        this.logP = this.sumBranchLogPs();
+        this.logP = 0.0;
+        for (double branchLogP : this.branchLogPs) {
+            this.logP += branchLogP;
+        }
+
         return this.logP;
     }
 
-    /** Sums the contributions of all branches in node order, so that rounding does not depend on which branches were updated. */
-    private double sumBranchLogPs() {
-        double logP = 0.0;
-        for (double branchLogP : this.branchLogPs) {
-            logP += branchLogP;
-        }
-        return logP;
-    }
-
-    /* Branch Updates */
-
     /**
-     * Recomputes the log frequencies and the total mutation rate λ of the reference
-     * sequence, which sits above the root. Both depend on the model only.
+     * Recomputes the contribution and the total mutation rate of every dirty branch at or
+     * below the given node. A branch is dirty if its node is dirty in the tree, if its
+     * mutations are dirty, or if the total mutation rate of its parent changed.
      */
-    private void updateReferenceContributions(Node root) {
-        double[] substitutionModelFrequencies = this.substitutionModel.getFrequencies();
+    private void updateBranches(Node node, boolean isParentRateChanged, boolean isEverythingDirty) {
+        boolean isRateChanged = false;
 
-        this.referenceLogP = 0.0;
-        this.referenceMutationRate = 0.0;
-        for (int i = 0; i < this.referenceSequence.length; i++) {
-            this.referenceLogP += Math.log(substitutionModelFrequencies[this.referenceSequence[i]]);
-            this.referenceMutationRate += this.getEscapeRate(root, this.referenceSequence[i], i);
-        }
-    }
-
-    /**
-     * Updates the total mutation rate and the branch contribution of the given node and of
-     * every node below it. The rate of a node is recomputed if its parent's rate changed, if
-     * it has a new parent, or if its mutations changed. The branch contribution is recomputed
-     * if any of its inputs changed: the rate of the parent, the heights of the node or its
-     * parent, or the mutations on the branch.
-     */
-    private void updateBranches(Node node, boolean isParentChanged, boolean isEverythingDirty) {
-        boolean isNodeDirty = isEverythingDirty || node.isDirty() != Tree.IS_CLEAN || this.mutations.isDirty(node);
-
-        boolean isChanged = false;
-        if (isNodeDirty || isParentChanged) {
-            isChanged = this.updateTotalMutationRate(node) || isEverythingDirty;
+        if (isEverythingDirty || isParentRateChanged || node.isDirty() != Tree.IS_CLEAN || this.mutations.isDirty(node)) {
+            double oldRate = this.getTotalMutationRate(node);
             this.branchLogPs[node.getNr()] = this.calculateBranchContribution(node);
+
+            // the same mutations summed along a different path only differ by rounding, which must not spread down the tree
+            isRateChanged = isEverythingDirty
+                    || Math.abs(this.getTotalMutationRate(node) - oldRate) > RATE_TOLERANCE * Math.abs(oldRate);
         }
 
         for (Node child : node.getChildren()) {
-            this.updateBranches(child, isChanged, isEverythingDirty);
+            this.updateBranches(child, isRateChanged, isEverythingDirty);
         }
     }
 
     /**
-     * Recomputes the total mutation rate λ at the end of the branch above the given node from
-     * the rate at its start, i.e. of the parent or of the reference sequence for the root.
-     * The mutations on the branch shift the rate by the difference of the escape rates.
-     * Returns whether the rate changed. Changes within the rounding tolerance are ignored and
-     * keep the old rate, as the same mutations summed along a different path, e.g. after an
-     * SPR move, would otherwise mark the whole subtree below as changed.
-     */
-    private boolean updateTotalMutationRate(Node node) {
-        double totalMutationRate = node.isRoot()
-                ? this.referenceMutationRate
-                : this.getTotalMutationRate(node.getParent());
-
-        for (Mutation mutation : this.mutations.getMutations(node)) {
-            totalMutationRate += this.getEscapeRate(node, mutation.newState(), mutation.site())
-                    - this.getEscapeRate(node, mutation.oldState(), mutation.site());
-        }
-
-        double oldTotalMutationRate = this.totalMutationRatesPerNode[node.getNr()];
-        if (Math.abs(totalMutationRate - oldTotalMutationRate) <= RATE_TOLERANCE * Math.abs(oldTotalMutationRate)) {
-            return false;
-        }
-
-        this.totalMutationRatesPerNode[node.getNr()] = totalMutationRate;
-        return true;
-    }
-
-    /* Branch Contributions */
-
-    /**
-     * Computes the likelihood contribution of a given branch.
+     * Computes the likelihood contribution of a given branch and records the total mutation
+     * rate λ at its end.
      */
     private double calculateBranchContribution(Node node) {
         if (node.isRoot()) {
@@ -222,13 +161,21 @@ public class GeneticPrior extends GenericTreeLikelihood {
         }
     }
 
-    /** Computes the genetic prior for the root branch. */
+    /**
+     * Computes the genetic prior for the root branch. The root starts from the rate of the
+     * reference sequence above it.
+     */
     private double calculateRootBranchContribution(Node root) {
+        double branchLogP = 0.0;
+        double rate = 0.0;
         double[] substitutionModelFrequencies = this.substitutionModel.getFrequencies();
 
-        // start from the reference state contribution
+        // add reference state contribution
 
-        double branchLogP = this.referenceLogP;
+        for (int i = 0; i < this.referenceSequence.length; i++) {
+            branchLogP += Math.log(substitutionModelFrequencies[this.referenceSequence[i]]);
+            rate += this.getEscapeRate(root, this.referenceSequence[i], i);
+        }
 
         // add root mutation contributions
 
@@ -237,7 +184,11 @@ public class GeneticPrior extends GenericTreeLikelihood {
         for (Mutation mutation : mutations) {
             branchLogP += Math.log(substitutionModelFrequencies[mutation.newState()])
                     - Math.log(substitutionModelFrequencies[mutation.oldState()]);
+            rate += this.getEscapeRate(root, mutation.newState(), mutation.site())
+                    - this.getEscapeRate(root, mutation.oldState(), mutation.site());
         }
+
+        this.totalMutationRatesPerNode[root.getNr()] = rate;
 
         return branchLogP;
     }
@@ -270,6 +221,8 @@ public class GeneticPrior extends GenericTreeLikelihood {
         }
 
         branchLogP -= branchRate * rate * (previousHeight - node.getHeight());
+
+        this.totalMutationRatesPerNode[node.getNr()] = rate;
 
         return branchLogP;
     }
@@ -323,9 +276,6 @@ public class GeneticPrior extends GenericTreeLikelihood {
     public void store() {
         System.arraycopy(this.totalMutationRatesPerNode, 0, this.storedTotalMutationRatesPerNode, 0, this.totalMutationRatesPerNode.length);
         System.arraycopy(this.branchLogPs, 0, this.storedBranchLogPs, 0, this.branchLogPs.length);
-        this.storedCachedRootNr = this.cachedRootNr;
-        this.storedReferenceLogP = this.referenceLogP;
-        this.storedReferenceMutationRate = this.referenceMutationRate;
         super.store();
     }
 
@@ -339,9 +289,6 @@ public class GeneticPrior extends GenericTreeLikelihood {
         this.branchLogPs = this.storedBranchLogPs;
         this.storedBranchLogPs = branchLogPs;
 
-        this.cachedRootNr = this.storedCachedRootNr;
-        this.referenceLogP = this.storedReferenceLogP;
-        this.referenceMutationRate = this.storedReferenceMutationRate;
         super.restore();
     }
 
