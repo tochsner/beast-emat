@@ -2,9 +2,11 @@ import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.IntervalScaleOperator;
 import emat.operators.MutationDirectedSprOperator;
 import emat.operators.MutationTimeOperator;
+import emat.operators.InnerNodeDisplacementOperator;
 import emat.operators.SiteHistoryGibbsOperator;
 import emat.operators.SubtreeSlideOperator;
 import emat.operators.WilsonBaldingOperator;
+import emat.operators.RootScaleOperator;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
 
@@ -25,7 +27,9 @@ open module my.beast.example {
             GeneticPrior,
             ParsimonyMutationsInitialiser,
             MutationTimeOperator,
+            InnerNodeDisplacementOperator,
             SiteHistoryGibbsOperator,
+            RootScaleOperator,
             SubtreeSlideOperator,
             WilsonBaldingOperator,
             IntervalScaleOperator,
