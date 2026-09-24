@@ -72,6 +72,15 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
     @Override
     public double calculateLogP() {
+        this.logP = this.computeLogDensity();
+        return this.logP;
+    }
+
+    /**
+     * Computes the genetic prior of the current tree and mutations without caching it as
+     * logP. Unlike calculateLogP, this is safe to call from within an operator.
+     */
+    public double computeLogDensity() {
         this.rateMatrix = this.computeRateMatrix();
 
         // category 0 because we don't support site-rate variation yet
@@ -86,7 +95,6 @@ public class GeneticPrior extends GenericTreeLikelihood {
             logP += this.calculateBranchContribution(node);
         }
 
-        this.logP = logP;
         return logP;
     }
 

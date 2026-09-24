@@ -72,6 +72,9 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         Node sibling = this.getOtherChild(parent, x);
         Node grandparent = parent.getParent();
 
+        // the grafting strategy may use the model of the branch above X
+        this.updateModel(x);
+
         GraftingPoint graftingPoint = this.proposeGraftingPoint(x);
         if (graftingPoint == null || !this.isValidGraftingPoint(x, graftingPoint)) {
             return Double.NEGATIVE_INFINITY;
@@ -82,8 +85,6 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         boolean isHeightShift = newSibling == sibling;
         double newParentHeight = graftingPoint.newParentHeight();
         double oldParentHeight = parent.getHeight();
-
-        this.updateModel(x);
 
         // find the sites that differ between the ends of the old P–X branch, which are exactly the changes on it
 
