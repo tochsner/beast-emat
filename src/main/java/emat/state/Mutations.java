@@ -2,12 +2,14 @@ package emat.state;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
+import beast.base.core.Log;
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.datatype.DataType;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.inference.Operator;
 import beast.base.inference.StateNode;
+import beast.base.util.Randomizer;
 
 import java.io.PrintStream;
 import java.util.*;
@@ -70,7 +72,11 @@ public class Mutations extends StateNode {
         this.startEditing(operator);
         this.mutationsAboveNode[node.getNr()] = List.copyOf(mutations);
         this.isBranchDirty[node.getNr()] = true;
-        this.performSanityChecks(node.getNr());
+
+        // perform sanity checks from time to time
+        if (Randomizer.nextDouble() < 0.01) {
+            this.performSanityChecks(node.getNr());
+        }
     }
 
     /**
