@@ -9,6 +9,9 @@ import beast.base.spec.evolution.branchratemodel.StrictClockModel;
 import beast.base.spec.evolution.sitemodel.SiteModel;
 import beast.base.spec.evolution.substitutionmodel.JukesCantor;
 import beast.base.spec.inference.parameter.RealScalarParam;
+import emat.prior.GeneticPrior;
+import emat.state.Mutation;
+import emat.state.Mutations;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;

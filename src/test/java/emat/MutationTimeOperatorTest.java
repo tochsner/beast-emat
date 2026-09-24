@@ -5,6 +5,9 @@ import beast.base.evolution.alignment.Sequence;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeParser;
 import beast.base.util.Randomizer;
+import emat.operators.MutationTimeOperator;
+import emat.state.Mutation;
+import emat.state.Mutations;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;

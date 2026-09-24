@@ -10,6 +10,11 @@ import beast.base.spec.evolution.sitemodel.SiteModel;
 import beast.base.spec.evolution.substitutionmodel.JukesCantor;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.util.Randomizer;
+import emat.initalisation.ParsimonyMutationsInitialiser;
+import emat.operators.SiteHistoryGibbsOperator;
+import emat.prior.GeneticPrior;
+import emat.state.Mutation;
+import emat.state.Mutations;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayDeque;
