@@ -1,4 +1,4 @@
-package emat;
+package emat.prior;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
@@ -11,6 +11,8 @@ import beast.base.spec.evolution.branchratemodel.Base;
 import beast.base.spec.evolution.branchratemodel.StrictClockModel;
 import beast.base.spec.evolution.likelihood.GenericTreeLikelihood;
 import beast.base.spec.evolution.sitemodel.SiteModel;
+import emat.state.Mutation;
+import emat.state.Mutations;
 
 import java.util.List;
 
@@ -23,9 +25,9 @@ public class GeneticPrior extends GenericTreeLikelihood {
     Alignment alignment;
     Mutations mutations;
 
-    SiteModel.Base siteModel;
-    SubstitutionModel substitutionModel;
-    Base branchRateModel;
+    public SiteModel.Base siteModel;
+    public SubstitutionModel substitutionModel;
+    public Base branchRateModel;
 
     int numStates;
 
@@ -160,7 +162,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
      * GTR are unreliable, as their eigen decomposition overwrites the stored matrix in place.
      * The substitution model is shared by all branches, so the matrix of the root is used.
      */
-    double[] computeRateMatrix() {
+    public double[] computeRateMatrix() {
         EigenDecomposition eigenDecomposition = this.substitutionModel.getEigenDecomposition(this.tree.getRoot());
         double[] eigenVectors = eigenDecomposition.getEigenVectors();
         double[] inverseEigenVectors = eigenDecomposition.getInverseEigenVectors();

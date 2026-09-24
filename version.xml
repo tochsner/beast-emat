@@ -2,10 +2,12 @@
     <depends on='BEAST.base' atleast='2.8.0'/>
 
     <service type="beast.base.core.BEASTInterface">
-        <provider classname="emat.Mutations"/>
-        <provider classname="emat.GeneticPrior"/>
-        <provider classname="emat.ParsimonyMutationsInitialiser"/>
-        <provider classname="emat.MutationTimeOperator"/>
-        <provider classname="emat.SiteHistoryGibbsOperator"/>
+        <provider classname="emat.state.Mutations"/>
+        <provider classname="emat.prior.GeneticPrior"/>
+        <provider classname="emat.initalisation.ParsimonyMutationsInitialiser"/>
+        <provider classname="emat.operators.MutationTimeOperator"/>
+        <provider classname="emat.operators.SiteHistoryGibbsOperator"/>
+        <provider classname="emat.operators.SubtreeSlideOperator"/>
+        <provider classname="emat.operators.WilsonBaldingOperator"/>
     </service>
 </package>

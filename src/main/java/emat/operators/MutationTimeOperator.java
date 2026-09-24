@@ -1,4 +1,4 @@
-package emat;
+package emat.operators;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
@@ -6,6 +6,8 @@ import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.inference.Operator;
 import beast.base.util.Randomizer;
+import emat.state.Mutation;
+import emat.state.Mutations;
 
 import java.util.ArrayList;
 import java.util.Comparator;

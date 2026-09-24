@@ -1,4 +1,4 @@
-package emat;
+package emat.state;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
@@ -30,6 +30,9 @@ public class Mutations extends StateNode {
     private List<Mutation>[] mutationsAboveNode;
     private List<Mutation>[] storedMutationsAboveNode;
 
+    // whether the stored mutations hold a snapshot that the current proposal has not restored yet
+    private boolean hasStoredMutations = false;
+
     @Override
     public void initAndValidate() {
         this.tree = this.treeInput.get();
@@ -49,7 +52,7 @@ public class Mutations extends StateNode {
         this.setReferenceSequence();
 
         this.storedMutationsAboveNode = new List[this.numNodes];
-        this.store();
+        this.storeMutations();
     }
 
     /* State Management */
@@ -77,7 +80,7 @@ public class Mutations extends StateNode {
             this.performSanityChecks(nodeNr);
         }
 
-        this.store();
+        this.storeMutations();
     }
 
     public int[] getReferenceSequence() {
@@ -236,21 +239,51 @@ public class Mutations extends StateNode {
 
     /* StateNode methods */
 
+    /**
+     * Marks the mutations as clean or dirty. MCMC calls this with false after every step,
+     * whether it was accepted or rejected, which ends the current proposal.
+     */
     @Override
     public void setEverythingDirty(boolean isDirty) {
         this.setSomethingIsDirty(isDirty);
+        if (!isDirty) {
+            this.hasStoredMutations = false;
+        }
     }
 
+    /**
+     * Stores the mutations before a proposal changes them. The mutations take the tree as an
+     * input, so BEAST also treats them as a calculation node downstream of the tree: after a
+     * proposal that changes the tree, State calls store() and restore() on them a second
+     * time. Only the first store() of a proposal takes a snapshot, as a later one would
+     * overwrite it with the proposed mutations.
+     */
     @Override
     protected void store() {
-        System.arraycopy(this.mutationsAboveNode, 0, this.storedMutationsAboveNode, 0, this.numNodes);
+        if (!this.hasStoredMutations) {
+            this.storeMutations();
+            this.hasStoredMutations = true;
+        }
     }
 
+    /**
+     * Restores the mutations from before the proposal. Only the first restore() of a
+     * proposal swaps back, as a second one would reinstate the rejected mutations.
+     */
     @Override
     public void restore() {
+        if (!this.hasStoredMutations) {
+            return;
+        }
+
         List<Mutation>[] mutationsAboveNode = this.mutationsAboveNode;
         this.mutationsAboveNode = this.storedMutationsAboveNode;
         this.storedMutationsAboveNode = mutationsAboveNode;
+        this.hasStoredMutations = false;
+    }
+
+    private void storeMutations() {
+        System.arraycopy(this.mutationsAboveNode, 0, this.storedMutationsAboveNode, 0, this.numNodes);
     }
 
     /** Returns a deep copy of the mutations. */

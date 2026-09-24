@@ -1,4 +1,4 @@
-package emat;
+package emat.state;
 
 /**
  * A single mutation at one site on the branch above the given node. Both times are BEAST
