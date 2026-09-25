@@ -96,6 +96,31 @@ public class Mutations extends StateNode {
 
         this.storeMutations();
     }
+    
+    /**
+     * Rebases the reference sequence onto the root sequence, so that the root carries no
+     * mutations anymore. This does not change the sequence of any node. The reference array
+     * is updated in place, as other components hold on to it. This must not be called
+     * during a proposal, as the stored mutations above the root would then refer to the
+     * previous reference sequence.
+     */
+    public void setReferenceToRoot() {
+        if (this.hasStoredMutations) {
+            throw new IllegalStateException("Cannot change the reference sequence during a proposal.");
+        }
+
+        int rootNr = this.tree.getRoot().getNr();
+
+        // apply the root mutations in order, so the last one at a site determines its root state
+        for (Mutation mutation : this.mutationsAboveNode[rootNr]) {
+            this.referenceSequence[mutation.site()] = mutation.newState();
+        }
+
+        this.mutationsAboveNode[rootNr] = List.of();
+        this.storedMutationsAboveNode[rootNr] = List.of();
+        this.isBranchDirty[rootNr] = true;
+        this.setSomethingIsDirty(true);
+    }
 
     public int[] getReferenceSequence() {
         return this.referenceSequence;

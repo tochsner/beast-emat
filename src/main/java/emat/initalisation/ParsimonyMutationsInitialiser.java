@@ -65,6 +65,7 @@ public class ParsimonyMutationsInitialiser extends BEASTObject implements StateN
         this.chooseStates(root, this.getReferencePatternStates());
 
         this.mutations.initialiseMutations(this.createMutations());
+        this.mutations.setReferenceToRoot();
     }
 
     @Override
