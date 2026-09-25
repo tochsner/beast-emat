@@ -98,7 +98,7 @@ public class InnerNodeDisplacementOperator extends TreeOperator {
 
             List<Mutation> childMutations = this.mutations.getMutations(child);
             if (!childMutations.isEmpty()) {
-                minHeight = Math.max(minHeight, childMutations.get(0).time());
+                minHeight = Math.max(minHeight, childMutations.getFirst().time());
             }
         }
 
@@ -115,7 +115,7 @@ public class InnerNodeDisplacementOperator extends TreeOperator {
 
         List<Mutation> branchMutations = this.mutations.getMutations(node);
         if (!branchMutations.isEmpty()) {
-            maxHeight = Math.min(maxHeight, branchMutations.get(branchMutations.size() - 1).time());
+            maxHeight = Math.min(maxHeight, branchMutations.getLast().time());
         }
 
         return maxHeight;

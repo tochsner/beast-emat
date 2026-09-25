@@ -13,5 +13,6 @@
         <provider classname="emat.operators.MutationDirectedSprOperator"/>
         <provider classname="emat.operators.InnerNodeDisplacementOperator"/>
         <provider classname="emat.operators.RootScaleOperator"/>
+        <provider classname="emat.operators.BranchReformOperator"/>
     </service>
 </package>

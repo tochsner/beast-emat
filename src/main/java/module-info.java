@@ -1,5 +1,6 @@
 import emat.alignment.FitchFilteredAlignment;
 import emat.initalisation.ParsimonyMutationsInitialiser;
+import emat.operators.BranchReformOperator;
 import emat.operators.IntervalScaleOperator;
 import emat.operators.MutationDirectedSprOperator;
 import emat.operators.MutationTimeOperator;
@@ -36,5 +37,6 @@ open module my.beast.example {
             SubtreeSlideOperator,
             WilsonBaldingOperator,
             IntervalScaleOperator,
-            MutationDirectedSprOperator;
+            MutationDirectedSprOperator,
+            BranchReformOperator;
 }
