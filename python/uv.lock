@@ -543,6 +543,11 @@ wheels = [
 ]
 
 [[package]]
+name = "nexwick"
+version = "0.1.1"
+source = { editable = "../../../Tools/nexwick/nexwick-py" }
+
+[[package]]
 name = "numpy"
 version = "2.5.3"
 source = { registry = "https://pypi.org/simple" }
@@ -859,6 +864,7 @@ source = { editable = "." }
 dependencies = [
     { name = "ipykernel" },
     { name = "matplotlib" },
+    { name = "nexwick" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "pip" },
@@ -870,6 +876,7 @@ dependencies = [
 requires-dist = [
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "matplotlib", specifier = ">=3.11.2" },
+    { name = "nexwick", editable = "../../../Tools/nexwick/nexwick-py" },
     { name = "numpy", specifier = ">=2.5.3" },
     { name = "pandas", specifier = ">=3.0.6" },
     { name = "pip", specifier = ">=26.2.1" },

@@ -12,6 +12,7 @@ dependencies = [
     "pip>=26.2.1",
     "scipy>=1.18.1",
     "seaborn>=0.13.2",
+    "nexwick"
 ]
 
 [build-system]
@@ -20,3 +21,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.uv.sources]
+nexwick = { path = "../../../Tools/nexwick/nexwick-py", editable = true }
