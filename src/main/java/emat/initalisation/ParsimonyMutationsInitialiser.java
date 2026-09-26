@@ -4,12 +4,12 @@ import beast.base.core.BEASTObject;
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.alignment.Alignment;
-import beast.base.evolution.datatype.DataType;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.inference.StateNode;
 import beast.base.inference.StateNodeInitialiser;
 import beast.base.util.Randomizer;
+import emat.helper.FitchParsimony;
 import emat.state.Mutation;
 import emat.state.Mutations;
 
@@ -25,13 +25,11 @@ public class ParsimonyMutationsInitialiser extends BEASTObject implements StateN
     Mutations mutations;
     TreeInterface tree;
     Alignment alignment;
-    DataType dataType;
 
-    int numStates;
     int numPatterns;
 
-    // the Fitch state sets per node and pattern, as bit masks over the states
-    long[][] stateSets;
+    // the Fitch state sets per node and pattern
+    FitchParsimony fitchParsimony;
 
     // the reconstructed state per node and pattern
     int[][] nodeStates;
@@ -45,24 +43,15 @@ public class ParsimonyMutationsInitialiser extends BEASTObject implements StateN
     public void initStateNodes() {
         this.tree = this.mutations.getTree();
         this.alignment = this.mutations.getAlignment();
-        this.dataType = this.alignment.getDataType();
 
-        this.numStates = this.alignment.getMaxStateCount();
         this.numPatterns = this.alignment.getPatternCount();
 
-        if (this.numStates > Long.SIZE) {
-            throw new IllegalArgumentException("Parsimony initialisation supports at most " + Long.SIZE + " states.");
-        }
-
-        int numNodes = this.tree.getNodeCount();
-        this.stateSets = new long[numNodes][this.numPatterns];
-        this.nodeStates = new int[numNodes][this.numPatterns];
+        this.nodeStates = new int[this.tree.getNodeCount()][this.numPatterns];
 
         // run Fitch: collect the state sets upwards, then choose the states downwards
 
-        Node root = this.tree.getRoot();
-        this.computeStateSets(root);
-        this.chooseStates(root, this.getReferencePatternStates());
+        this.fitchParsimony = new FitchParsimony(this.alignment, this.tree);
+        this.chooseStates(this.tree.getRoot(), this.getReferencePatternStates());
 
         this.mutations.initialiseMutations(this.createMutations());
         this.mutations.setReferenceToRoot();
@@ -76,56 +65,16 @@ public class ParsimonyMutationsInitialiser extends BEASTObject implements StateN
     /* Fitch Parsimony */
 
     /**
-     * Computes the Fitch state sets of the given node and of every node below it. A tip's
-     * set contains all states compatible with its observed character; an inner node's set
-     * is the intersection of its children's sets, or their union if they do not intersect.
-     */
-    private void computeStateSets(Node node) {
-        long[] nodeStateSets = this.stateSets[node.getNr()];
-
-        if (node.isLeaf()) {
-            int taxonNr = this.alignment.getTaxonIndex(node.getID());
-            if (taxonNr < 0) {
-                throw new IllegalArgumentException("Tip " + node.getID() + " is not in the alignment.");
-            }
-
-            for (int patternNr = 0; patternNr < this.numPatterns; patternNr++) {
-                int code = this.alignment.getPattern(taxonNr, patternNr);
-                nodeStateSets[patternNr] = this.getStateSet(code);
-            }
-
-            return;
-        }
-
-        for (Node child : node.getChildren()) {
-            this.computeStateSets(child);
-        }
-
-        for (int patternNr = 0; patternNr < this.numPatterns; patternNr++) {
-            long intersection = ~0L;
-            long union = 0L;
-
-            for (Node child : node.getChildren()) {
-                intersection &= this.stateSets[child.getNr()][patternNr];
-                union |= this.stateSets[child.getNr()][patternNr];
-            }
-
-            nodeStateSets[patternNr] = intersection != 0L ? intersection : union;
-        }
-    }
-
-    /**
      * Chooses the states of the given node and of every node below it. A node keeps the
      * state of its parent if its state set allows it, which avoids a mutation; otherwise it
      * takes the lowest state in its set. Ambiguous or missing tip characters are thereby
      * filled in with the parent state.
      */
     private void chooseStates(Node node, int[] parentStates) {
-        long[] nodeStateSets = this.stateSets[node.getNr()];
         int[] nodeStates = this.nodeStates[node.getNr()];
 
         for (int patternNr = 0; patternNr < this.numPatterns; patternNr++) {
-            long stateSet = nodeStateSets[patternNr];
+            long stateSet = this.fitchParsimony.getStateSet(node, patternNr);
             int parentState = parentStates[patternNr];
 
             if ((stateSet & (1L << parentState)) != 0L) {
@@ -138,15 +87,6 @@ public class ParsimonyMutationsInitialiser extends BEASTObject implements StateN
         for (Node child : node.getChildren()) {
             this.chooseStates(child, nodeStates);
         }
-    }
-
-    /** Returns the set of states compatible with the given character code, as a bit mask. */
-    private long getStateSet(int code) {
-        long stateSet = 0L;
-        for (int state : this.dataType.getStatesForCode(code)) {
-            stateSet |= 1L << state;
-        }
-        return stateSet;
     }
 
     /**
