@@ -166,6 +166,16 @@ public class GeneticPrior extends GenericTreeLikelihood {
      * reference sequence above it.
      */
     private double calculateRootBranchContribution(Node root) {
+        // check if we actually have to recompute the root contribution
+        boolean anythingRelevantChanged = !this.isInitialised
+                || root.isDirty() == Tree.IS_FILTHY
+                || this.siteModel.somethingIsDirty()
+                || (this.substitutionModel instanceof CalculationNode calculationNode && calculationNode.somethingIsDirty())
+                || this.mutations.isDirty(root);
+        if (!anythingRelevantChanged) {
+            return this.branchLogPs[root.getNr()];
+        }
+
         double branchLogP = 0.0;
         double rate = 0.0;
         double[] substitutionModelFrequencies = this.substitutionModel.getFrequencies();
