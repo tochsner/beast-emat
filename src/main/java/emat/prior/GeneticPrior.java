@@ -144,7 +144,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
                     || Math.abs(this.getTotalMutationRate(node) - oldRate) > RATE_TOLERANCE * Math.abs(oldRate);
         }
 
-        for (Node child : node.getChildren()) {
+        for (Node child : node.getChildrenMutable()) {
             this.updateBranches(child, isRateChanged, isEverythingDirty);
         }
     }
