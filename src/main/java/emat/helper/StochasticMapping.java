@@ -126,12 +126,30 @@ public class StochasticMapping {
      * Samples the history of the given site on the branch above the given node, which runs
      * from the start height down to the end height, given the states at both ends. The rate
      * matrix R must already include every rate scaling of the branch, and the end probability
-     * is the transition probability exp(R t) from the start to the end state. The number of
-     * jumps is drawn conditional on the end state, then the jump times uniformly, and then
-     * the states of the jumps one by one. The mutations are sorted by descending height.
+     * is the transition probability exp(R t) from the start to the end state. The mutations
+     * are sorted by descending height.
      */
     public List<Mutation> sampleBranchHistory(int nodeNr, int site, double branchStartHeight, double branchEndHeight,
                                               int startState, int endState, double[] rateMatrix, double endProbability) {
+        if (branchStartHeight - branchEndHeight <= 0.0) {
+            return new ArrayList<>();
+        }
+
+        return this.sampleBranchHistory(
+                nodeNr, site, branchStartHeight, branchEndHeight,
+                startState, endState, this.createUniformisedChain(rateMatrix), 1.0, endProbability
+        );
+    }
+
+    /**
+     * Samples the history of the given site on the branch above the given node like above,
+     * but with the rate matrix R = s Q given by its scale s and the uniformised chain of Q,
+     * which can be shared by all branches. The number of jumps is drawn conditional on the
+     * end state, then the jump times uniformly, and then the states of the jumps one by one.
+     */
+    public List<Mutation> sampleBranchHistory(int nodeNr, int site, double branchStartHeight, double branchEndHeight,
+                                              int startState, int endState, UniformisedChain chain, double rateScale,
+                                              double endProbability) {
         // evolution runs forwards in time from the branch start to the branch end
 
         double duration = branchStartHeight - branchEndHeight;
@@ -142,33 +160,17 @@ public class StochasticMapping {
             return siteMutations;
         }
 
-        // set up the uniformised chain for the rate matrix R
-
-        double maxEscapeRate = 0.0;
-        for (int state = 0; state < this.numStates; state++) {
-            maxEscapeRate = Math.max(maxEscapeRate, -rateMatrix[state * this.numStates + state]);
-        }
+        double maxEscapeRate = rateScale * chain.uniformisationRate;
         if (maxEscapeRate == 0.0) {
             return siteMutations;
-        }
-
-        double[] jumpMatrix = new double[this.numStates * this.numStates];
-        for (int from = 0; from < this.numStates; from++) {
-            for (int to = 0; to < this.numStates; to++) {
-                double identity = from == to ? 1.0 : 0.0;
-                jumpMatrix[from * this.numStates + to] = identity + rateMatrix[from * this.numStates + to] / maxEscapeRate;
-            }
         }
 
         // sample the number of jumps n with P(n | start, end) ∝ Poisson(n; μ* t) (B^n)_{start, end}
 
         double threshold = Randomizer.nextDouble() * endProbability;
 
-        List<double[]> jumpMatrixPowers = new ArrayList<>();
-        jumpMatrixPowers.add(this.getIdentityMatrix());
-
         double poissonProbability = Math.exp(-maxEscapeRate * duration);
-        double cumulativeProbability = poissonProbability * jumpMatrixPowers.get(0)[startState * this.numStates + endState];
+        double cumulativeProbability = startState == endState ? poissonProbability : 0.0;
         int numJumps = 0;
 
         while (cumulativeProbability < threshold) {
@@ -178,10 +180,11 @@ public class StochasticMapping {
             }
 
             poissonProbability *= maxEscapeRate * duration / numJumps;
-            double[] jumpMatrixPower = this.multiplyMatrices(jumpMatrixPowers.get(numJumps - 1), jumpMatrix);
-            jumpMatrixPowers.add(jumpMatrixPower);
+            cumulativeProbability += poissonProbability * chain.getJumpMatrixPower(numJumps)[startState * this.numStates + endState];
+        }
 
-            cumulativeProbability += poissonProbability * jumpMatrixPower[startState * this.numStates + endState];
+        if (numJumps == 0) {
+            return siteMutations;
         }
 
         // sample the jump times forwards from the branch start
@@ -199,9 +202,9 @@ public class StochasticMapping {
         double[] weights = new double[this.numStates];
 
         for (int i = 0; i < numJumps; i++) {
-            double[] remainingPower = jumpMatrixPowers.get(numJumps - i - 1);
+            double[] remainingPower = chain.getJumpMatrixPower(numJumps - i - 1);
             for (int nextState = 0; nextState < this.numStates; nextState++) {
-                weights[nextState] = jumpMatrix[state * this.numStates + nextState]
+                weights[nextState] = chain.jumpMatrix[state * this.numStates + nextState]
                         * remainingPower[nextState * this.numStates + endState];
             }
             int nextState = sampleIndex(weights);
@@ -215,6 +218,11 @@ public class StochasticMapping {
         }
 
         return siteMutations;
+    }
+
+    /** Creates the uniformised chain of the given rate matrix. */
+    public UniformisedChain createUniformisedChain(double[] rateMatrix) {
+        return new UniformisedChain(rateMatrix);
     }
 
     /** Samples an index with probability proportional to the given non-negative weights. */
@@ -242,30 +250,71 @@ public class StochasticMapping {
         throw new RuntimeException("Cannot sample from weights that are all zero.");
     }
 
-    /* Helpers */
+    /* Uniformised Chain */
 
-    private double[] getIdentityMatrix() {
-        double[] identity = new double[this.numStates * this.numStates];
-        for (int state = 0; state < this.numStates; state++) {
-            identity[state * this.numStates + state] = 1.0;
-        }
-        return identity;
-    }
+    /**
+     * The uniformised chain of a rate matrix Q: the uniformisation rate μ* = max_i -Q_ii and
+     * the jump matrix B = I + Q/μ*, together with the powers of B computed so far. Scaling Q
+     * scales μ* but leaves B unchanged, so one chain serves every multiple of Q.
+     */
+    public class UniformisedChain {
 
-    private double[] multiplyMatrices(double[] left, double[] right) {
-        double[] product = new double[this.numStates * this.numStates];
-        for (int i = 0; i < this.numStates; i++) {
-            for (int k = 0; k < this.numStates; k++) {
-                double value = left[i * this.numStates + k];
-                if (value == 0.0) {
-                    continue;
-                }
-                for (int j = 0; j < this.numStates; j++) {
-                    product[i * this.numStates + j] += value * right[k * this.numStates + j];
+        final double uniformisationRate;
+        final double[] jumpMatrix;
+        final List<double[]> jumpMatrixPowers = new ArrayList<>();
+
+        UniformisedChain(double[] rateMatrix) {
+            double maxEscapeRate = 0.0;
+            for (int state = 0; state < StochasticMapping.this.numStates; state++) {
+                maxEscapeRate = Math.max(maxEscapeRate, -rateMatrix[state * StochasticMapping.this.numStates + state]);
+            }
+            this.uniformisationRate = maxEscapeRate;
+
+            this.jumpMatrix = this.getIdentityMatrix();
+            if (maxEscapeRate > 0.0) {
+                for (int i = 0; i < this.jumpMatrix.length; i++) {
+                    this.jumpMatrix[i] += rateMatrix[i] / maxEscapeRate;
                 }
             }
+
+            this.jumpMatrixPowers.add(this.getIdentityMatrix());
         }
-        return product;
+
+        /** Returns B^n, computing and caching the missing powers. */
+        double[] getJumpMatrixPower(int n) {
+            while (this.jumpMatrixPowers.size() <= n) {
+                double[] previousPower = this.jumpMatrixPowers.get(this.jumpMatrixPowers.size() - 1);
+                this.jumpMatrixPowers.add(this.multiplyMatrices(previousPower, this.jumpMatrix));
+            }
+            return this.jumpMatrixPowers.get(n);
+        }
+
+        private double[] getIdentityMatrix() {
+            int numStates = StochasticMapping.this.numStates;
+            double[] identity = new double[numStates * numStates];
+            for (int state = 0; state < numStates; state++) {
+                identity[state * numStates + state] = 1.0;
+            }
+            return identity;
+        }
+
+        private double[] multiplyMatrices(double[] left, double[] right) {
+            int numStates = StochasticMapping.this.numStates;
+            double[] product = new double[numStates * numStates];
+            for (int i = 0; i < numStates; i++) {
+                for (int k = 0; k < numStates; k++) {
+                    double value = left[i * numStates + k];
+                    if (value == 0.0) {
+                        continue;
+                    }
+                    for (int j = 0; j < numStates; j++) {
+                        product[i * numStates + j] += value * right[k * numStates + j];
+                    }
+                }
+            }
+            return product;
+        }
+
     }
 
 }

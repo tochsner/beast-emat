@@ -153,6 +153,29 @@ public final class MutationPaths {
     }
 
     /**
+     * Collects the sequence at the given node as the sites that mutate on the path from the
+     * root down to it, with their state at the node as end state. Sites without an entry
+     * keep the state of the reference sequence. The changes are written into the given map,
+     * which is cleared first, and their start states are not meaningful. Its cost is the
+     * number of mutations on the path rather than the genome length.
+     */
+    public static void collectSequence(Mutations mutations, Node node, SiteChanges sequence) {
+        sequence.clear();
+
+        for (Node branchNode = node; branchNode != null; branchNode = branchNode.getParent()) {
+            List<Mutation> branchMutations = mutations.getMutations(branchNode);
+
+            // walk upwards, so the first mutation seen at a site sets its state at the node
+            for (int i = branchMutations.size() - 1; i >= 0; i--) {
+                Mutation mutation = branchMutations.get(i);
+                if (!sequence.containsSite(mutation.site())) {
+                    sequence.addSite(mutation.site(), mutation.oldState(), mutation.newState());
+                }
+            }
+        }
+    }
+
+    /**
      * Returns the state of the given site at the given node, which is set by the lowest
      * mutation at the site on the path from the node up to the root, or by the reference
      * sequence if there is none. Its cost is the number of mutations on that path.

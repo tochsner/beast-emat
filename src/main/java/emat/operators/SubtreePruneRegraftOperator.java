@@ -37,8 +37,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     SiteChanges newParentChanges;
     SiteChanges differingSites;
 
-    // the model of the current proposal on the branch above X: R = branch rate * site rate * Q, and the fictitious Jukes-Cantor rate μ̃
-    double[] branchRateMatrix;
+    // the model of the current proposal on the branch above X: the total mutation rate λ(X) times the branch rate, and the fictitious Jukes-Cantor rate μ̃
+    double subtreeTotalRate;
     double jukesCantorRate;
 
     /**
@@ -178,20 +178,15 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
      * Takes the current model from the genetic prior. The branch above X keeps its rate and
      * X keeps its sequence under the move, so the model of the old and the new P–X branch is
      * the same. The fictitious Jukes-Cantor rate is μ̃ = λ(X) / L, with λ(X) the total
-     * mutation rate at X, which the genetic prior has cached for the current state.
+     * mutation rate at X times the branch rate, which the genetic prior has cached for the
+     * current state.
      */
     private void updateModel(Node x) {
-        Node root = this.tree.getRoot();
         double branchRate = this.geneticPrior.branchRateModel.getRateForBranch(x);
-
-        double rateScale = branchRate * this.geneticPrior.siteModel.getRateForCategory(0, root);
-        this.branchRateMatrix = this.geneticPrior.computeRateMatrix();
-        for (int i = 0; i < this.branchRateMatrix.length; i++) {
-            this.branchRateMatrix[i] *= rateScale;
-        }
-
         int numSites = this.mutations.getReferenceSequence().length;
-        this.jukesCantorRate = branchRate * this.geneticPrior.getTotalMutationRate(x) / numSites;
+
+        this.subtreeTotalRate = branchRate * this.geneticPrior.getTotalMutationRate(x);
+        this.jukesCantorRate = this.subtreeTotalRate / numSites;
     }
 
     /**
