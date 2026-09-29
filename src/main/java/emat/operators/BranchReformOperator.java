@@ -8,6 +8,7 @@ import beast.base.inference.Operator;
 import beast.base.util.Randomizer;
 import emat.helper.JukesCantorStochasticMapping;
 import emat.helper.MutationPaths;
+import emat.helper.NodeStateLookup;
 import emat.helper.SiteChanges;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
@@ -42,6 +43,9 @@ public class BranchReformOperator extends Operator {
     SiteChanges siblingChanges;
     SiteChanges differingSites;
 
+    // reusable lookup of the states at X for the sites whose end states agree
+    NodeStateLookup subtreeStates;
+
     @Override
     public void initAndValidate() {
         this.mutations = this.mutationsInput.get();
@@ -54,6 +58,7 @@ public class BranchReformOperator extends Operator {
         this.subtreeChanges = new SiteChanges(numSites);
         this.siblingChanges = new SiteChanges(numSites);
         this.differingSites = new SiteChanges(numSites);
+        this.subtreeStates = new NodeStateLookup(this.mutations, numSites);
     }
 
     /**
@@ -178,7 +183,7 @@ public class BranchReformOperator extends Operator {
 
         List<Mutation> pathMutations = this.stochasticMapping.sampleBranchHistory(
                 x.getNr(), pathStartHeight, x.getHeight(), jukesCantorRate, this.differingSites,
-                site -> MutationPaths.getState(this.mutations, x, site)
+                this.subtreeStates.reset(x)
         );
 
         // the root state at a site is the state of S, unless the mirrored part of the path changes it

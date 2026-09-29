@@ -21,7 +21,9 @@ import java.util.Map;
  * mapping). Per site, the genetic prior is the density of a CTMC path on the tree, so a draw
  * consists of sampling the node states by pruning and then the path on every branch given
  * its end states. The probability of a history is its genetic prior divided by the
- * likelihood of the tip data, which computeLogLikelihood provides.
+ * likelihood of the tip data, which computeLogLikelihood provides. The node states are
+ * always sampled exactly, while the paths on the branches are sampled by the given
+ * stochastic mapping, which may approximate the model.
  */
 public class SiteHistorySampler {
 
@@ -34,10 +36,9 @@ public class SiteHistorySampler {
 
     final int numStates;
 
-    // the model of the current tree: Q, its eigen decomposition and uniformised chain, the site rate, and the root frequencies
+    // the model of the current tree: Q, its eigen decomposition, the site rate, and the root frequencies
     double[] rateMatrix;
     EigenDecomposition eigenDecomposition;
-    StochasticMapping.UniformisedChain uniformisedChain;
     double siteRate;
     double[] frequencies;
 
@@ -59,7 +60,7 @@ public class SiteHistorySampler {
     final double[][] partials;
     final int[] nodeStates;
 
-    public SiteHistorySampler(Mutations mutations, GeneticPrior geneticPrior) {
+    public SiteHistorySampler(Mutations mutations, GeneticPrior geneticPrior, StochasticMapping stochasticMapping) {
         this.mutations = mutations;
         this.geneticPrior = geneticPrior;
         this.tree = mutations.getTree();
@@ -67,7 +68,7 @@ public class SiteHistorySampler {
         this.dataType = this.alignment.getDataType();
 
         this.numStates = this.alignment.getMaxStateCount();
-        this.stochasticMapping = new StochasticMapping(this.numStates);
+        this.stochasticMapping = stochasticMapping;
 
         int numNodes = this.tree.getNodeCount();
         this.postOrderNodes = new Node[numNodes];
@@ -110,7 +111,7 @@ public class SiteHistorySampler {
         double[] newRateMatrix = this.geneticPrior.computeRateMatrix();
         if (!Arrays.equals(newRateMatrix, this.rateMatrix)) {
             this.rateMatrix = newRateMatrix;
-            this.uniformisedChain = this.stochasticMapping.createUniformisedChain(this.rateMatrix);
+            this.stochasticMapping.setRateMatrix(this.rateMatrix);
             Arrays.fill(this.durations, Double.NaN);
         }
         this.siteRate = this.geneticPrior.siteModel.getRateForCategory(0, root);
@@ -179,6 +180,52 @@ public class SiteHistorySampler {
         }
 
         return siteMutations;
+    }
+
+    /**
+     * Computes the log probability that sampleSiteHistory proposes the given history of the
+     * given site, indexed like its result, up to the likelihood of the tip data at the site,
+     * which is the same for every history. This is the root frequency of the root state and
+     * the transition probability of every branch, which give the probability of the node
+     * states, times the density of the stochastic mapping on every branch.
+     */
+    public double computeLogSiteHistoryDensity(int site, List<List<Mutation>> siteMutations) {
+        Node root = this.tree.getRoot();
+
+        // replay the history from the reference downwards to find the state of every node
+
+        int rootState = this.mutations.getReferenceSequence()[site];
+        for (Mutation mutation : siteMutations.get(root.getNr())) {
+            rootState = mutation.newState();
+        }
+        this.nodeStates[root.getNr()] = rootState;
+
+        double logDensity = Math.log(this.frequencies[rootState]);
+
+        for (int i = this.postOrderNodes.length - 1; i >= 0; i--) {
+            Node node = this.postOrderNodes[i];
+            if (node.isRoot()) {
+                continue;
+            }
+
+            int nodeNr = node.getNr();
+            Node parent = node.getParent();
+            List<Mutation> branchMutations = siteMutations.get(nodeNr);
+
+            int startState = this.nodeStates[parent.getNr()];
+            int endState = branchMutations.isEmpty() ? startState : branchMutations.get(branchMutations.size() - 1).newState();
+            this.nodeStates[nodeNr] = endState;
+
+            double endProbability = this.transitionProbabilities[nodeNr][startState * this.numStates + endState];
+
+            logDensity += Math.log(endProbability);
+            logDensity += this.stochasticMapping.computeLogSiteHistoryDensity(
+                    branchMutations, parent.getHeight(), node.getHeight(),
+                    startState, endState, this.rateScales[nodeNr], endProbability
+            );
+        }
+
+        return logDensity;
     }
 
     /* Node States */
@@ -282,7 +329,7 @@ public class SiteHistorySampler {
         double duration = this.rateScales[nodeNr] * (node.getParent().getHeight() - node.getHeight());
 
         if (duration != this.durations[nodeNr]) {
-            this.transitionProbabilities[nodeNr] = this.stochasticMapping.computeTransitionProbabilities(this.eigenDecomposition, duration);
+            this.transitionProbabilities[nodeNr] = StochasticMapping.computeTransitionProbabilities(this.eigenDecomposition, duration);
             this.durations[nodeNr] = duration;
         }
     }
@@ -302,9 +349,9 @@ public class SiteHistorySampler {
 
         double endProbability = this.transitionProbabilities[nodeNr][startState * this.numStates + endState];
 
-        return this.stochasticMapping.sampleBranchHistory(
+        return this.stochasticMapping.sampleSiteHistory(
                 nodeNr, site, parent.getHeight(), node.getHeight(),
-                startState, endState, this.uniformisedChain, this.rateScales[nodeNr], endProbability
+                startState, endState, this.rateScales[nodeNr], endProbability
         );
     }
 

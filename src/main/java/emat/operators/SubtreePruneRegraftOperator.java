@@ -9,6 +9,7 @@ import emat.helper.BranchMutations;
 import emat.helper.JukesCantorStochasticMapping;
 import emat.state.Mutation;
 import emat.helper.MutationPaths;
+import emat.helper.NodeStateLookup;
 import emat.helper.SiteChanges;
 import emat.state.Mutations;
 import emat.prior.GeneticPrior;
@@ -37,6 +38,9 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     SiteChanges newParentChanges;
     SiteChanges differingSites;
 
+    // reusable lookup of the states at X for the sites whose end states agree
+    NodeStateLookup subtreeStates;
+
     // the model of the current proposal on the branch above X: the total mutation rate λ(X) times the branch rate, and the fictitious Jukes-Cantor rate μ̃
     double subtreeTotalRate;
     double jukesCantorRate;
@@ -62,6 +66,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         this.subtreeChanges = new SiteChanges(numSites);
         this.newParentChanges = new SiteChanges(numSites);
         this.differingSites = new SiteChanges(numSites);
+        this.subtreeStates = new NodeStateLookup(this.mutations, numSites);
     }
 
     /**
@@ -200,7 +205,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     protected List<Mutation> sampleBranchHistory(Node x, double startHeight, SiteChanges differingSites) {
         return this.stochasticMapping.sampleBranchHistory(
                 x.getNr(), startHeight, x.getHeight(), this.jukesCantorRate, differingSites,
-                site -> MutationPaths.getState(this.mutations, x, site)
+                this.subtreeStates.reset(x)
         );
     }
 

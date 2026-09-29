@@ -16,8 +16,10 @@ import java.util.function.IntUnaryOperator;
  * end states agree are mapped together in time roughly proportional to the number of sites
  * whose end states differ, rather than to the genome length. The proposal does not need to
  * match the real model, since the genetic prior corrects for it in the acceptance probability.
+ * Single sites are mapped with the rate μ̃ = s μ̄ on a branch with rate scale s, where μ̄ is
+ * the average escape rate of the rate matrix Q, which does not depend on the end states.
  */
-public class JukesCantorStochasticMapping {
+public class JukesCantorStochasticMapping implements StochasticMapping {
 
     // safeguard against endless rejection sampling caused by numerical problems
     private static final int MAX_ATTEMPTS = 100000;
@@ -28,10 +30,76 @@ public class JukesCantorStochasticMapping {
     final int numStates;
     final int numSites;
 
+    // the average escape rate μ̄ of the rate matrix Q set last
+    double meanEscapeRate = Double.NaN;
+
     public JukesCantorStochasticMapping(int numStates, int numSites) {
         this.numStates = numStates;
         this.numSites = numSites;
     }
+
+    /* Single Sites */
+
+    @Override
+    public void setRateMatrix(double[] rateMatrix) {
+        double totalEscapeRate = 0.0;
+        for (int state = 0; state < this.numStates; state++) {
+            totalEscapeRate -= rateMatrix[state * this.numStates + state];
+        }
+        this.meanEscapeRate = totalEscapeRate / this.numStates;
+    }
+
+    /**
+     * Samples the history of the given site under Jukes-Cantor with the rate μ̃ = s μ̄, by
+     * rejection sampling of the jump chain. The end probability is not needed, as the
+     * Jukes-Cantor transition probabilities are known in closed form.
+     */
+    @Override
+    public List<Mutation> sampleSiteHistory(int nodeNr, int site, double branchStartHeight, double branchEndHeight,
+                                            int startState, int endState, double rateScale, double endProbability) {
+        double duration = branchStartHeight - branchEndHeight;
+        double expectedJumps = rateScale * this.meanEscapeRate * duration;
+
+        List<Mutation> siteMutations = new ArrayList<>();
+        if (duration <= 0.0 || expectedJumps <= 0.0) {
+            // without time or rate, no mutations can occur and the end states are equal
+            return siteMutations;
+        }
+
+        int minJumps = startState == endState ? 0 : 1;
+        int[] states = this.sampleJumpStates(expectedJumps, minJumps, startState, endState);
+        this.addSiteMutations(siteMutations, nodeNr, site, branchStartHeight, duration, states);
+
+        return siteMutations;
+    }
+
+    /**
+     * Computes the Jukes-Cantor density of the history with the rate μ̃ = s μ̄,
+     * e^{-μ̃ t} (μ̃ / (K - 1))^M for M mutations and K states, divided by the transition
+     * probability from the start to the end state.
+     */
+    @Override
+    public double computeLogSiteHistoryDensity(List<Mutation> siteMutations, double branchStartHeight, double branchEndHeight,
+                                               int startState, int endState, double rateScale, double endProbability) {
+        double duration = branchStartHeight - branchEndHeight;
+        double mutationRate = rateScale * this.meanEscapeRate;
+        double expectedJumps = mutationRate * duration;
+
+        if (duration <= 0.0 || expectedJumps <= 0.0) {
+            return 0.0;
+        }
+
+        double logDensity = -expectedJumps + siteMutations.size() * Math.log(mutationRate / (this.numStates - 1.0));
+
+        double changeProbability = this.computeChangeProbability(expectedJumps);
+        logDensity -= startState == endState
+                ? Math.log1p(-(this.numStates - 1.0) * changeProbability)
+                : Math.log(changeProbability);
+
+        return logDensity;
+    }
+
+    /* Branch Histories */
 
     /**
      * Samples the history of every site on the branch above the given node, which runs from
@@ -87,7 +155,7 @@ public class JukesCantorStochasticMapping {
 
         // the transition probabilities of Jukes-Cantor for differing and agreeing end states
 
-        double changeProbability = -Math.expm1(-expectedJumps * this.numStates / (this.numStates - 1.0)) / this.numStates;
+        double changeProbability = this.computeChangeProbability(expectedJumps);
         double logChangeProbability = Math.log(changeProbability);
         double logStayProbability = Math.log1p(-(this.numStates - 1.0) * changeProbability);
 
@@ -217,6 +285,14 @@ public class JukesCantorStochasticMapping {
             branchMutations.add(new Mutation(nodeNr, height, previousHeight, site, states[i], states[i + 1]));
             previousHeight = height;
         }
+    }
+
+    /**
+     * Computes the Jukes-Cantor probability of ending in a given other state after the given
+     * expected number of jumps.
+     */
+    private double computeChangeProbability(double expectedJumps) {
+        return -Math.expm1(-expectedJumps * this.numStates / (this.numStates - 1.0)) / this.numStates;
     }
 
     /* Random Draws */

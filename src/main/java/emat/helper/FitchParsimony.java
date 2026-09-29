@@ -1,10 +1,16 @@
 package emat.helper;
 
 import beast.base.evolution.alignment.Alignment;
+import beast.base.evolution.alignment.Sequence;
 import beast.base.evolution.datatype.DataType;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.spec.evolution.tree.ClusterTree;
+import beast.base.util.Randomizer;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Runs the upward pass of Fitch parsimony for every pattern of an alignment on a tree. It
@@ -39,6 +45,44 @@ public class FitchParsimony {
     /** Runs Fitch parsimony for the given alignment on its UPGMA tree. */
     public static FitchParsimony computeOnUpgmaTree(Alignment alignment) {
         return new FitchParsimony(alignment, buildUpgmaTree(alignment));
+    }
+
+    /**
+     * Runs Fitch parsimony on the UPGMA tree of a uniformly random subsample of at most the
+     * given number of sequences of the alignment. The sites are kept, so the site scores
+     * refer to the sites of the full alignment.
+     */
+    public static FitchParsimony computeOnUpgmaTree(Alignment alignment, int maxNumSamples) {
+        if (maxNumSamples < 2) {
+            throw new IllegalArgumentException("At least two samples are needed to build a UPGMA tree.");
+        }
+
+        if (alignment.getTaxonCount() <= maxNumSamples) {
+            return computeOnUpgmaTree(alignment);
+        }
+
+        return computeOnUpgmaTree(subsampleAlignment(alignment, maxNumSamples));
+    }
+
+    /** Returns an alignment of a uniformly random subset of the given number of sequences. */
+    public static Alignment subsampleAlignment(Alignment alignment, int numSamples) {
+        List<String> taxa = new ArrayList<>(alignment.getTaxaNames());
+
+        // partial Fisher-Yates shuffle, so that the first entries are a uniform random subset
+
+        for (int i = 0; i < numSamples; i++) {
+            int j = i + Randomizer.nextInt(taxa.size() - i);
+            Collections.swap(taxa, i, j);
+        }
+
+        List<Sequence> sequences = new ArrayList<>();
+        for (String taxon : taxa.subList(0, numSamples)) {
+            sequences.add(new Sequence(taxon, alignment.getSequenceAsString(taxon)));
+        }
+
+        Alignment subsample = new Alignment();
+        subsample.initByName("sequence", sequences, "userDataType", alignment.getDataType());
+        return subsample;
     }
 
     /** Builds the UPGMA tree of the given alignment from its Jukes-Cantor distances. */
