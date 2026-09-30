@@ -276,6 +276,23 @@ public class Mutations extends StateNode {
         return this.isBranchDirty[node.getNr()];
     }
 
+    /**
+     * Returns the total number of mutations on the tree. Mutations above the root are
+     * excluded, as they only encode the difference between the reference sequence and the
+     * root sequence.
+     */
+    public int getMutationCount() {
+        int rootNr = this.tree.getRoot().getNr();
+
+        int count = 0;
+        for (int nodeNr = 0; nodeNr < this.numNodes; nodeNr++) {
+            if (nodeNr != rootNr) {
+                count += this.mutationsAboveNode[nodeNr].size();
+            }
+        }
+        return count;
+    }
+
     public TreeInterface getTree() {
         return this.tree;
     }
@@ -392,25 +409,27 @@ public class Mutations extends StateNode {
         Arrays.fill(this.isBranchDirty, true);
     }
 
+    /* Loggable methods */
+
+    @Override
+    public void init(PrintStream out) {
+        out.print(this.getID() + ".count\t");
+    }
+
+    @Override
+    public void log(long sample, PrintStream out) {
+        out.print(this.getMutationCount() + "\t");
+    }
+
+    @Override
+    public void close(PrintStream out) {
+        // nothing to close
+    }
+
     /* Unsupported StateNode methods */
 
     @Override
     public void fromXML(org.w3c.dom.Node node) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void init(PrintStream printStream) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void log(long l, PrintStream printStream) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void close(PrintStream printStream) {
         throw new UnsupportedOperationException();
     }
 

@@ -4,6 +4,7 @@ import emat.operators.BranchReformOperator;
 import emat.operators.IntervalScaleOperator;
 import emat.operators.MutationDirectedSprOperator;
 import emat.operators.MutationTimeOperator;
+import emat.operators.MarginalizedRootScaleOperator;
 import emat.operators.InnerNodeDisplacementOperator;
 import emat.operators.SiteHistoryGibbsOperator;
 import emat.operators.SubtreeSlideOperator;
@@ -33,6 +34,7 @@ open module my.beast.example {
             MutationTimeOperator,
             InnerNodeDisplacementOperator,
             SiteHistoryGibbsOperator,
+            MarginalizedRootScaleOperator,
             RootScaleOperator,
             SubtreeSlideOperator,
             WilsonBaldingOperator,

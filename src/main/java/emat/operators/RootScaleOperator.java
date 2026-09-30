@@ -13,8 +13,8 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
 
-@Description("Scales the root height by a factor drawn from a Bactrian kernel, like a BactrianScaleOperator " +
-        "with rootOnly set to true. The mutations on the branches below the root move linearly along with the " +
+@Description("Scales the shorter of the two root branches by a factor drawn from a Bactrian kernel, which " +
+        "moves the root height. The mutations on the branches below the root move linearly along with the " +
         "root, so they neither block the root nor have to follow it one at a time.")
 public class RootScaleOperator extends TreeOperator {
 
@@ -23,7 +23,7 @@ public class RootScaleOperator extends TreeOperator {
             KernelDistribution.newDefaultKernelDistribution());
     final public Input<Double> scaleUpperLimit = new Input<>("upper", "upper limit of the scale factor", 10.0);
     final public Input<Double> scaleLowerLimit = new Input<>("lower", "lower limit of the scale factor", 1e-8);
-    final public Input<Double> scaleFactorInput = new Input<>("scaleFactor", "scaling factor: range from 0 to 1. Close to zero is very large jumps, close to 1.0 is very small jumps.", 0.1);
+    final public Input<Double> scaleFactorInput = new Input<>("scaleFactor", "width of the kernel in log space: close to zero is very small jumps, larger is larger jumps.", 0.1);
     final public Input<Boolean> optimiseInput = new Input<>("optimise", "whether to tune the scale factor towards the target acceptance probability", true);
 
     Mutations mutations;
@@ -46,10 +46,16 @@ public class RootScaleOperator extends TreeOperator {
     }
 
     /**
-     * Scales the root height h by a factor s, which is a map with Jacobian s. Every mutation
-     * on the branch above a child c keeps its relative position on the branch, which scales
-     * its height above h_c by the ratio of the new to the old branch length and adds that
-     * ratio to the Jacobian once per mutation.
+     * Scales the shorter root branch h - h_m by a factor s, where h is the root height and h_m
+     * the height of the higher child, which maps h to h_m + (h - h_m) s with Jacobian s. Every
+     * mutation on the branch above a child c keeps its relative position on the branch, which
+     * scales its height above h_c by the ratio of the new to the old branch length and adds
+     * that ratio to the Jacobian once per mutation.
+     *
+     * Scaling h itself would tie the step to the distance of the root from the present, which
+     * in a densely sampled tree is far larger than the root branches the posterior constrains.
+     * The tuned step would shrink like the ratio of the two, about a factor of 100 for a tree
+     * of a few thousand SARS-CoV-2 genomes, and the root would only crawl.
      *
      * Keeping the mutation times instead would pin the root just above the highest of them,
      * as the genetic prior decays like exp(-2 λ h) above it. The root and that mutation
@@ -63,13 +69,11 @@ public class RootScaleOperator extends TreeOperator {
         }
 
         double oldHeight = root.getHeight();
+        double minHeight = this.computeMinHeight(root);
         double scaler = this.kernelDistribution.getScaler(root.getNr(), oldHeight, this.getCoercableParameterValue());
-        double newHeight = oldHeight * scaler;
 
-        if (newHeight <= this.computeMinHeight(root)) {
-            return Double.NEGATIVE_INFINITY;
-        }
-
+        // every positive scaler keeps the root above its children, so no proposal is wasted
+        double newHeight = minHeight + (oldHeight - minHeight) * scaler;
         root.setHeight(newHeight);
 
         double logHastingsRatio = Math.log(scaler);
