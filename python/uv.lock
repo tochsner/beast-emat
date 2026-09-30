@@ -468,6 +468,15 @@ wheels = [
 ]
 
 [[package]]
+name = "mappy"
+version = "2.31"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/d2/8b283f6fc644260bb1fd44add72695bfa036b99d9cf050a53b3b27eba774/mappy-2.31.tar.gz", hash = "sha256:152a358c11cba1f992968e2611f1e0a1f4a87aaaa3602d93e4f59d7c1db8f3b2", size = 143995, upload-time = "2026-05-19T23:29:40.073Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/15/c007658d6a04bd1c2c370c4ee174a0f64e2de844e42849b9fdeda5d6ead7/mappy-2.31-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:e83bc6eb025634fe378e269a2a49c36f2e50b67b93034f7acd5916f8f9abc2e3", size = 143617, upload-time = "2026-05-19T23:29:38.478Z" },
+]
+
+[[package]]
 name = "matplotlib"
 version = "3.11.2"
 source = { registry = "https://pypi.org/simple" }
@@ -863,6 +872,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "ipykernel" },
+    { name = "mappy" },
     { name = "matplotlib" },
     { name = "nexwick" },
     { name = "numpy" },
@@ -875,6 +885,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "ipykernel", specifier = ">=7.3.0" },
+    { name = "mappy", specifier = ">=2.31" },
     { name = "matplotlib", specifier = ">=3.11.2" },
     { name = "nexwick", editable = "../../../Tools/nexwick/nexwick-py" },
     { name = "numpy", specifier = ">=2.5.3" },

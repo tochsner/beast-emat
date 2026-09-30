@@ -12,7 +12,8 @@ dependencies = [
     "pip>=26.2.1",
     "scipy>=1.18.1",
     "seaborn>=0.13.2",
-    "nexwick"
+    "nexwick",
+    "mappy>=2.31",
 ]
 
 [build-system]
