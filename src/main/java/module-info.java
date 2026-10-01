@@ -24,6 +24,7 @@ open module my.beast.example {
     exports emat.helper;
     exports emat.initalisation;
     exports emat.state;
+    exports emat.stochasticmapping;
 
     provides beast.base.core.BEASTInterface with
             Mutations,

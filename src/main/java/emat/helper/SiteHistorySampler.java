@@ -8,6 +8,7 @@ import beast.base.evolution.tree.TreeInterface;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
+import emat.stochasticmapping.StochasticMapping;
 
 import java.util.ArrayList;
 import java.util.Arrays;

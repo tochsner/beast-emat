@@ -15,7 +15,7 @@ import beast.base.spec.evolution.substitutionmodel.JukesCantor;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.spec.inference.parameter.SimplexParam;
 import beast.base.util.Randomizer;
-import emat.helper.StochasticMapping;
+import emat.stochasticmapping.StochasticMapping;
 import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.SiteHistoryGibbsOperator;
 import emat.prior.GeneticPrior;

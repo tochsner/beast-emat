@@ -6,7 +6,7 @@ import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.inference.Operator;
 import beast.base.util.Randomizer;
-import emat.helper.JukesCantorStochasticMapping;
+import emat.stochasticmapping.JukesCantorStochasticMapping;
 import emat.helper.MutationPaths;
 import emat.helper.NodeStateLookup;
 import emat.helper.SiteChanges;
@@ -183,7 +183,7 @@ public class BranchReformOperator extends Operator {
 
         List<Mutation> pathMutations = this.stochasticMapping.sampleBranchHistory(
                 x.getNr(), pathStartHeight, x.getHeight(), jukesCantorRate, this.differingSites,
-                this.subtreeStates.reset(x)
+                this.subtreeStates.resetFor(x)
         );
 
         // the root state at a site is the state of S, unless the mirrored part of the path changes it

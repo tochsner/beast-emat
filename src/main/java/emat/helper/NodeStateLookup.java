@@ -26,7 +26,7 @@ public final class NodeStateLookup implements IntUnaryOperator {
     }
 
     /** Points the lookup to the given node, discarding the sequence collected before. */
-    public NodeStateLookup reset(Node node) {
+    public NodeStateLookup resetFor(Node node) {
         this.node = node;
         this.isCollected = false;
         return this;

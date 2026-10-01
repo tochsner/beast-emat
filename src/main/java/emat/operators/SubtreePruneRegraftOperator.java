@@ -8,7 +8,7 @@ import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import emat.helper.BranchMutations;
-import emat.helper.JukesCantorStochasticMapping;
+import emat.stochasticmapping.JukesCantorStochasticMapping;
 import emat.state.Mutation;
 import emat.helper.MutationPaths;
 import emat.helper.NodeStateLookup;
@@ -154,15 +154,18 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
             return Double.NEGATIVE_INFINITY;
         }
 
-        // the grafting strategy may use the model of the branch above X and its missing sites
         this.updateModel(x);
         this.subtreeMissingSites = this.missingSitesOfNode[x.getNr()];
         this.subtreeMissingSiteSet = this.missingSiteSetOfNode[x.getNr()];
+
+        // choose a grafting point
 
         GraftingPoint graftingPoint = this.proposeGraftingPoint(x);
         if (graftingPoint == null || !this.isValidGraftingPoint(x, graftingPoint)) {
             return Double.NEGATIVE_INFINITY;
         }
+
+        // regraft and resample the local history
 
         double logMutationHastingsRatio = this.resampleNeighbourhood
                 ? this.regraftWithNeighbourhoodHistories(x, graftingPoint)
@@ -170,6 +173,44 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         return graftingPoint.logHastingsRatio() + logMutationHastingsRatio;
     }
+
+    /* Grafting Point Proposals */
+
+    /**
+     * Picks the root X of the subtree to prune, such that neither X nor its parent is the
+     * root. Returns null if there is no such node. The choice must be accounted for in the
+     * Hastings ratio unless the set of candidates does not change under the move.
+     */
+    protected abstract Node pickSubtreeRoot();
+
+    /**
+     * Proposes the new attachment point of the subtree below X in the pruned tree, i.e. with
+     * X and its parent P removed and P's two branches joined. Returns null if there is no
+     * valid proposal. Candidates are the subtree slide, Wilson–Balding and mdSPR proposals of
+     * docs/mcmc-moves.md §8.
+     */
+    protected abstract GraftingPoint proposeGraftingPoint(Node x);
+
+    /**
+     * Checks that the grafting point lies on a branch of the pruned tree that does not end
+     * at the root, and that the new parent is older than X and the new sibling and younger
+     * than the new grandparent.
+     */
+    private boolean isValidGraftingPoint(Node x, GraftingPoint graftingPoint) {
+        Node parent = x.getParent();
+        Node newSibling = graftingPoint.newSibling();
+        double newParentHeight = graftingPoint.newParentHeight();
+
+        if (newSibling == parent || newSibling.isRoot() || this.isInSubtree(newSibling, x)) {
+            return false;
+        }
+
+        return newParentHeight > x.getHeight()
+                && newParentHeight > newSibling.getHeight()
+                && newParentHeight < this.getPrunedParent(x, newSibling).getHeight();
+    }
+
+    /* Grafting and Resampling */
 
     /**
      * Regrafts the subtree and resamples only the history on the new P'–X branch. The
@@ -217,7 +258,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
             }
         }
 
-        this.subtreeStates.reset(x);
+        this.subtreeStates.resetFor(x);
         IntUnaryOperator newParentStates = this::getNewParentState;
 
         double newExpectedJumps = this.jukesCantorRate * (newParentHeight - x.getHeight());
@@ -252,6 +293,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         }
 
         this.mutations.applyMutations(x, newSubtreeMutations, this);
+
+        // calculate the hastings correction
 
         double oldExpectedJumps = this.jukesCantorRate * (oldParentHeight - x.getHeight());
 
@@ -307,7 +350,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         // sample the new histories while the tree still holds the sequences at the outer ends, which the move keeps
 
-        this.subtreeStates.reset(x);
+        this.subtreeStates.resetFor(x);
 
         double[] newExpectedJumps = {
                 parentRate * (newGrandparent.getHeight() - newParentHeight),
@@ -385,23 +428,6 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         return logBackwardDensity - logForwardDensity;
     }
-
-    /* Grafting Strategy */
-
-    /**
-     * Picks the root X of the subtree to prune, such that neither X nor its parent is the
-     * root. Returns null if there is no such node. The choice must be accounted for in the
-     * Hastings ratio unless the set of candidates does not change under the move.
-     */
-    protected abstract Node pickSubtreeRoot();
-
-    /**
-     * Proposes the new attachment point of the subtree below X in the pruned tree, i.e. with
-     * X and its parent P removed and P's two branches joined. Returns null if there is no
-     * valid proposal. Candidates are the subtree slide, Wilson–Balding and mdSPR proposals of
-     * docs/mcmc-moves.md §8.
-     */
-    protected abstract GraftingPoint proposeGraftingPoint(Node x);
 
     /* Stochastic Mapping */
 
@@ -583,25 +609,6 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
             this.replace(newGrandparent, newSibling, parent);
         }
         parent.setHeight(newParentHeight);
-    }
-
-    /**
-     * Checks that the grafting point lies on a branch of the pruned tree that does not end
-     * at the root, and that the new parent is older than X and the new sibling and younger
-     * than the new grandparent.
-     */
-    private boolean isValidGraftingPoint(Node x, GraftingPoint graftingPoint) {
-        Node parent = x.getParent();
-        Node newSibling = graftingPoint.newSibling();
-        double newParentHeight = graftingPoint.newParentHeight();
-
-        if (newSibling == parent || newSibling.isRoot() || this.isInSubtree(newSibling, x)) {
-            return false;
-        }
-
-        return newParentHeight > x.getHeight()
-                && newParentHeight > newSibling.getHeight()
-                && newParentHeight < this.getPrunedParent(x, newSibling).getHeight();
     }
 
     /**

@@ -1,7 +1,7 @@
 package emat;
 
 import beast.base.util.Randomizer;
-import emat.helper.JukesCantorStochasticMapping;
+import emat.stochasticmapping.JukesCantorStochasticMapping;
 import emat.helper.SiteChanges;
 import emat.state.Mutation;
 import org.junit.jupiter.api.Test;
