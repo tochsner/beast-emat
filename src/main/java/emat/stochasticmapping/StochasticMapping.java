@@ -1,4 +1,4 @@
-package emat.helper;
+package emat.stochasticmapping;
 
 import beast.base.evolution.substitutionmodel.EigenDecomposition;
 import beast.base.util.Randomizer;

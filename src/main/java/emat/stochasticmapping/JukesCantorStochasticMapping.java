@@ -1,6 +1,8 @@
-package emat.helper;
+package emat.stochasticmapping;
 
 import beast.base.util.Randomizer;
+import emat.helper.SiteChanges;
+import emat.helper.SiteStates;
 import emat.state.Mutation;
 
 import java.util.ArrayList;
@@ -8,6 +10,7 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
 
 /**
@@ -91,13 +94,7 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
         }
 
         double logDensity = -expectedJumps + siteMutations.size() * Math.log(mutationRate / (this.numStates - 1.0));
-
-        double changeProbability = this.computeChangeProbability(expectedJumps);
-        logDensity -= startState == endState
-                ? Math.log1p(-(this.numStates - 1.0) * changeProbability)
-                : Math.log(changeProbability);
-
-        return logDensity;
+        return logDensity - this.computeLogEndStatesProbability(expectedJumps, 1, startState == endState ? 0 : 1);
     }
 
     /* Branch Histories */
@@ -154,19 +151,9 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
         double duration = branchStartHeight - branchEndHeight;
         double expectedJumps = mutationRate * duration;
 
-        // the transition probabilities of Jukes-Cantor for differing and agreeing end states
-
-        double changeProbability = this.computeChangeProbability(expectedJumps);
-        double logChangeProbability = Math.log(changeProbability);
-        double logStayProbability = Math.log1p(-(this.numStates - 1.0) * changeProbability);
-
         double logDensity = -expectedJumps * this.numSites
                 + branchMutations.size() * Math.log(mutationRate / (this.numStates - 1.0));
-
-        logDensity -= numDifferingSites * logChangeProbability
-                + (this.numSites - numDifferingSites) * logStayProbability;
-
-        return logDensity;
+        return logDensity - this.computeLogEndStatesProbability(expectedJumps, this.numSites, numDifferingSites);
     }
 
     /* Star Centres */
@@ -238,55 +225,38 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
 
         // sample the free end from the centre, explicitly at the held sites and by skipping at the others
 
-        double changeProbability = this.computeChangeProbability(expectedJumps[freeColumn]);
-        double logStayProbability = Math.log1p(-(this.numStates - 1.0) * changeProbability);
-        double logChangeProbability = Math.log(changeProbability);
-
-        int numHeldFreeSites = 0;
+        double changeProbability = (this.numStates - 1.0) * this.computeChangeProbability(expectedJumps[freeColumn]);
         int numDifferingFreeSites = 0;
 
         for (int slot = 0; slot < starStates.getSize(); slot++) {
             if (!freeSiteSet.get(starStates.getSite(slot))) {
                 continue;
             }
-            numHeldFreeSites++;
 
             int centreState = starStates.getState(slot, centre);
-            int state = Randomizer.nextDouble() < (this.numStates - 1.0) * changeProbability
-                    ? this.sampleOtherState(centreState)
-                    : centreState;
+            int state = Randomizer.nextDouble() < changeProbability ? this.sampleOtherState(centreState) : centreState;
             starStates.setState(slot, freeColumn, state);
             numDifferingFreeSites += state != centreState ? 1 : 0;
         }
 
         int numHeldSites = starStates.getSize();
-        double freeSiteNr = 0;
-
-        while (changeProbability > 0.0) {
-            freeSiteNr += this.sampleGeometric((this.numStates - 1.0) * changeProbability);
-            if (freeSiteNr >= freeSites.length) {
-                break;
-            }
-
-            int site = freeSites[(int) freeSiteNr];
-            freeSiteNr++;
+        numDifferingFreeSites += this.visitRandomIndices(freeSites.length, changeProbability, freeSiteNr -> {
+            int site = freeSites[freeSiteNr];
 
             // the held sites were sampled explicitly, including the ones added here, whose positions only increase
             int heldSlot = starStates.getSlot(site);
             if (heldSlot >= 0 && heldSlot < numHeldSites) {
-                continue;
+                return false;
             }
 
             int agreeingState = agreeingStates.applyAsInt(site);
             int slot = starStates.addSite(site);
             starStates.setAllStates(slot, agreeingState);
             starStates.setState(slot, freeColumn, this.sampleOtherState(agreeingState));
-            numDifferingFreeSites++;
-        }
+            return true;
+        });
 
-        return logProbability + this.computeLogFreeEndProbability(
-                logStayProbability, logChangeProbability, freeSites.length, numDifferingFreeSites
-        );
+        return logProbability + this.computeLogEndStatesProbability(expectedJumps[freeColumn], freeSites.length, numDifferingFreeSites);
     }
 
     /**
@@ -338,11 +308,7 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
             return logProbability;
         }
 
-        double changeProbability = this.computeChangeProbability(expectedJumps[freeColumn]);
-        return logProbability + this.computeLogFreeEndProbability(
-                Math.log1p(-(this.numStates - 1.0) * changeProbability), Math.log(changeProbability),
-                numFreeSites, numDifferingFreeSites
-        );
+        return logProbability + this.computeLogEndStatesProbability(expectedJumps[freeColumn], numFreeSites, numDifferingFreeSites);
     }
 
     /**
@@ -355,30 +321,19 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
                                      int[] candidateSites, BitSet excludedSites) {
         int centre = starStates.getNumColumns() - 1;
         int numCandidates = candidateSites == null ? this.numSites : candidateSites.length;
-        int numChangedSites = 0;
-        double candidateNr = 0;
 
-        while (model.centreChangeProbability() > 0.0) {
-            candidateNr += this.sampleGeometric(model.centreChangeProbability());
-            if (candidateNr >= numCandidates) {
-                break;
-            }
-
-            int site = candidateSites == null ? (int) candidateNr : candidateSites[(int) candidateNr];
-            candidateNr++;
-
+        return this.visitRandomIndices(numCandidates, model.centreChangeProbability(), candidateNr -> {
+            int site = candidateSites == null ? candidateNr : candidateSites[candidateNr];
             if (starStates.containsSite(site) || (excludedSites != null && excludedSites.get(site))) {
-                continue;
+                return false;
             }
 
             int agreeingState = agreeingStates.applyAsInt(site);
             int slot = starStates.addSite(site);
             starStates.setAllStates(slot, agreeingState);
             starStates.setState(slot, centre, this.sampleOtherState(agreeingState));
-            numChangedSites++;
-        }
-
-        return numChangedSites;
+            return true;
+        });
     }
 
     /**
@@ -461,14 +416,9 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
      * the outer ends agree, of which the given number have a centre in another state.
      */
     private double computeLogAgreeingCentreProbability(StarModel model, int numAgreeingSites, int numChangedSites) {
-        double logProbability = (numAgreeingSites - numChangedSites) * model.logSameProbability();
-
-        // avoid 0 · -∞ if a branch cannot change its state
-        if (numChangedSites > 0) {
-            logProbability += numChangedSites * model.logOtherProbability();
-        }
-
-        return logProbability;
+        return this.computeLogCountProbability(
+                numAgreeingSites, numChangedSites, model.logSameProbability(), model.logOtherProbability()
+        );
     }
 
     /* Free End States */
@@ -482,24 +432,13 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
      */
     public int sampleFreeEndStates(double expectedJumps, int[] freeSites, IntUnaryOperator startStates, SiteChanges differingSites) {
         double changeProbability = (this.numStates - 1.0) * this.computeChangeProbability(expectedJumps);
-        int numDifferingFreeSites = 0;
-        double freeSiteNr = 0;
 
-        while (changeProbability > 0.0) {
-            freeSiteNr += this.sampleGeometric(changeProbability);
-            if (freeSiteNr >= freeSites.length) {
-                break;
-            }
-
-            int site = freeSites[(int) freeSiteNr];
-            freeSiteNr++;
-
+        return this.visitRandomIndices(freeSites.length, changeProbability, freeSiteNr -> {
+            int site = freeSites[freeSiteNr];
             int startState = startStates.applyAsInt(site);
             differingSites.addSite(site, startState, this.sampleOtherState(startState));
-            numDifferingFreeSites++;
-        }
-
-        return numDifferingFreeSites;
+            return true;
+        });
     }
 
     /**
@@ -507,28 +446,43 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
      * from their start states at the given number of the free sites.
      */
     public double computeLogFreeEndStatesDensity(double expectedJumps, int numFreeSites, int numDifferingFreeSites) {
-        if (numFreeSites == 0) {
-            return 0.0;
-        }
+        return this.computeLogEndStatesProbability(expectedJumps, numFreeSites, numDifferingFreeSites);
+    }
 
+    /* Probabilities */
+
+    /**
+     * Computes the Jukes-Cantor probability of ending in a given other state after the given
+     * expected number of jumps.
+     */
+    private double computeChangeProbability(double expectedJumps) {
+        return -Math.expm1(-expectedJumps * this.numStates / (this.numStates - 1.0)) / this.numStates;
+    }
+
+    /**
+     * Computes the Jukes-Cantor log probability of the end states of the given number of
+     * sites after the given expected number of jumps, where the given number of them differ
+     * from their start states.
+     */
+    private double computeLogEndStatesProbability(double expectedJumps, int numSites, int numDifferingSites) {
         double changeProbability = this.computeChangeProbability(expectedJumps);
-        return this.computeLogFreeEndProbability(
-                Math.log1p(-(this.numStates - 1.0) * changeProbability), Math.log(changeProbability),
-                numFreeSites, numDifferingFreeSites
+        return this.computeLogCountProbability(
+                numSites, numDifferingSites, Math.log1p(-(this.numStates - 1.0) * changeProbability), Math.log(changeProbability)
         );
     }
 
     /**
-     * Computes the log probability of the free end states at the given number of free sites,
-     * of which the given number differ from the state they are sampled from.
+     * Computes the log probability of the given number of sites, of which the given number
+     * take a given other state and the rest keep their state, from the log probabilities of
+     * both outcomes at a single site.
      */
-    private double computeLogFreeEndProbability(double logStayProbability, double logChangeProbability,
-                                                int numFreeSites, int numDifferingFreeSites) {
-        double logProbability = (numFreeSites - numDifferingFreeSites) * logStayProbability;
+    private double computeLogCountProbability(int numSites, int numChangedSites, double logSameProbability,
+                                              double logOtherProbability) {
+        double logProbability = (numSites - numChangedSites) * logSameProbability;
 
-        // avoid 0 · -∞ if the branch cannot change its state
-        if (numDifferingFreeSites > 0) {
-            logProbability += numDifferingFreeSites * logChangeProbability;
+        // avoid 0 · -∞ if no site can change its state
+        if (numChangedSites > 0) {
+            logProbability += numChangedSites * logOtherProbability;
         }
 
         return logProbability;
@@ -583,11 +537,7 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
             // propose two or more jumps, whose states only depend on the start state by symmetry
 
             int numJumps = this.sampleTruncatedPoisson(expectedJumps, 2);
-            int[] states = new int[numJumps + 1];
-            for (int i = 1; i <= numJumps; i++) {
-                states[i] = this.sampleOtherState(states[i - 1]);
-            }
-
+            int[] states = this.sampleJumpChain(numJumps, 0);
             if (states[numJumps] != states[0]) {
                 // restart the rejection sampling at the same site
                 continue;
@@ -605,7 +555,7 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
         }
     }
 
-    /* Single Sites */
+    /* Jump Chains */
 
     /**
      * Samples the states of a Jukes-Cantor jump chain from the start to the end state by
@@ -616,19 +566,27 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
     private int[] sampleJumpStates(double expectedJumps, int minJumps, int startState, int endState) {
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             int numJumps = this.sampleTruncatedPoisson(expectedJumps, minJumps);
-
-            int[] states = new int[numJumps + 1];
-            states[0] = startState;
-            for (int i = 1; i <= numJumps; i++) {
-                states[i] = this.sampleOtherState(states[i - 1]);
-            }
-
+            int[] states = this.sampleJumpChain(numJumps, startState);
             if (states[numJumps] == endState) {
                 return states;
             }
         }
 
         throw new RuntimeException("Could not sample the history of a site on a branch.");
+    }
+
+    /**
+     * Samples a Jukes-Cantor jump chain with the given number of jumps from the given start
+     * state, where every jump moves to a uniformly chosen other state. The returned array
+     * holds the start state followed by the state after every jump.
+     */
+    private int[] sampleJumpChain(int numJumps, int startState) {
+        int[] states = new int[numJumps + 1];
+        states[0] = startState;
+        for (int i = 1; i <= numJumps; i++) {
+            states[i] = this.sampleOtherState(states[i - 1]);
+        }
+        return states;
     }
 
     /**
@@ -653,15 +611,31 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
         }
     }
 
-    /**
-     * Computes the Jukes-Cantor probability of ending in a given other state after the given
-     * expected number of jumps.
-     */
-    private double computeChangeProbability(double expectedJumps) {
-        return -Math.expm1(-expectedJumps * this.numStates / (this.numStates - 1.0)) / this.numStates;
-    }
-
     /* Random Draws */
+
+    /**
+     * Selects every index below the given number independently with the given probability,
+     * by skipping indices geometrically, and passes it to the given action. Returns the number
+     * of selected indices that the action accepts.
+     */
+    private int visitRandomIndices(int numIndices, double probability, IntPredicate action) {
+        int numAccepted = 0;
+        double index = 0;
+
+        while (probability > 0.0) {
+            index += this.sampleGeometric(probability);
+            if (index >= numIndices) {
+                break;
+            }
+
+            if (action.test((int) index)) {
+                numAccepted++;
+            }
+            index++;
+        }
+
+        return numAccepted;
+    }
 
     /** Samples a state uniformly among all states other than the given one. */
     private int sampleOtherState(int state) {
