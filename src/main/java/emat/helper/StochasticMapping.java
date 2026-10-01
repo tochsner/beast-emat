@@ -8,10 +8,7 @@ import java.util.List;
 
 /**
  * Samples the history of a single site on a branch given the states at both of its ends
- * (stochastic mapping), and computes the probability of proposing a given history. The
- * rate matrix R = s Q of a branch is given by the rate matrix Q, which is shared by all
- * branches, and the scale s of the branch. Implementations may map under an approximation
- * of R, in which case the density corrects for it in an acceptance probability.
+ * (stochastic mapping), and computes the probability of proposing a given history.
  */
 public interface StochasticMapping {
 
