@@ -132,27 +132,6 @@ public final class MutationPaths {
     }
 
     /**
-     * Returns the full sequence at the given node, starting from the reference sequence and
-     * applying all mutations from the root down to the node.
-     */
-    public static int[] getSequence(Mutations mutations, Node node) {
-        List<Node> lineage = new ArrayList<>();
-        for (Node ancestor = node; ancestor != null; ancestor = ancestor.getParent()) {
-            lineage.add(ancestor);
-        }
-
-        int[] sequence = mutations.getReferenceSequence().clone();
-
-        for (int i = lineage.size() - 1; i >= 0; i--) {
-            for (Mutation mutation : mutations.getMutations(lineage.get(i))) {
-                sequence[mutation.site()] = mutation.newState();
-            }
-        }
-
-        return sequence;
-    }
-
-    /**
      * Collects the sequence at the given node as the sites that mutate on the path from the
      * root down to it, with their state at the node as end state. Sites without an entry
      * keep the state of the reference sequence. The changes are written into the given map,
@@ -178,7 +157,7 @@ public final class MutationPaths {
     /**
      * Returns the state of the given site at the given node, which is set by the lowest
      * mutation at the site on the path from the node up to the root, or by the reference
-     * sequence if there is none. Its cost is the number of mutations on that path.
+     * sequence if there is none.
      */
     public static int getState(Mutations mutations, Node node, int site) {
         for (Node branchNode = node; branchNode != null; branchNode = branchNode.getParent()) {
