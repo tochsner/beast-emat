@@ -1,24 +1,22 @@
 package emat.helper;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * A reusable map from sites to their states at two points of the tree, the start and the
  * end. Entries are kept in slots in the order they were added, and a lookup table over all
- * sites finds the slot of a site in constant time without boxing. Clearing only resets the
+ * sites finds the slot of a site in constant time. Clearing only resets the
  * added sites, so its cost does not depend on the genome length.
  */
 public final class SiteChanges {
 
-    private static final int INITIAL_CAPACITY = 16;
+    private record Entry(int site, int startState, int endState) {}
 
     // the slot of every site, or -1 if the site has no entry
     private final int[] slotOfSite;
-
-    private int[] sites = new int[INITIAL_CAPACITY];
-    private int[] startStates = new int[INITIAL_CAPACITY];
-    private int[] endStates = new int[INITIAL_CAPACITY];
-    private int size = 0;
+    private final List<Entry> entries = new ArrayList<>();
 
     public SiteChanges(int numSites) {
         this.slotOfSite = new int[numSites];
@@ -27,19 +25,19 @@ public final class SiteChanges {
 
     /** Returns the number of sites with an entry, which are stored in the slots below it. */
     public int getSize() {
-        return this.size;
+        return this.entries.size();
     }
 
     public int getSite(int slot) {
-        return this.sites[slot];
+        return this.entries.get(slot).site();
     }
 
     public int getStartState(int slot) {
-        return this.startStates[slot];
+        return this.entries.get(slot).startState();
     }
 
     public int getEndState(int slot) {
-        return this.endStates[slot];
+        return this.entries.get(slot).endState();
     }
 
     /** Returns the slot of the given site, or -1 if it has no entry. */
@@ -53,35 +51,23 @@ public final class SiteChanges {
 
     /** Adds an entry for the given site, which must not have one yet, and returns its slot. */
     public int addSite(int site, int startState, int endState) {
-        if (this.size == this.sites.length) {
-            this.grow();
-        }
-
-        int slot = this.size++;
-        this.sites[slot] = site;
-        this.startStates[slot] = startState;
-        this.endStates[slot] = endState;
+        int slot = this.entries.size();
+        this.entries.add(new Entry(site, startState, endState));
         this.slotOfSite[site] = slot;
         return slot;
     }
 
     public void setStartState(int slot, int state) {
-        this.startStates[slot] = state;
+        Entry entry = this.entries.get(slot);
+        this.entries.set(slot, new Entry(entry.site(), state, entry.endState()));
     }
 
     /** Removes all entries. */
     public void clear() {
-        for (int slot = 0; slot < this.size; slot++) {
-            this.slotOfSite[this.sites[slot]] = -1;
+        for (Entry entry : this.entries) {
+            this.slotOfSite[entry.site()] = -1;
         }
-        this.size = 0;
-    }
-
-    private void grow() {
-        int capacity = 2 * this.sites.length;
-        this.sites = Arrays.copyOf(this.sites, capacity);
-        this.startStates = Arrays.copyOf(this.startStates, capacity);
-        this.endStates = Arrays.copyOf(this.endStates, capacity);
+        this.entries.clear();
     }
 
 }
