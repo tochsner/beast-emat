@@ -117,7 +117,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
         this.updateBranches(root, false, isEverythingDirty);
         this.isInitialised = true;
 
-        // sum in node order, so that rounding does not depend on which branches were updated
+        // sum in node order, so that rounding of the result does not depend on which branches were updated
 
         this.logP = 0.0;
         for (double branchLogP : this.branchLogPs) {
@@ -139,7 +139,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
             double oldRate = this.getTotalMutationRate(node);
             this.branchLogPs[node.getNr()] = this.calculateBranchContribution(node);
 
-            // the same mutations summed along a different path only differ by rounding, which must not spread down the tree
+            // check the same mutations summed along a different path only differ by rounding
             isRateChanged = isEverythingDirty
                     || Math.abs(this.getTotalMutationRate(node) - oldRate) > RATE_TOLERANCE * Math.abs(oldRate);
         }
@@ -162,8 +162,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
     }
 
     /**
-     * Computes the genetic prior for the root branch. The root starts from the rate of the
-     * reference sequence above it.
+     * Computes the genetic prior for the root branch.
      */
     private double calculateRootBranchContribution(Node root) {
         // check if we actually have to recompute the root contribution
@@ -220,19 +219,19 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
         // add the contribution for no change between mutations
 
-        double rate = this.getTotalMutationRate(parent);
+        double totalMutationRate = this.getTotalMutationRate(parent);
         double previousHeight = parent.getHeight();
 
         for (Mutation mutation : mutations) {
-            branchLogP -= branchRate * rate * (previousHeight - mutation.time());
-            rate += this.getEscapeRate(node, mutation.newState(), mutation.site())
+            branchLogP -= branchRate * totalMutationRate * (previousHeight - mutation.time());
+            totalMutationRate += this.getEscapeRate(node, mutation.newState(), mutation.site())
                     - this.getEscapeRate(node, mutation.oldState(), mutation.site());
             previousHeight = mutation.time();
         }
 
-        branchLogP -= branchRate * rate * (previousHeight - node.getHeight());
+        branchLogP -= branchRate * totalMutationRate * (previousHeight - node.getHeight());
 
-        this.totalMutationRatesPerNode[node.getNr()] = rate;
+        this.totalMutationRatesPerNode[node.getNr()] = totalMutationRate;
 
         return branchLogP;
     }
