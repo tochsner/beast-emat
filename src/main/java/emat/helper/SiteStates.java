@@ -1,6 +1,8 @@
 package emat.helper;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * A reusable map from sites to their states at a fixed number of points of the tree, the
@@ -10,22 +12,19 @@ import java.util.Arrays;
  */
 public final class SiteStates {
 
-    private static final int INITIAL_CAPACITY = 16;
+    private record Entry(int site, int[] states) {}
 
     private final int numColumns;
 
     // the slot of every site, or -1 if the site has no entry
     private final int[] slotOfSite;
 
-    private int[] sites = new int[INITIAL_CAPACITY];
-    private int[] states;
-    private int size = 0;
+    private final List<Entry> entries = new ArrayList<>();
 
     public SiteStates(int numSites, int numColumns) {
         this.numColumns = numColumns;
         this.slotOfSite = new int[numSites];
         Arrays.fill(this.slotOfSite, -1);
-        this.states = new int[INITIAL_CAPACITY * numColumns];
     }
 
     public int getNumColumns() {
@@ -34,24 +33,24 @@ public final class SiteStates {
 
     /** Returns the number of sites with an entry, which are stored in the slots below it. */
     public int getSize() {
-        return this.size;
+        return this.entries.size();
     }
 
     public int getSite(int slot) {
-        return this.sites[slot];
+        return this.entries.get(slot).site();
     }
 
     public int getState(int slot, int column) {
-        return this.states[slot * this.numColumns + column];
+        return this.entries.get(slot).states()[column];
     }
 
     public void setState(int slot, int column, int state) {
-        this.states[slot * this.numColumns + column] = state;
+        this.entries.get(slot).states()[column] = state;
     }
 
     /** Sets the state of every column of the given slot to the given state. */
     public void setAllStates(int slot, int state) {
-        Arrays.fill(this.states, slot * this.numColumns, (slot + 1) * this.numColumns, state);
+        Arrays.fill(this.entries.get(slot).states(), state);
     }
 
     /** Returns the slot of the given site, or -1 if it has no entry. */
@@ -65,9 +64,9 @@ public final class SiteStates {
 
     /** Checks whether the states of the given slot agree in all columns below the given one. */
     public boolean isAgreeingBelow(int slot, int column) {
-        int state = this.getState(slot, 0);
+        int[] states = this.entries.get(slot).states();
         for (int i = 1; i < column; i++) {
-            if (this.getState(slot, i) != state) {
+            if (states[i] != states[0]) {
                 return false;
             }
         }
@@ -79,28 +78,18 @@ public final class SiteStates {
      * Its states must be set afterwards.
      */
     public int addSite(int site) {
-        if (this.size == this.sites.length) {
-            this.grow();
-        }
-
-        int slot = this.size++;
-        this.sites[slot] = site;
+        int slot = this.entries.size();
+        this.entries.add(new Entry(site, new int[this.numColumns]));
         this.slotOfSite[site] = slot;
         return slot;
     }
 
     /** Removes all entries. */
     public void clear() {
-        for (int slot = 0; slot < this.size; slot++) {
-            this.slotOfSite[this.sites[slot]] = -1;
+        for (Entry entry : this.entries) {
+            this.slotOfSite[entry.site()] = -1;
         }
-        this.size = 0;
-    }
-
-    private void grow() {
-        int capacity = 2 * this.sites.length;
-        this.sites = Arrays.copyOf(this.sites, capacity);
-        this.states = Arrays.copyOf(this.states, capacity * this.numColumns);
+        this.entries.clear();
     }
 
 }
