@@ -5,6 +5,7 @@ import emat.state.Mutation;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.IntUnaryOperator;
@@ -166,6 +167,371 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
                 + (this.numSites - numDifferingSites) * logStayProbability;
 
         return logDensity;
+    }
+
+    /* Star Centres */
+
+    /**
+     * The Jukes-Cantor model of a star of branches that meet at a centre: per branch, the
+     * probability of ending in a given other state, and, for a site where all outer ends
+     * agree, the log probabilities of the centre keeping their state or taking a given other
+     * state, and the probability of it taking any other state.
+     */
+    private record StarModel(double[] changeProbabilities, double logSameProbability, double logOtherProbability,
+                             double centreChangeProbability) {
+    }
+
+    /**
+     * Samples the states at the centre of a star of branches given the states at their
+     * outer ends, under Jukes-Cantor with the given expected number of jumps per branch.
+     * Jukes-Cantor is time-reversible, so the direction of the branches does not matter.
+     * The star states hold the outer ends in the columns below the number of branches and
+     * the centre in the column of that number, and initially hold every site where the
+     * states of the outer ends do not all agree. At every other site, all outer ends are in
+     * the state returned by the given lookup, and the centre only differs from it if it
+     * differs at all branches, which is rare. Such sites are found by skipping sites
+     * geometrically as in Algorithm 1 and added to the star states.
+     * <p>
+     * At the given free sites, which are sorted, the outer end in the free column is not
+     * fixed, e.g. a tip with missing data. The centre is then sampled from the other outer
+     * ends only, and the free end afterwards from the centre, which also adds every free site
+     * where it differs from the centre. Returns the log probability of all sampled states.
+     */
+    public double sampleStarStates(double[] expectedJumps, SiteStates starStates, IntUnaryOperator agreeingStates,
+                                   int[] freeSites, BitSet freeSiteSet, int freeColumn) {
+        int centre = expectedJumps.length;
+        StarModel fullModel = this.createStarModel(expectedJumps, -1);
+        StarModel freeModel = this.createStarModel(expectedJumps, freeColumn);
+        double[] weights = new double[this.numStates];
+
+        // sample the centre at the sites held initially, whose outer ends mostly differ
+
+        int numInitialSites = starStates.getSize();
+        int numInitialFreeSites = 0;
+        double logProbability = 0.0;
+
+        for (int slot = 0; slot < numInitialSites; slot++) {
+            boolean isFree = freeSiteSet.get(starStates.getSite(slot));
+            numInitialFreeSites += isFree ? 1 : 0;
+
+            double totalWeight = this.computeCentreWeights(isFree ? freeModel : fullModel, starStates, slot, isFree ? freeColumn : -1, weights);
+            int state = StochasticMapping.sampleIndex(weights);
+            starStates.setState(slot, centre, state);
+            logProbability += Math.log(weights[state] / totalWeight);
+        }
+
+        // sample the centre at the other sites, where the outer ends agree
+
+        int numChangedSites = this.sampleChangedCentres(fullModel, starStates, agreeingStates, null, freeSiteSet);
+        logProbability += this.computeLogAgreeingCentreProbability(
+                fullModel, this.numSites - freeSites.length - (numInitialSites - numInitialFreeSites), numChangedSites
+        );
+
+        int numChangedFreeSites = this.sampleChangedCentres(freeModel, starStates, agreeingStates, freeSites, null);
+        logProbability += this.computeLogAgreeingCentreProbability(
+                freeModel, freeSites.length - numInitialFreeSites, numChangedFreeSites
+        );
+
+        if (freeSites.length == 0) {
+            return logProbability;
+        }
+
+        // sample the free end from the centre, explicitly at the held sites and by skipping at the others
+
+        double changeProbability = this.computeChangeProbability(expectedJumps[freeColumn]);
+        double logStayProbability = Math.log1p(-(this.numStates - 1.0) * changeProbability);
+        double logChangeProbability = Math.log(changeProbability);
+
+        int numHeldFreeSites = 0;
+        int numDifferingFreeSites = 0;
+
+        for (int slot = 0; slot < starStates.getSize(); slot++) {
+            if (!freeSiteSet.get(starStates.getSite(slot))) {
+                continue;
+            }
+            numHeldFreeSites++;
+
+            int centreState = starStates.getState(slot, centre);
+            int state = Randomizer.nextDouble() < (this.numStates - 1.0) * changeProbability
+                    ? this.sampleOtherState(centreState)
+                    : centreState;
+            starStates.setState(slot, freeColumn, state);
+            numDifferingFreeSites += state != centreState ? 1 : 0;
+        }
+
+        int numHeldSites = starStates.getSize();
+        double freeSiteNr = 0;
+
+        while (changeProbability > 0.0) {
+            freeSiteNr += this.sampleGeometric((this.numStates - 1.0) * changeProbability);
+            if (freeSiteNr >= freeSites.length) {
+                break;
+            }
+
+            int site = freeSites[(int) freeSiteNr];
+            freeSiteNr++;
+
+            // the held sites were sampled explicitly, including the ones added here, whose positions only increase
+            int heldSlot = starStates.getSlot(site);
+            if (heldSlot >= 0 && heldSlot < numHeldSites) {
+                continue;
+            }
+
+            int agreeingState = agreeingStates.applyAsInt(site);
+            int slot = starStates.addSite(site);
+            starStates.setAllStates(slot, agreeingState);
+            starStates.setState(slot, freeColumn, this.sampleOtherState(agreeingState));
+            numDifferingFreeSites++;
+        }
+
+        return logProbability + this.computeLogFreeEndProbability(
+                logStayProbability, logChangeProbability, freeSites.length, numDifferingFreeSites
+        );
+    }
+
+    /**
+     * Computes the log probability that sampleStarStates samples the centre and free states
+     * held by the given star states. Every site without an entry keeps the state of the
+     * outer ends at the centre and at the free end.
+     */
+    public double computeLogStarStatesDensity(double[] expectedJumps, SiteStates starStates, int numFreeSites,
+                                              BitSet freeSiteSet, int freeColumn) {
+        int centre = expectedJumps.length;
+        StarModel fullModel = this.createStarModel(expectedJumps, -1);
+        StarModel freeModel = this.createStarModel(expectedJumps, freeColumn);
+        double[] weights = new double[this.numStates];
+
+        int[] numOuterSites = new int[2];
+        int[] numChangedSites = new int[2];
+        int numDifferingFreeSites = 0;
+        double logProbability = 0.0;
+
+        for (int slot = 0; slot < starStates.getSize(); slot++) {
+            boolean isFree = freeSiteSet.get(starStates.getSite(slot));
+            int modelNr = isFree ? 1 : 0;
+            int ignoredColumn = isFree ? freeColumn : -1;
+            int centreState = starStates.getState(slot, centre);
+
+            if (isFree && starStates.getState(slot, freeColumn) != centreState) {
+                numDifferingFreeSites++;
+            }
+
+            int agreeingState = this.getAgreeingState(starStates, slot, centre, ignoredColumn);
+            if (agreeingState >= 0) {
+                numChangedSites[modelNr] += centreState != agreeingState ? 1 : 0;
+                continue;
+            }
+
+            numOuterSites[modelNr]++;
+            double totalWeight = this.computeCentreWeights(isFree ? freeModel : fullModel, starStates, slot, ignoredColumn, weights);
+            logProbability += Math.log(weights[centreState] / totalWeight);
+        }
+
+        logProbability += this.computeLogAgreeingCentreProbability(
+                fullModel, this.numSites - numFreeSites - numOuterSites[0], numChangedSites[0]
+        );
+        logProbability += this.computeLogAgreeingCentreProbability(
+                freeModel, numFreeSites - numOuterSites[1], numChangedSites[1]
+        );
+
+        if (numFreeSites == 0) {
+            return logProbability;
+        }
+
+        double changeProbability = this.computeChangeProbability(expectedJumps[freeColumn]);
+        return logProbability + this.computeLogFreeEndProbability(
+                Math.log1p(-(this.numStates - 1.0) * changeProbability), Math.log(changeProbability),
+                numFreeSites, numDifferingFreeSites
+        );
+    }
+
+    /**
+     * Finds the sites where the outer ends agree but the centre differs, by skipping sites
+     * geometrically, and adds them to the star states. The candidates are either all sites
+     * except the given excluded ones, or only the given sites. Sites already held are
+     * skipped, which is equivalent to filtering them out. Returns the number of added sites.
+     */
+    private int sampleChangedCentres(StarModel model, SiteStates starStates, IntUnaryOperator agreeingStates,
+                                     int[] candidateSites, BitSet excludedSites) {
+        int centre = starStates.getNumColumns() - 1;
+        int numCandidates = candidateSites == null ? this.numSites : candidateSites.length;
+        int numChangedSites = 0;
+        double candidateNr = 0;
+
+        while (model.centreChangeProbability() > 0.0) {
+            candidateNr += this.sampleGeometric(model.centreChangeProbability());
+            if (candidateNr >= numCandidates) {
+                break;
+            }
+
+            int site = candidateSites == null ? (int) candidateNr : candidateSites[(int) candidateNr];
+            candidateNr++;
+
+            if (starStates.containsSite(site) || (excludedSites != null && excludedSites.get(site))) {
+                continue;
+            }
+
+            int agreeingState = agreeingStates.applyAsInt(site);
+            int slot = starStates.addSite(site);
+            starStates.setAllStates(slot, agreeingState);
+            starStates.setState(slot, centre, this.sampleOtherState(agreeingState));
+            numChangedSites++;
+        }
+
+        return numChangedSites;
+    }
+
+    /**
+     * Computes the model of a star with the given expected number of jumps per branch,
+     * leaving out the branch of the given column unless it is negative. At a site where all
+     * outer ends agree, the centre keeps their state with a weight of ∏ P=(i) and takes a
+     * given other state with a weight of ∏ P≠(i). The ratio r of the latter to the former is
+     * tiny on short branches, so the probabilities are computed from it without
+     * cancellation.
+     */
+    private StarModel createStarModel(double[] expectedJumps, int ignoredColumn) {
+        double[] changeProbabilities = new double[expectedJumps.length];
+        double logStayProduct = 0.0;
+        double logChangeProduct = 0.0;
+
+        for (int i = 0; i < expectedJumps.length; i++) {
+            changeProbabilities[i] = this.computeChangeProbability(expectedJumps[i]);
+            if (i != ignoredColumn) {
+                logStayProduct += Math.log1p(-(this.numStates - 1.0) * changeProbabilities[i]);
+                logChangeProduct += Math.log(changeProbabilities[i]);
+            }
+        }
+
+        double changeRatio = Math.exp(logChangeProduct - logStayProduct);
+        double logSameProbability = -Math.log1p((this.numStates - 1.0) * changeRatio);
+        double logOtherProbability = logChangeProduct - logStayProduct + logSameProbability;
+        double centreChangeProbability = (this.numStates - 1.0) * changeRatio / (1.0 + (this.numStates - 1.0) * changeRatio);
+
+        return new StarModel(changeProbabilities, logSameProbability, logOtherProbability, centreChangeProbability);
+    }
+
+    /**
+     * Computes the weight of every centre state at the given slot, the product of the
+     * transition probabilities from it to the outer ends except the one in the given column,
+     * and returns their sum.
+     */
+    private double computeCentreWeights(StarModel model, SiteStates starStates, int slot, int ignoredColumn, double[] weights) {
+        double[] changeProbabilities = model.changeProbabilities();
+        double totalWeight = 0.0;
+
+        for (int state = 0; state < this.numStates; state++) {
+            double weight = 1.0;
+            for (int i = 0; i < changeProbabilities.length; i++) {
+                if (i == ignoredColumn) {
+                    continue;
+                }
+                weight *= starStates.getState(slot, i) == state
+                        ? 1.0 - (this.numStates - 1.0) * changeProbabilities[i]
+                        : changeProbabilities[i];
+            }
+            weights[state] = weight;
+            totalWeight += weight;
+        }
+
+        return totalWeight;
+    }
+
+    /**
+     * Returns the state of the outer ends at the given slot except the one in the given
+     * column, or -1 if they do not all agree.
+     */
+    private int getAgreeingState(SiteStates starStates, int slot, int centre, int ignoredColumn) {
+        int agreeingState = -1;
+        for (int i = 0; i < centre; i++) {
+            if (i == ignoredColumn) {
+                continue;
+            }
+            int state = starStates.getState(slot, i);
+            if (agreeingState < 0) {
+                agreeingState = state;
+            } else if (state != agreeingState) {
+                return -1;
+            }
+        }
+        return agreeingState;
+    }
+
+    /**
+     * Computes the log probability of the centre states at the given number of sites where
+     * the outer ends agree, of which the given number have a centre in another state.
+     */
+    private double computeLogAgreeingCentreProbability(StarModel model, int numAgreeingSites, int numChangedSites) {
+        double logProbability = (numAgreeingSites - numChangedSites) * model.logSameProbability();
+
+        // avoid 0 · -∞ if a branch cannot change its state
+        if (numChangedSites > 0) {
+            logProbability += numChangedSites * model.logOtherProbability();
+        }
+
+        return logProbability;
+    }
+
+    /* Free End States */
+
+    /**
+     * Samples the end states of a branch at the given free sites, which are sorted, from
+     * their start states under Jukes-Cantor with the given expected number of jumps. Every
+     * free site whose end state differs from its start state is added to the given
+     * differing sites, which must not hold any free site yet. Only these sites call the
+     * lookup of the start states. Returns the number of added sites.
+     */
+    public int sampleFreeEndStates(double expectedJumps, int[] freeSites, IntUnaryOperator startStates, SiteChanges differingSites) {
+        double changeProbability = (this.numStates - 1.0) * this.computeChangeProbability(expectedJumps);
+        int numDifferingFreeSites = 0;
+        double freeSiteNr = 0;
+
+        while (changeProbability > 0.0) {
+            freeSiteNr += this.sampleGeometric(changeProbability);
+            if (freeSiteNr >= freeSites.length) {
+                break;
+            }
+
+            int site = freeSites[(int) freeSiteNr];
+            freeSiteNr++;
+
+            int startState = startStates.applyAsInt(site);
+            differingSites.addSite(site, startState, this.sampleOtherState(startState));
+            numDifferingFreeSites++;
+        }
+
+        return numDifferingFreeSites;
+    }
+
+    /**
+     * Computes the log probability that sampleFreeEndStates samples end states that differ
+     * from their start states at the given number of the free sites.
+     */
+    public double computeLogFreeEndStatesDensity(double expectedJumps, int numFreeSites, int numDifferingFreeSites) {
+        if (numFreeSites == 0) {
+            return 0.0;
+        }
+
+        double changeProbability = this.computeChangeProbability(expectedJumps);
+        return this.computeLogFreeEndProbability(
+                Math.log1p(-(this.numStates - 1.0) * changeProbability), Math.log(changeProbability),
+                numFreeSites, numDifferingFreeSites
+        );
+    }
+
+    /**
+     * Computes the log probability of the free end states at the given number of free sites,
+     * of which the given number differ from the state they are sampled from.
+     */
+    private double computeLogFreeEndProbability(double logStayProbability, double logChangeProbability,
+                                                int numFreeSites, int numDifferingFreeSites) {
+        double logProbability = (numFreeSites - numDifferingFreeSites) * logStayProbability;
+
+        // avoid 0 · -∞ if the branch cannot change its state
+        if (numDifferingFreeSites > 0) {
+            logProbability += numDifferingFreeSites * logChangeProbability;
+        }
+
+        return logProbability;
     }
 
     /* Agreeing Sites */

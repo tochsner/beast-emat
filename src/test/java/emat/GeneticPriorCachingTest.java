@@ -45,10 +45,10 @@ public class GeneticPriorCachingTest {
         alignment.initByName(
                 "sequence", List.of(
                         new Sequence("A", "ACGTACGTAC"),
-                        new Sequence("B", "ACGAACGTTC"),
+                        new Sequence("B", "ACNAACGNNC"),
                         new Sequence("C", "TCGAACCTAC"),
                         new Sequence("D", "TCGTACCTAG"),
-                        new Sequence("E", "GCGTTCGTAC"),
+                        new Sequence("E", "GCGTTNNNNN"),
                         new Sequence("F", "GCGTTCGAAC")
                 ),
                 "dataType", "nucleotide"
@@ -98,6 +98,14 @@ public class GeneticPriorCachingTest {
         SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
         subtreeSlideOperator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "geneticPrior", geneticPrior, "size", 0.2);
 
+        WilsonBaldingOperator neighbourhoodWilsonBaldingOperator = new WilsonBaldingOperator();
+        neighbourhoodWilsonBaldingOperator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "geneticPrior", geneticPrior,
+                "resampleNeighbourhood", true);
+
+        SubtreeSlideOperator neighbourhoodSubtreeSlideOperator = new SubtreeSlideOperator();
+        neighbourhoodSubtreeSlideOperator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "geneticPrior", geneticPrior,
+                "size", 0.2, "resampleNeighbourhood", true);
+
         MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
         mdSprOperator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "geneticPrior", geneticPrior);
 
@@ -111,7 +119,8 @@ public class GeneticPriorCachingTest {
         gibbsOperator.initByName("weight", 1.0, "mutations", mutations, "geneticPrior", geneticPrior);
 
         List<Operator> operators = List.of(
-                wilsonBaldingOperator, subtreeSlideOperator, mdSprOperator, mutationTimeOperator, intervalScaleOperator, gibbsOperator
+                wilsonBaldingOperator, subtreeSlideOperator, neighbourhoodWilsonBaldingOperator, neighbourhoodSubtreeSlideOperator,
+                mdSprOperator, mutationTimeOperator, intervalScaleOperator, gibbsOperator
         );
 
         // set up the state with the genetic prior as the posterior

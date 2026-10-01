@@ -59,7 +59,7 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
      * A part of a branch of the pruned tree with a constant sequence: the node below the
      * branch, the index of the part counted from the top of the branch, the height range
      * of the part that is older than X, and the number of sites where its sequence differs
-     * from the sequence of X.
+     * from the sequence of X, leaving out the sites where the data of X is missing.
      */
     record Region(Node node, int index, double lowerHeight, double upperHeight, int numDifferences) {
     }
@@ -67,6 +67,12 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     @Override
     public void initAndValidate() {
         super.initAndValidate();
+
+        // the grafting density of the reverse move is computed on the pruned tree of the current state, which must keep its mutations
+        if (this.resampleNeighbourhood) {
+            throw new IllegalArgumentException("mdSPR does not support resampleNeighbourhood, as it changes the mutations of the pruned tree.");
+        }
+
         this.annealing = this.annealingInput.get();
         this.fullExplorationProbability = this.fullExplorationProbabilityInput.get();
 
@@ -100,8 +106,9 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
      * Cuts the branches of the pruned tree at their mutations into regions of constant
      * sequence, picks a region with probability proportional to its length times the
      * grafting density g at its midpoint, and draws the height uniformly within it. Under
-     * Jukes–Cantor with rate λ(X) spread over L sites, the density of attaching at distance
-     * τ above X to a sequence with N differences is g = [exp(-λτ) (λτ / 3L)^N]^f (Eq. 44).
+     * Jukes–Cantor with rate λ spread over L sites, the density of attaching at distance
+     * τ above X to a sequence with N differences at the observed sites of X is
+     * g = [exp(-λτ) (λτ / 3L)^N]^f (Eq. 44), where λ is the rate of the Jukes-Cantor mapping.
      * <p>
      * With a small fixed probability, all regions of the pruned tree are candidates. Their
      * total weight is the same before and after the move, so it cancels. Otherwise, only the
@@ -134,7 +141,7 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         }
 
         MutationPaths.collectChanges(this.mutations, parent, x, x.getHeight(), this.subtreeChanges);
-        int oldNumDifferences = MutationPaths.countDifferingSites(this.subtreeChanges);
+        int oldNumDifferences = this.countObservedDifferences(this.subtreeChanges);
 
         Region oldRegion = new Region(
                 this.sibling, oldIndex,
@@ -368,8 +375,30 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         return child == this.x.getParent() ? this.sibling : child;
     }
 
-    /** Returns how much crossing the given mutation downwards changes the number of differences to X. */
+    /**
+     * Counts the sites whose states differ between the start and the end of the given
+     * changes, leaving out the missing sites of X.
+     */
+    private int countObservedDifferences(SiteChanges changes) {
+        int numDifferences = 0;
+        for (int slot = 0; slot < changes.getSize(); slot++) {
+            if (changes.getStartState(slot) != changes.getEndState(slot) && !this.subtreeMissingSiteSet.get(changes.getSite(slot))) {
+                numDifferences++;
+            }
+        }
+        return numDifferences;
+    }
+
+    /**
+     * Returns how much crossing the given mutation downwards changes the number of
+     * differences to X. The missing sites of X are left out, as the move resamples the
+     * states of X there, and the grafting density must not depend on them.
+     */
     private int computeDifferenceChange(Mutation mutation) {
+        if (this.subtreeMissingSiteSet.get(mutation.site())) {
+            return 0;
+        }
+
         int subtreeState = this.getSubtreeState(mutation.site());
         return (mutation.newState() != subtreeState ? 1 : 0) - (mutation.oldState() != subtreeState ? 1 : 0);
     }
