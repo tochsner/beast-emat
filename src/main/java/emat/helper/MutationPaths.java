@@ -6,6 +6,7 @@ import emat.state.Mutations;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
 /**
  * Reconstructs states along paths of an EMAT: the sites that differ between two points of
@@ -55,10 +56,19 @@ public final class MutationPaths {
      * that mutates on the path to its state at the ancestor (start) and at the point (end).
      */
     public static void collectChanges(Mutations mutations, Node ancestor, Node node, double height, SiteChanges changes) {
+        collectChanges(mutations::getMutations, ancestor, node, height, changes);
+    }
+
+    /**
+     * Collects the changes like collectChanges(Mutations, ...), with the mutations above
+     * every node given by the given function.
+     */
+    public static void collectChanges(Function<Node, List<Mutation>> mutationsAboveNode, Node ancestor, Node node, double height,
+                                      SiteChanges changes) {
         changes.clear();
 
         for (Node branchNode = node; branchNode != ancestor; branchNode = branchNode.getParent()) {
-            List<Mutation> branchMutations = mutations.getMutations(branchNode);
+            List<Mutation> branchMutations = mutationsAboveNode.apply(branchNode);
 
             // the mutations are sorted by descending height, so the ones below the point are at the end
             int i = branchMutations.size() - 1;

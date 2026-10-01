@@ -14,6 +14,7 @@ import emat.helper.MutationPaths;
 import emat.helper.NodeStateLookup;
 import emat.helper.SiteChanges;
 import emat.helper.SiteStates;
+import emat.helper.StarHistories;
 import emat.state.Mutations;
 import emat.prior.GeneticPrior;
 
@@ -38,15 +39,16 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     final public Input<Boolean> resampleNeighbourhoodInput = new Input<>("resampleNeighbourhood", "whether to resample the histories on all branches around the old and the new attachment point instead of only on the branch above the pruned subtree", false);
 
     // the columns of the star states: the outer ends G, S and X of a star around P, and its centre P
-    static final int TOP = 0;
-    static final int SIBLING = 1;
-    static final int SUBTREE = 2;
-    static final int CENTRE = 3;
+    static final int TOP = StarHistories.TOP;
+    static final int SIBLING = StarHistories.FIRST;
+    static final int SUBTREE = StarHistories.SECOND;
+    static final int CENTRE = StarHistories.CENTRE;
 
     Mutations mutations;
     GeneticPrior geneticPrior;
     Tree tree;
     JukesCantorStochasticMapping stochasticMapping;
+    StarHistories starHistories;
     BranchMutations branchMutations;
     boolean resampleNeighbourhood;
 
@@ -55,9 +57,6 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     SiteChanges newParentChanges;
     SiteChanges differingSites;
     SiteChanges combinedChanges;
-
-    // reusable site maps for the changes from the MRCA of the outer ends of a star down to each of them
-    SiteChanges[] outerChanges;
 
     // reusable states of the stars around the old and the new attachment point at the sites where not all of their states agree
     SiteStates oldStarStates;
@@ -101,9 +100,9 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         this.newParentChanges = new SiteChanges(numSites);
         this.differingSites = new SiteChanges(numSites);
         this.combinedChanges = new SiteChanges(numSites);
-        this.outerChanges = new SiteChanges[]{new SiteChanges(numSites), new SiteChanges(numSites), new SiteChanges(numSites)};
-        this.oldStarStates = new SiteStates(numSites, CENTRE + 1);
-        this.newStarStates = new SiteStates(numSites, CENTRE + 1);
+        this.starHistories = new StarHistories(this.stochasticMapping, numSites);
+        this.oldStarStates = new SiteStates(numSites, StarHistories.NUM_COLUMNS);
+        this.newStarStates = new SiteStates(numSites, StarHistories.NUM_COLUMNS);
         this.subtreeStates = new NodeStateLookup(this.mutations, numSites);
 
         this.collectMissingSites();
@@ -146,6 +145,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
      * Detaches the subtree below X from its parent P and regrafts it with P on the branch
      * above S' at height t_P'. Neither P nor P' is the root. If S' is the old sibling S, the
      * topology stays the same and only the height of P shifts along the joined G–S branch.
+     * The new histories are proposed on the old tree, which is then regrafted.
      */
     @Override
     public double proposal() {
@@ -165,11 +165,18 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
             return Double.NEGATIVE_INFINITY;
         }
 
-        // regraft and resample the local history
+        // resample the local histories, then regraft and apply them
 
+        Map<Node, List<Mutation>> newBranchMutations = new LinkedHashMap<>();
         double logMutationHastingsRatio = this.resampleNeighbourhood
-                ? this.regraftWithNeighbourhoodHistories(x, graftingPoint)
-                : this.regraftWithSubtreeHistory(x, graftingPoint);
+                ? this.proposeNeighbourhoodHistories(x, graftingPoint, newBranchMutations)
+                : this.proposeSubtreeHistory(x, graftingPoint, newBranchMutations);
+
+        this.regraft(x, graftingPoint.newSibling(), graftingPoint.newParentHeight());
+
+        for (Map.Entry<Node, List<Mutation>> entry : newBranchMutations.entrySet()) {
+            this.mutations.applyMutations(entry.getKey(), entry.getValue(), this);
+        }
 
         return graftingPoint.logHastingsRatio() + logMutationHastingsRatio;
     }
@@ -213,14 +220,15 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     /* Grafting and Resampling */
 
     /**
-     * Regrafts the subtree and resamples only the history on the new P'–X branch. The
-     * mutations of the old P branch are merged into the branch of the old sibling S, the
-     * branch above S' is split at t_P', and everything else is kept. At the missing sites of
-     * X, the states at X are first sampled from the states at P' under Jukes-Cantor, and the
-     * history is then sampled given the end states. Returns the log of
-     * α_mut(n → o) / α_mut(o → n).
+     * Proposes the histories for a regraft that resamples only the
+     * history on the new P'–X branch. The mutations of the old P branch are merged into the
+     * branch of the old sibling S, the branch above S' is split at t_P', and everything else
+     * is kept. At the missing sites of X, the states at X are first sampled from the states
+     * at P' under Jukes-Cantor, and the history is then sampled given the end states. The
+     * new mutations are put into the given map in the order in which they must be applied
+     * after the regraft. Returns the log of α_mut(n → o) / α_mut(o → n).
      */
-    private double regraftWithSubtreeHistory(Node x, GraftingPoint graftingPoint) {
+    private double proposeSubtreeHistory(Node x, GraftingPoint graftingPoint, Map<Node, List<Mutation>> newBranchMutations) {
         Node parent = x.getParent();
         Node sibling = this.getOtherChild(parent, x);
         Node grandparent = parent.getParent();
@@ -274,25 +282,18 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         // rearrange the mutations: join G–P–S into G–S, then split G'–S' into G'–P'–S'
 
-        Map<Node, List<Mutation>> newBranchMutations = new LinkedHashMap<>();
-
         List<Mutation> joinedMutations = this.branchMutations.joinBranches(
                 this.mutations.getMutations(parent), this.mutations.getMutations(sibling), sibling.getNr(), grandparent.getHeight()
         );
         newBranchMutations.put(sibling, joinedMutations);
 
+        // if P only shifts, the split replaces the joined mutations of S, which keeps S first in the order
         List<Mutation> newSiblingMutations = isHeightShift ? joinedMutations : this.mutations.getMutations(newSibling);
         BranchMutations.Split split = this.branchMutations.splitBranch(newSiblingMutations, newParentHeight, parent.getNr(), newSibling.getNr());
         newBranchMutations.put(parent, split.upperMutations());
         newBranchMutations.put(newSibling, split.lowerMutations());
 
-        this.regraft(x, newSibling, newParentHeight);
-
-        for (Map.Entry<Node, List<Mutation>> entry : newBranchMutations.entrySet()) {
-            this.mutations.applyMutations(entry.getKey(), entry.getValue(), this);
-        }
-
-        this.mutations.applyMutations(x, newSubtreeMutations, this);
+        newBranchMutations.put(x, newSubtreeMutations);
 
         // calculate the hastings correction
 
@@ -307,8 +308,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     }
 
     /**
-     * Regrafts the subtree and resamples the histories on all branches around the old and
-     * the new attachment point (docs/mcmc-moves.md §3.5). These are the branches above P,
+     * Proposes the histories for a regraft that resamples the histories
+     * on all branches around the old and the new attachment point (docs/mcmc-moves.md §3.5). These are the branches above P,
      * S, X and S', which form the star G–P, P–S, P–X and the branch G'–S' before the move,
      * and the joined branch G–S and the star G'–P', P'–S', P'–X after it. The sequences at
      * the outer ends G, S, X, G' and S' stay fixed, except at the missing sites of X. The
@@ -316,9 +317,10 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
      * ends of its star, then the states of X at its missing sites given P', then the history
      * on every branch given its end states. The reverse move proposes the old
      * histories in the same way, and the genetic prior corrects for the approximate model.
-     * Returns the log of α_mut(n → o) / α_mut(o → n).
+     * The new mutations are put into the given map in the order in which they must be
+     * applied after the regraft. Returns the log of α_mut(n → o) / α_mut(o → n).
      */
-    private double regraftWithNeighbourhoodHistories(Node x, GraftingPoint graftingPoint) {
+    private double proposeNeighbourhoodHistories(Node x, GraftingPoint graftingPoint, Map<Node, List<Mutation>> newBranchMutations) {
         Node parent = x.getParent();
         Node sibling = this.getOtherChild(parent, x);
         Node grandparent = parent.getParent();
@@ -344,9 +346,9 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         // find the states at the outer ends of both stars, and at the centre P of the old star
 
-        this.collectOuterStates(grandparent, sibling, x, this.oldStarStates);
-        this.collectCentreStates(oldParentMutations, this.oldStarStates);
-        this.collectOuterStates(newGrandparent, newSibling, x, this.newStarStates);
+        this.starHistories.collectOuterStates(this.mutations::getMutations, grandparent, sibling, x, this.oldStarStates);
+        this.starHistories.collectCentreStates(oldParentMutations, this.oldStarStates);
+        this.starHistories.collectOuterStates(this.mutations::getMutations, newGrandparent, newSibling, x, this.newStarStates);
 
         // sample the new histories while the tree still holds the sequences at the outer ends, which the move keeps
 
@@ -361,23 +363,23 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
                 newExpectedJumps, this.newStarStates, this.subtreeStates, this.subtreeMissingSites, this.subtreeMissingSiteSet, SUBTREE
         );
 
-        List<Mutation> newParentMutations = this.sampleStarBranchHistory(
-                parent, newGrandparent.getHeight(), newParentHeight, parentRate, this.newStarStates, TOP, CENTRE
+        List<Mutation> newParentMutations = this.starHistories.sampleBranchHistory(
+                parent, newGrandparent.getHeight(), newParentHeight, parentRate, this.newStarStates, TOP, CENTRE, this.subtreeStates
         );
-        List<Mutation> newSiblingMutations = this.sampleStarBranchHistory(
-                newSibling, newParentHeight, newSibling.getHeight(), newSiblingRate, this.newStarStates, CENTRE, SIBLING
+        List<Mutation> newSiblingMutations = this.starHistories.sampleBranchHistory(
+                newSibling, newParentHeight, newSibling.getHeight(), newSiblingRate, this.newStarStates, CENTRE, SIBLING, this.subtreeStates
         );
-        List<Mutation> newSubtreeMutations = this.sampleStarBranchHistory(
-                x, newParentHeight, x.getHeight(), subtreeRate, this.newStarStates, CENTRE, SUBTREE
+        List<Mutation> newSubtreeMutations = this.starHistories.sampleBranchHistory(
+                x, newParentHeight, x.getHeight(), subtreeRate, this.newStarStates, CENTRE, SUBTREE, this.subtreeStates
         );
 
-        logForwardDensity += this.computeLogStarBranchDensity(
+        logForwardDensity += this.starHistories.computeLogBranchHistoryDensity(
                 newParentMutations, newGrandparent.getHeight(), newParentHeight, parentRate, this.newStarStates, TOP, CENTRE
         );
-        logForwardDensity += this.computeLogStarBranchDensity(
+        logForwardDensity += this.starHistories.computeLogBranchHistoryDensity(
                 newSiblingMutations, newParentHeight, newSibling.getHeight(), newSiblingRate, this.newStarStates, CENTRE, SIBLING
         );
-        logForwardDensity += this.computeLogStarBranchDensity(
+        logForwardDensity += this.starHistories.computeLogBranchHistoryDensity(
                 newSubtreeMutations, newParentHeight, x.getHeight(), subtreeRate, this.newStarStates, CENTRE, SUBTREE
         );
 
@@ -392,13 +394,13 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
                 oldExpectedJumps, this.oldStarStates, this.subtreeMissingSites.length, this.subtreeMissingSiteSet, SUBTREE
         );
 
-        logBackwardDensity += this.computeLogStarBranchDensity(
+        logBackwardDensity += this.starHistories.computeLogBranchHistoryDensity(
                 oldParentMutations, grandparent.getHeight(), oldParentHeight, parentRate, this.oldStarStates, TOP, CENTRE
         );
-        logBackwardDensity += this.computeLogStarBranchDensity(
+        logBackwardDensity += this.starHistories.computeLogBranchHistoryDensity(
                 oldSiblingMutations, oldParentHeight, sibling.getHeight(), siblingRate, this.oldStarStates, CENTRE, SIBLING
         );
-        logBackwardDensity += this.computeLogStarBranchDensity(
+        logBackwardDensity += this.starHistories.computeLogBranchHistoryDensity(
                 oldSubtreeMutations, oldParentHeight, x.getHeight(), subtreeRate, this.oldStarStates, CENTRE, SUBTREE
         );
 
@@ -406,24 +408,22 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         List<Mutation> joinedMutations = null;
         if (!isHeightShift) {
-            joinedMutations = this.sampleStarBranchHistory(
-                    sibling, grandparent.getHeight(), sibling.getHeight(), siblingRate, this.oldStarStates, TOP, SIBLING
+            joinedMutations = this.starHistories.sampleBranchHistory(
+                    sibling, grandparent.getHeight(), sibling.getHeight(), siblingRate, this.oldStarStates, TOP, SIBLING, this.subtreeStates
             );
-            logForwardDensity += this.computeLogStarBranchDensity(
+            logForwardDensity += this.starHistories.computeLogBranchHistoryDensity(
                     joinedMutations, grandparent.getHeight(), sibling.getHeight(), siblingRate, this.oldStarStates, TOP, SIBLING
             );
-            logBackwardDensity += this.computeLogStarBranchDensity(
+            logBackwardDensity += this.starHistories.computeLogBranchHistoryDensity(
                     oldNewSiblingMutations, newGrandparent.getHeight(), newSibling.getHeight(), newSiblingRate, this.newStarStates, TOP, SIBLING
             );
         }
 
-        this.regraft(x, newSibling, newParentHeight);
-
-        this.mutations.applyMutations(parent, newParentMutations, this);
-        this.mutations.applyMutations(newSibling, newSiblingMutations, this);
-        this.mutations.applyMutations(x, newSubtreeMutations, this);
+        newBranchMutations.put(parent, newParentMutations);
+        newBranchMutations.put(newSibling, newSiblingMutations);
+        newBranchMutations.put(x, newSubtreeMutations);
         if (!isHeightShift) {
-            this.mutations.applyMutations(sibling, joinedMutations, this);
+            newBranchMutations.put(sibling, joinedMutations);
         }
 
         return logBackwardDensity - logForwardDensity;
@@ -480,114 +480,6 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     protected double computeLogBranchHistoryDensity(Node x, double startHeight, List<Mutation> branchMutations, int numDifferingSites) {
         return this.stochasticMapping.computeLogBranchHistoryDensity(
                 branchMutations, startHeight, x.getHeight(), this.jukesCantorRate, numDifferingSites
-        );
-    }
-
-    /* Neighbourhood Histories */
-
-    /**
-     * Collects the states at the outer ends G, S and X of a star at every site where they
-     * do not all agree, from the changes on the paths from their MRCA down to each of them.
-     * The centre states are left unset.
-     */
-    private void collectOuterStates(Node top, Node sibling, Node x, SiteStates states) {
-        Node[] ends = {top, sibling, x};
-        Node mrca = MutationPaths.findMrca(MutationPaths.findMrca(x, sibling), top);
-
-        for (int i = 0; i < ends.length; i++) {
-            MutationPaths.collectChanges(this.mutations, mrca, ends[i], ends[i].getHeight(), this.outerChanges[i]);
-        }
-
-        states.clear();
-        int[] endStates = new int[ends.length];
-
-        for (SiteChanges changes : this.outerChanges) {
-            for (int slot = 0; slot < changes.getSize(); slot++) {
-                int site = changes.getSite(slot);
-                if (states.containsSite(site)) {
-                    continue;
-                }
-
-                // an end without changes at the site keeps the state at the MRCA
-                int mrcaState = changes.getStartState(slot);
-                boolean isAgreeing = true;
-                for (int i = 0; i < ends.length; i++) {
-                    int endSlot = this.outerChanges[i].getSlot(site);
-                    endStates[i] = endSlot >= 0 ? this.outerChanges[i].getEndState(endSlot) : mrcaState;
-                    isAgreeing &= endStates[i] == endStates[0];
-                }
-
-                if (!isAgreeing) {
-                    int statesSlot = states.addSite(site);
-                    for (int i = 0; i < ends.length; i++) {
-                        states.setState(statesSlot, i, endStates[i]);
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Completes the states of a star with the states at its centre, which follow from the
-     * states at the top end and the mutations on the branch from it down to the centre.
-     * Sites where only the centre differs from the agreeing outer ends are added.
-     */
-    private void collectCentreStates(List<Mutation> topMutations, SiteStates states) {
-        for (int slot = 0; slot < states.getSize(); slot++) {
-            states.setState(slot, CENTRE, states.getState(slot, TOP));
-        }
-
-        // the mutations are sorted by descending height, so the first one at a site starts in the top state and the last one sets the centre state
-        for (Mutation mutation : topMutations) {
-            int slot = states.getSlot(mutation.site());
-            if (slot < 0) {
-                slot = states.addSite(mutation.site());
-                states.setAllStates(slot, mutation.oldState());
-            }
-            states.setState(slot, CENTRE, mutation.newState());
-        }
-    }
-
-    /**
-     * Samples a new history on the branch above the given node, whose end states are held
-     * by the given columns of the star states. At the sites without an entry, both ends are
-     * in the state of X. The returned mutations are sorted by descending height.
-     */
-    private List<Mutation> sampleStarBranchHistory(Node node, double startHeight, double endHeight, double mutationRate,
-                                                   SiteStates states, int startColumn, int endColumn) {
-        this.differingSites.clear();
-        for (int slot = 0; slot < states.getSize(); slot++) {
-            int startState = states.getState(slot, startColumn);
-            int endState = states.getState(slot, endColumn);
-            if (startState != endState) {
-                this.differingSites.addSite(states.getSite(slot), startState, endState);
-            }
-        }
-
-        return this.stochasticMapping.sampleBranchHistory(
-                node.getNr(), startHeight, endHeight, mutationRate, this.differingSites,
-                site -> {
-                    int slot = states.getSlot(site);
-                    return slot >= 0 ? states.getState(slot, startColumn) : this.subtreeStates.applyAsInt(site);
-                }
-        );
-    }
-
-    /**
-     * Computes the log probability that sampleStarBranchHistory proposes the given history
-     * on a branch whose end states are held by the given columns of the star states.
-     */
-    private double computeLogStarBranchDensity(List<Mutation> branchMutations, double startHeight, double endHeight,
-                                               double mutationRate, SiteStates states, int startColumn, int endColumn) {
-        int numDifferingSites = 0;
-        for (int slot = 0; slot < states.getSize(); slot++) {
-            if (states.getState(slot, startColumn) != states.getState(slot, endColumn)) {
-                numDifferingSites++;
-            }
-        }
-
-        return this.stochasticMapping.computeLogBranchHistoryDensity(
-                branchMutations, startHeight, endHeight, mutationRate, numDifferingSites
         );
     }
 
