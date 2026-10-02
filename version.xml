@@ -12,7 +12,10 @@
         <provider classname="emat.operators.IntervalScaleOperator"/>
         <provider classname="emat.operators.MutationDirectedSprOperator"/>
         <provider classname="emat.operators.InnerNodeDisplacementOperator"/>
+        <provider classname="emat.operators.InnerNodeResampleOperator"/>
         <provider classname="emat.operators.RootScaleOperator"/>
         <provider classname="emat.operators.BranchReformOperator"/>
+        <provider classname="emat.tree.InsertionSortTreeIntervals"/>
+        <provider classname="emat.tree.TimSortTreeIntervals"/>
     </service>
 </package>

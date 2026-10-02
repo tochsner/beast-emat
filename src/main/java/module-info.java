@@ -12,6 +12,7 @@ import emat.operators.WilsonBaldingOperator;
 import emat.operators.RootScaleOperator;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
+import emat.tree.InsertionSortTreeIntervals;
 
 open module my.beast.example {
     requires beast.pkgmgmt;
@@ -26,6 +27,7 @@ open module my.beast.example {
     exports emat.initalisation;
     exports emat.state;
     exports emat.stochasticmapping;
+    exports emat.tree;
 
     provides beast.base.core.BEASTInterface with
             Mutations,
@@ -41,5 +43,6 @@ open module my.beast.example {
             WilsonBaldingOperator,
             IntervalScaleOperator,
             MutationDirectedSprOperator,
-            BranchReformOperator;
+            BranchReformOperator,
+            InsertionSortTreeIntervals;
 }
