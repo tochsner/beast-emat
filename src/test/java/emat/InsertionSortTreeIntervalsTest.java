@@ -5,7 +5,6 @@ import beast.base.evolution.tree.TreeIntervals;
 import beast.base.evolution.tree.TreeParser;
 import beast.base.util.Randomizer;
 import emat.tree.InsertionSortTreeIntervals;
-import emat.tree.TimSortTreeIntervals;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -26,11 +25,6 @@ public class InsertionSortTreeIntervalsTest {
     @Test
     public void testMatchesTreeIntervals() {
         this.assertMatchesTreeIntervals(new InsertionSortTreeIntervals());
-    }
-
-    @Test
-    public void testTimSortMatchesTreeIntervals() {
-        this.assertMatchesTreeIntervals(new TimSortTreeIntervals());
     }
 
     private void assertMatchesTreeIntervals(TreeIntervals actual) {

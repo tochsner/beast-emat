@@ -50,6 +50,18 @@ public class GeneticPrior extends GenericTreeLikelihood {
     // whether the caches hold the values of a previous calculation
     boolean isInitialised = false;
 
+    // the node number of the root whose contribution is cached
+    int cachedRootNr = -1;
+
+    // the number of incremental updates since the total was last summed from the branches
+    int numIncrementalUpdates = 0;
+    // the running total drifts by rounding, so it is re-summed from the branches after this many incremental updates
+    private static final int RESUM_INTERVAL = 1000;
+
+    // per node, the last calculation in which its branch was dirty
+    private int[] dirtyCalculations;
+    private int calculationNr = 0;
+
     int[] referenceSequence;
 
     @Override
@@ -88,6 +100,8 @@ public class GeneticPrior extends GenericTreeLikelihood {
         this.storedTotalMutationRatesPerNode = new double[numNodes];
         this.branchLogPs = new double[numNodes];
         this.storedBranchLogPs = new double[numNodes];
+
+        this.dirtyCalculations = new int[numNodes];
     }
 
     /**
@@ -107,46 +121,77 @@ public class GeneticPrior extends GenericTreeLikelihood {
         // category 0 because we don't support site-rate variation yet
         this.siteRate = this.siteModel.getRateForCategory(0, root);
 
-        // update the branch contributions if needed
+        // check if we need to recompute everything
 
         boolean isEverythingDirty = !this.isInitialised
                 || this.siteModel.somethingIsDirty()
                 || (this.substitutionModel instanceof CalculationNode calculationNode && calculationNode.somethingIsDirty())
                 || this.branchRateModel.somethingIsDirty();
 
-        this.updateBranches(root, false, isEverythingDirty);
-        this.isInitialised = true;
+        // mark the dirty nodes with the current iteration number
 
-        // sum in node order, so that rounding of the result does not depend on which branches were updated
-
-        this.logP = 0.0;
-        for (double branchLogP : this.branchLogPs) {
-            this.logP += branchLogP;
+        this.calculationNr++;
+        Node[] nodes = this.tree.getNodesAsArray();
+        for (Node node : nodes) {
+            if (isEverythingDirty || node.isDirty() != Tree.IS_CLEAN || this.mutations.isDirty(node)) {
+                this.dirtyCalculations[node.getNr()] = this.calculationNr;
+            }
         }
 
+        // start at every dirty branch below a clean one, so that parents are recomputed before their children
+
+        for (Node node : nodes) {
+            if (this.isDirty(node) && (node.isRoot() || !this.isDirty(node.getParent()))) {
+                this.updateBranches(node);
+            }
+        }
+
+        // periodically recompute the entire sum to avoid accumulating rounding errors
+
+        if (isEverythingDirty || ++this.numIncrementalUpdates >= RESUM_INTERVAL) {
+            this.numIncrementalUpdates = 0;
+            this.logP = 0.0;
+
+            for (double branchLogP : this.branchLogPs) {
+                this.logP += branchLogP;
+            }
+        }
+
+        this.isInitialised = true;
         return this.logP;
     }
 
     /**
-     * Recomputes the contribution and the total mutation rate of every dirty branch at or
-     * below the given node. A branch is dirty if its node is dirty in the tree, if its
-     * mutations are dirty, or if the total mutation rate of its parent changed.
+     * Recomputes the given branch and the branches below it that are dirty or whose parent's
+     * total mutation rate changed.
      */
-    private void updateBranches(Node node, boolean isParentRateChanged, boolean isEverythingDirty) {
-        boolean isRateChanged = false;
-
-        if (isEverythingDirty || isParentRateChanged || node.isDirty() != Tree.IS_CLEAN || this.mutations.isDirty(node)) {
-            double oldRate = this.getTotalMutationRate(node);
-            this.branchLogPs[node.getNr()] = this.calculateBranchContribution(node);
-
-            // check the same mutations summed along a different path only differ by rounding
-            isRateChanged = isEverythingDirty
-                    || Math.abs(this.getTotalMutationRate(node) - oldRate) > RATE_TOLERANCE * Math.abs(oldRate);
-        }
-
+    private void updateBranches(Node node) {
+        boolean isRateChanged = this.updateBranch(node);
         for (Node child : node.getChildrenMutable()) {
-            this.updateBranches(child, isRateChanged, isEverythingDirty);
+            if (isRateChanged || this.isDirty(child)) {
+                this.updateBranches(child);
+            }
         }
+    }
+
+    private boolean isDirty(Node node) {
+        return this.dirtyCalculations[node.getNr()] == this.calculationNr;
+    }
+
+    /**
+     * Recomputes the contribution and the total mutation rate of the given branch and adds
+     * the change of the contribution to logP. Returns whether the total mutation rate changed.
+     */
+    private boolean updateBranch(Node node) {
+        int nodeNr = node.getNr();
+        double oldRate = this.totalMutationRatesPerNode[nodeNr];
+        double oldBranchLogP = this.branchLogPs[nodeNr];
+
+        this.branchLogPs[nodeNr] = this.calculateBranchContribution(node);
+        this.logP += this.branchLogPs[nodeNr] - oldBranchLogP;
+
+        // check the same mutations summed along a different path only differ by rounding
+        return Math.abs(this.totalMutationRatesPerNode[nodeNr] - oldRate) > RATE_TOLERANCE * Math.abs(oldRate);
     }
 
     /**
@@ -167,7 +212,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
     private double calculateRootBranchContribution(Node root) {
         // check if we actually have to recompute the root contribution
         boolean anythingRelevantChanged = !this.isInitialised
-                || root.isDirty() == Tree.IS_FILTHY
+                || root.getNr() != this.cachedRootNr
                 || this.siteModel.somethingIsDirty()
                 || (this.substitutionModel instanceof CalculationNode calculationNode && calculationNode.somethingIsDirty())
                 || this.mutations.isDirty(root);
@@ -198,6 +243,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
         }
 
         this.totalMutationRatesPerNode[root.getNr()] = rate;
+        this.cachedRootNr = root.getNr();
 
         return branchLogP;
     }
