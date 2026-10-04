@@ -1,4 +1,5 @@
 import emat.alignment.FitchFilteredAlignment;
+import emat.benchmark.TimedMCMC;
 import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.BranchReformOperator;
 import emat.operators.IntervalScaleOperator;
@@ -7,6 +8,7 @@ import emat.operators.MutationTimeOperator;
 import emat.operators.InnerNodeDisplacementOperator;
 import emat.operators.InnerNodeResampleOperator;
 import emat.operators.SiteHistoryGibbsOperator;
+import emat.operators.SiteRegionGibbsOperator;
 import emat.operators.SubtreeSlideOperator;
 import emat.operators.WilsonBaldingOperator;
 import emat.operators.RootScaleOperator;
@@ -21,6 +23,7 @@ open module my.beast.example {
     requires java.xml;
 
     exports emat.alignment;
+    exports emat.benchmark;
     exports emat.prior;
     exports emat.operators;
     exports emat.helper;
@@ -38,11 +41,13 @@ open module my.beast.example {
             InnerNodeDisplacementOperator,
             InnerNodeResampleOperator,
             SiteHistoryGibbsOperator,
+            SiteRegionGibbsOperator,
             RootScaleOperator,
             SubtreeSlideOperator,
             WilsonBaldingOperator,
             IntervalScaleOperator,
             MutationDirectedSprOperator,
             BranchReformOperator,
-            InsertionSortTreeIntervals;
+            InsertionSortTreeIntervals,
+            TimedMCMC;
 }
