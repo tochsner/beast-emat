@@ -96,6 +96,46 @@ public class UniformisedStochasticMapping implements StochasticMapping {
             return siteMutations;
         }
 
+        return this.sampleJumps(nodeNr, site, branchStartHeight, branchEndHeight, startState, endState, numJumps);
+    }
+
+    /** Returns the uniformisation rate μ* of Q, before the scaling of a branch. */
+    public double getUniformisationRate() {
+        return this.uniformisationRate;
+    }
+
+    /**
+     * Samples the history on a branch whose ends have the same state, given a number of
+     * uniformised jumps drawn from the unconditioned Poisson(μ* s t) distribution of the
+     * branch. The draw is accepted with probability (B^n)_{state, state}, which turns the
+     * Poisson distribution into the distribution of n conditional on the end state, and the
+     * jumps are then sampled as in sampleSiteHistory. Returns null if the draw is rejected,
+     * in which case sampleSiteHistory provides an exact draw instead.
+     */
+    public List<Mutation> sampleSameStateHistory(int nodeNr, int site, double branchStartHeight, double branchEndHeight,
+                                                 int state, int numJumps) {
+        if (numJumps > MAX_JUMPS) {
+            return null;
+        }
+
+        double acceptanceProbability = this.getJumpMatrixPower(numJumps)[state * this.numStates + state];
+        if (Randomizer.nextDouble() >= acceptanceProbability) {
+            return null;
+        }
+
+        return this.sampleJumps(nodeNr, site, branchStartHeight, branchEndHeight, state, state, numJumps);
+    }
+
+    /**
+     * Samples the times of the given number of uniformised jumps uniformly on the branch and
+     * then the state after every jump, conditional on reaching the end state, and returns the
+     * real jumps as mutations sorted by descending height.
+     */
+    private List<Mutation> sampleJumps(int nodeNr, int site, double branchStartHeight, double branchEndHeight,
+                                       int startState, int endState, int numJumps) {
+        double duration = branchStartHeight - branchEndHeight;
+        List<Mutation> siteMutations = new ArrayList<>();
+
         // sample the jump times forwards from the branch start
 
         double[] jumpTimes = new double[numJumps];

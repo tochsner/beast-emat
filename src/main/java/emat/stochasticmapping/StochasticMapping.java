@@ -41,6 +41,17 @@ public interface StochasticMapping {
      * where the duration t already includes every rate scaling of the branch.
      */
     static double[] computeTransitionProbabilities(EigenDecomposition eigenDecomposition, double duration) {
+        int numStates = eigenDecomposition.getEigenValues().length;
+        double[] probabilities = new double[numStates * numStates];
+        computeTransitionProbabilities(eigenDecomposition, duration, probabilities);
+        return probabilities;
+    }
+
+    /**
+     * Computes the transition probabilities P = exp(Q t) like computeTransitionProbabilities,
+     * but writes them into the given array of length n², which avoids an allocation per branch.
+     */
+    static void computeTransitionProbabilities(EigenDecomposition eigenDecomposition, double duration, double[] probabilities) {
         double[] eigenVectors = eigenDecomposition.getEigenVectors();
         double[] inverseEigenVectors = eigenDecomposition.getInverseEigenVectors();
         double[] eigenValues = eigenDecomposition.getEigenValues();
@@ -48,10 +59,10 @@ public interface StochasticMapping {
 
         double[] expEigenValues = new double[numStates];
         for (int k = 0; k < numStates; k++) {
-            expEigenValues[k] = Math.exp(eigenValues[k] * duration);
+            // a zero eigenvalue, which every rate matrix has, needs no exponential
+            expEigenValues[k] = eigenValues[k] == 0.0 ? 1.0 : Math.exp(eigenValues[k] * duration);
         }
 
-        double[] probabilities = new double[numStates * numStates];
         for (int from = 0; from < numStates; from++) {
             for (int to = 0; to < numStates; to++) {
                 double probability = 0.0;
@@ -64,8 +75,6 @@ public interface StochasticMapping {
                 probabilities[from * numStates + to] = Math.max(probability, 0.0);
             }
         }
-
-        return probabilities;
     }
 
     /** Samples an index with probability proportional to the given non-negative weights. */

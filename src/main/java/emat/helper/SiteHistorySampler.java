@@ -5,10 +5,12 @@ import beast.base.evolution.datatype.DataType;
 import beast.base.evolution.substitutionmodel.EigenDecomposition;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
+import beast.base.util.Randomizer;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
 import emat.stochasticmapping.StochasticMapping;
+import emat.stochasticmapping.UniformisedStochasticMapping;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -28,6 +30,9 @@ import java.util.Map;
  */
 public class SiteHistorySampler {
 
+    // the product of rescaling factors below which computePartials takes its log, far above underflow
+    private static final double MIN_SCALE = 1e-200;
+
     final Mutations mutations;
     final GeneticPrior geneticPrior;
     final TreeInterface tree;
@@ -43,8 +48,10 @@ public class SiteHistorySampler {
     double siteRate;
     double[] frequencies;
 
-    // the nodes of the current tree in post-order, so that every child precedes its parent
+    // the nodes of the current tree in post-order, so that every child precedes its parent,
+    // and the stack used to collect them
     final Node[] postOrderNodes;
+    final Node[] traversalStack;
 
     // per tip node: the index of its taxon in the alignment
     final int[] taxonIndices;
@@ -73,6 +80,7 @@ public class SiteHistorySampler {
 
         int numNodes = this.tree.getNodeCount();
         this.postOrderNodes = new Node[numNodes];
+        this.traversalStack = new Node[numNodes];
         this.rateScales = new double[numNodes];
         this.durations = new double[numNodes];
         this.transitionProbabilities = new double[numNodes][this.numStates * this.numStates];
@@ -164,6 +172,10 @@ public class SiteHistorySampler {
 
         // sample the path on every branch given its end states
 
+        if (this.stochasticMapping instanceof UniformisedStochasticMapping uniformisedMapping) {
+            return this.sampleUniformisedBranchHistories(site, uniformisedMapping);
+        }
+
         List<List<Mutation>> siteMutations = new ArrayList<>();
         for (int nodeNr = 0; nodeNr < this.tree.getNodeCount(); nodeNr++) {
             Node node = this.tree.getNode(nodeNr);
@@ -171,6 +183,65 @@ public class SiteHistorySampler {
         }
 
         return siteMutations;
+    }
+
+    /**
+     * Samples the paths of the given site on every branch given the sampled node states,
+     * like sampleBranchHistory on every branch, but without a random draw for most branches.
+     * On a branch whose ends have the same state, the number of uniformised jumps is first
+     * drawn from the unconditioned Poisson(μ* s t) distribution, by placing a single Poisson
+     * process of rate 1 along the expected numbers of jumps μ* s t of all such branches laid
+     * end to end. A branch without jumps then keeps its state without a mutation, and one
+     * with jumps is accepted with probability (B^n)_{ii}, which makes n exact given the end
+     * states, or else falls back to an exact draw. As the expected number of jumps on the
+     * whole tree is small for most sites, only few random draws are needed.
+     */
+    private List<List<Mutation>> sampleUniformisedBranchHistories(int site, UniformisedStochasticMapping uniformisedMapping) {
+        double uniformisationRate = uniformisedMapping.getUniformisationRate();
+
+        // the position of the next jump on the axis of expected jumps, and how far the branches reach along it
+        double nextJumpPosition = this.drawExponential();
+        double branchesEndPosition = 0.0;
+
+        List<List<Mutation>> siteMutations = new ArrayList<>(this.tree.getNodeCount());
+        for (int nodeNr = 0; nodeNr < this.tree.getNodeCount(); nodeNr++) {
+            Node node = this.tree.getNode(nodeNr);
+            if (node.isRoot()) {
+                siteMutations.add(this.createRootHistory(node, site));
+                continue;
+            }
+
+            int state = this.nodeStates[nodeNr];
+            if (state != this.nodeStates[node.getParent().getNr()]) {
+                siteMutations.add(this.sampleBranchHistory(node, site));
+                continue;
+            }
+
+            double startHeight = node.getParent().getHeight();
+            double endHeight = node.getHeight();
+            branchesEndPosition += uniformisationRate * this.rateScales[nodeNr] * Math.max(startHeight - endHeight, 0.0);
+
+            int numJumps = 0;
+            while (nextJumpPosition < branchesEndPosition) {
+                numJumps++;
+                nextJumpPosition += this.drawExponential();
+            }
+
+            if (numJumps == 0) {
+                siteMutations.add(List.of());
+                continue;
+            }
+
+            List<Mutation> branchMutations = uniformisedMapping.sampleSameStateHistory(nodeNr, site, startHeight, endHeight, state, numJumps);
+            siteMutations.add(branchMutations != null ? branchMutations : this.sampleBranchHistory(node, site));
+        }
+
+        return siteMutations;
+    }
+
+    /** Draws from the exponential distribution with rate 1. */
+    private double drawExponential() {
+        return -Math.log(1.0 - Randomizer.nextDouble());
     }
 
     /**
@@ -370,17 +441,24 @@ public class SiteHistorySampler {
      * all rescaling factors is returned.
      */
     private double computePartials(int patternIndex) {
+        // multiply the rescaling factors and only take the log when their product gets small
+
         double logScale = 0.0;
+        double scale = 1.0;
         for (Node node : this.postOrderNodes) {
-            logScale += this.computePartial(node, patternIndex);
+            scale *= this.computePartial(node, patternIndex);
+            if (scale < MIN_SCALE) {
+                logScale += Math.log(scale);
+                scale = 1.0;
+            }
         }
-        return logScale;
+        return logScale + Math.log(scale);
     }
 
     /**
      * Computes the partial likelihoods of the given node at a site with the given pattern
      * from the partial likelihoods of its children. The partials of an inner node are
-     * rescaled, and the log of the rescaling factor is returned.
+     * rescaled by their maximum, which is at most 1 and is returned. A tip returns 1.
      */
     private double computePartial(Node node, int patternIndex) {
         double[] partial = this.partials[node.getNr()];
@@ -388,12 +466,15 @@ public class SiteHistorySampler {
         if (node.isLeaf()) {
             int code = this.alignment.getPattern(this.taxonIndices[node.getNr()], patternIndex);
             System.arraycopy(this.getTipPartial(code), 0, partial, 0, this.numStates);
-            return 0.0;
+            return 1.0;
         }
 
         Arrays.fill(partial, 1.0);
 
-        for (Node child : node.getChildren()) {
+        // index the children directly, as getChildren wraps them in a new view on every call
+
+        for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
+            Node child = node.getChild(childIndex);
             double[] childPartial = this.partials[child.getNr()];
             double[] childTransitionProbabilities = this.transitionProbabilities[child.getNr()];
 
@@ -416,7 +497,7 @@ public class SiteHistorySampler {
             partial[state] /= maxPartial;
         }
 
-        return Math.log(maxPartial);
+        return maxPartial;
     }
 
     /**
@@ -475,7 +556,7 @@ public class SiteHistorySampler {
         double duration = this.rateScales[nodeNr] * (node.getParent().getHeight() - node.getHeight());
 
         if (duration != this.durations[nodeNr]) {
-            this.transitionProbabilities[nodeNr] = StochasticMapping.computeTransitionProbabilities(this.eigenDecomposition, duration);
+            StochasticMapping.computeTransitionProbabilities(this.eigenDecomposition, duration, this.transitionProbabilities[nodeNr]);
             this.durations[nodeNr] = duration;
         }
     }
@@ -539,15 +620,15 @@ public class SiteHistorySampler {
         // collect the nodes in pre-order with the children in reverse, then reverse the whole order
 
         int numVisited = 0;
-        Node[] stack = new Node[this.postOrderNodes.length];
+        Node[] stack = this.traversalStack;
         int stackSize = 0;
         stack[stackSize++] = root;
 
         while (stackSize > 0) {
             Node node = stack[--stackSize];
             this.postOrderNodes[this.postOrderNodes.length - 1 - numVisited++] = node;
-            for (Node child : node.getChildren()) {
-                stack[stackSize++] = child;
+            for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
+                stack[stackSize++] = node.getChild(childIndex);
             }
         }
     }

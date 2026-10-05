@@ -34,6 +34,12 @@ public final class SiteMutations {
     public static void replace(Mutations mutations, Node node, int site, List<Mutation> newSiteMutations, Operator operator) {
         List<Mutation> branchMutations = mutations.getMutations(node);
 
+        // most branches have no mutations at the site before or after, so check this without allocating
+
+        if (newSiteMutations.isEmpty() && !hasSiteMutation(branchMutations, site)) {
+            return;
+        }
+
         List<Mutation> newBranchMutations = new ArrayList<>();
         for (Mutation mutation : branchMutations) {
             if (mutation.site() != site) {
@@ -41,13 +47,19 @@ public final class SiteMutations {
             }
         }
 
-        if (newBranchMutations.size() == branchMutations.size() && newSiteMutations.isEmpty()) {
-            return;
-        }
-
         newBranchMutations.addAll(newSiteMutations);
         newBranchMutations.sort(Comparator.comparingDouble(Mutation::time).reversed());
         mutations.applyMutations(node, newBranchMutations, operator);
+    }
+
+    /** Returns whether any of the given mutations is at the given site. */
+    private static boolean hasSiteMutation(List<Mutation> branchMutations, int site) {
+        for (int i = 0; i < branchMutations.size(); i++) {
+            if (branchMutations.get(i).site() == site) {
+                return true;
+            }
+        }
+        return false;
     }
 
 }
