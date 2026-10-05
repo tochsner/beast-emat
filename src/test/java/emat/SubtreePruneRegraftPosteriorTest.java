@@ -106,6 +106,28 @@ public class SubtreePruneRegraftPosteriorTest {
         this.assertFrequencies(expectedFrequencies, topologyCounts);
     }
 
+    /**
+     * Runs mdSPR with local explorations only, whose thresholds are drawn from the geometric
+     * window, together with branch reform. The rooted topologies follow the same posterior
+     * as with the other subtree moves.
+     */
+    @Test
+    public void testWindowedMdSprTopologiesMatchPosterior() {
+        Randomizer.setSeed(13);
+        Setup setup = this.createSetup();
+
+        MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+        mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                "fullExplorationProbability", 0.0, "windowProbability", 0.5);
+
+        BranchReformOperator branchReformOperator = new BranchReformOperator();
+        branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
+
+        Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup.alignment, null);
+        Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, branchReformOperator));
+        this.assertFrequencies(expectedFrequencies, topologyCounts);
+    }
+
     private record Setup(Alignment alignment, TreeParser tree, Mutations mutations, GeneticPrior geneticPrior) {
     }
 

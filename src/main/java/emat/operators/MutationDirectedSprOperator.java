@@ -14,16 +14,19 @@ import java.util.List;
 
 @Description("Regrafts a random subtree preferably where the sequence is close to the sequence of the subtree, " +
         "using the mutations of the EMAT as a parsimony map (mutation-directed SPR, docs/mcmc-moves.md §8.3). " +
-        "Most proposals only explore the neighbourhood of the current attachment point. The root is never changed.")
+        "Most proposals only explore the neighbourhood of the current attachment point, whose extent is drawn " +
+        "from a geometric distribution. The root is never changed.")
 public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
 
     final public Input<Double> annealingInput = new Input<>("annealing", "the power f to which the grafting density is raised, which makes the proposals less eager", 0.8);
     final public Input<Double> fullExplorationProbabilityInput = new Input<>("fullExplorationProbability", "the probability of exploring the whole tree instead of the neighbourhood of the current attachment point", 0.01);
+    final public Input<Double> windowProbabilityInput = new Input<>("windowProbability", "the parameter q of the geometric number of additional differences, q^j (1 - q), that the neighbourhood may have compared to the current attachment point. With 0, the neighbourhood never has more differences than the current attachment point", 0.0);
 
     private static final int INITIAL_CAPACITY = 64;
 
     double annealing;
     double fullExplorationProbability;
+    double windowProbability;
 
     // the state of the current proposal: X, the joined mutations of the branch above S, and the constant part log(λ(X) / 3L) of the log grafting density
     Node x;
@@ -55,6 +58,10 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     int[] bottomRunStamps;
     int threshold;
 
+    // the number of local explorations so far and the number of regions they explored
+    long numLocalExplorations;
+    long numLocalRegions;
+
     /**
      * A part of a branch of the pruned tree with a constant sequence: the node below the
      * branch, the index of the part counted from the top of the branch, the height range
@@ -75,6 +82,10 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
 
         this.annealing = this.annealingInput.get();
         this.fullExplorationProbability = this.fullExplorationProbabilityInput.get();
+        this.windowProbability = this.windowProbabilityInput.get();
+        if (this.windowProbability < 0.0 || this.windowProbability >= 1.0) {
+            throw new IllegalArgumentException("windowProbability must be at least 0 and less than 1.");
+        }
 
         this.subtreeSequenceChanges = new SiteChanges(this.mutations.getReferenceSequence().length);
 
@@ -112,12 +123,14 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
      * <p>
      * With a small fixed probability, all regions of the pruned tree are candidates. Their
      * total weight is the same before and after the move, so it cancels. Otherwise, only the
-     * regions connected to the current attachment point through regions with at most
-     * max(1, N) differences are candidates, where N is the number of differences at the
-     * current attachment point. The reverse move explores from the new attachment point
-     * with its own threshold. If that threshold is the same, it finds the same regions, so
-     * the total weight cancels as well. If it is lower, it cannot reach the current
-     * attachment point, whose number of differences exceeds it, and the move is rejected.
+     * regions connected to the current attachment point through regions with at most T
+     * differences are candidates. The threshold is T = max(1, N) + j, where N is the number
+     * of differences at the current attachment point and j is geometric with probability
+     * q^j (1 - q). The reverse move needs the same threshold to find the same regions, whose
+     * total weight then cancels as well. From the new attachment point with N' differences,
+     * it draws that threshold with j' = T - max(1, N'), so the Hastings ratio gains the
+     * factor q^(max(1, N) - max(1, N')). With q = 0, a move to fewer differences cannot be
+     * reversed and is rejected.
      */
     @Override
     protected GraftingPoint proposeGraftingPoint(Node x) {
@@ -152,18 +165,30 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         // explore the candidate regions and pick one
 
         boolean isFullExploration = Randomizer.nextDouble() < this.fullExplorationProbability;
-        int threshold = isFullExploration ? Integer.MAX_VALUE : Math.max(1, oldNumDifferences);
+        int oldMinThreshold = Math.max(1, oldNumDifferences);
+        int threshold = isFullExploration ? Integer.MAX_VALUE : this.sampleThreshold(oldMinThreshold);
 
         this.exploreRegions(oldRegion, threshold);
+        if (!isFullExploration) {
+            this.numLocalExplorations++;
+            this.numLocalRegions += this.numRegions;
+        }
         double logTotalWeight = this.normaliseRegionWeights();
 
         int newRegionNr = this.sampleRegion();
         Region newRegion = this.getRegion(newRegionNr);
         double newParentHeight = newRegion.lowerHeight() + Randomizer.nextDouble() * (newRegion.upperHeight() - newRegion.lowerHeight());
 
-        if (!isFullExploration && Math.max(1, newRegion.numDifferences()) < threshold) {
-            // the reverse move cannot propose the current attachment point
-            return null;
+        // the reverse move has to draw the same threshold from the new attachment point
+
+        double logThresholdRatio = 0.0;
+        int newMinThreshold = Math.max(1, newRegion.numDifferences());
+        if (!isFullExploration && newMinThreshold != oldMinThreshold) {
+            if (this.windowProbability == 0.0) {
+                // the reverse move cannot propose the current attachment point
+                return null;
+            }
+            logThresholdRatio = (oldMinThreshold - newMinThreshold) * Math.log(this.windowProbability);
         }
 
         // the density of a point in a region is g(midpoint) divided by the total weight of the candidates
@@ -171,7 +196,25 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         double logForwardDensity = this.computeLogDensity(newRegion) - logTotalWeight;
         double logBackwardDensity = this.computeLogDensity(oldRegion) - logTotalWeight;
 
-        return new GraftingPoint(newRegion.node(), newParentHeight, logBackwardDensity - logForwardDensity);
+        return new GraftingPoint(newRegion.node(), newParentHeight, logBackwardDensity - logForwardDensity + logThresholdRatio);
+    }
+
+    /**
+     * Draws the threshold of a local exploration: the given minimum plus a geometric number
+     * of additional differences j with probability q^j (1 - q).
+     */
+    private int sampleThreshold(int minThreshold) {
+        if (this.windowProbability == 0.0) {
+            return minThreshold;
+        }
+
+        double numAdditionalDifferences = Math.floor(Math.log(Randomizer.nextDouble()) / Math.log(this.windowProbability));
+        return minThreshold + (int) Math.min(numAdditionalDifferences, Integer.MAX_VALUE - minThreshold);
+    }
+
+    /** Returns the mean number of candidate regions of the local explorations so far. */
+    public double getMeanNumLocalRegions() {
+        return this.numLocalExplorations == 0 ? Double.NaN : (double) this.numLocalRegions / this.numLocalExplorations;
     }
 
     /* Regions */
