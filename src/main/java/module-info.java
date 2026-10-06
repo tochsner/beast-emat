@@ -6,6 +6,7 @@ import emat.operators.IntervalScaleOperator;
 import emat.operators.MutationDirectedSprOperator;
 import emat.operators.MutationTimeOperator;
 import emat.operators.InnerNodeDisplacementOperator;
+import emat.operators.BatchNodeDisplacementOperator;
 import emat.operators.InnerNodeResampleOperator;
 import emat.operators.SiteHistoryGibbsOperator;
 import emat.operators.SiteRegionGibbsOperator;
@@ -39,6 +40,7 @@ open module my.beast.example {
             ParsimonyMutationsInitialiser,
             MutationTimeOperator,
             InnerNodeDisplacementOperator,
+            BatchNodeDisplacementOperator,
             InnerNodeResampleOperator,
             SiteHistoryGibbsOperator,
             SiteRegionGibbsOperator,

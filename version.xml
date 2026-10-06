@@ -3,13 +3,18 @@
 
     <service type="beast.base.core.BEASTInterface">
         <provider classname="emat.state.Mutations"/>
+        <provider classname="emat.state.BranchAnnotations"/>
         <provider classname="emat.prior.GeneticPrior"/>
+        <provider classname="emat.prior.BranchKindPrior"/>
+        <provider classname="emat.operators.RepresentationSwitchOperator"/>
         <provider classname="emat.initalisation.ParsimonyMutationsInitialiser"/>
         <provider classname="emat.operators.MutationTimeOperator"/>
         <provider classname="emat.operators.SiteHistoryGibbsOperator"/>
+        <provider classname="emat.operators.SiteRegionGibbsOperator"/>
         <provider classname="emat.operators.SubtreeSlideOperator"/>
         <provider classname="emat.operators.WilsonBaldingOperator"/>
         <provider classname="emat.operators.IntervalScaleOperator"/>
+        <provider classname="emat.operators.CladeIntervalScaleOperator"/>
         <provider classname="emat.operators.MutationDirectedSprOperator"/>
         <provider classname="emat.operators.InnerNodeDisplacementOperator"/>
         <provider classname="emat.operators.InnerNodeResampleOperator"/>
@@ -17,5 +22,6 @@
         <provider classname="emat.operators.BranchReformOperator"/>
         <provider classname="emat.tree.InsertionSortTreeIntervals"/>
         <provider classname="emat.tree.TimSortTreeIntervals"/>
+        <provider classname="emat.benchmark.TimedMCMC"/>
     </service>
 </package>
