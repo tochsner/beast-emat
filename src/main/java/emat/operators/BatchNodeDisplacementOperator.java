@@ -9,6 +9,8 @@ import beast.base.inference.StateNode;
 import beast.base.spec.type.RealScalar;
 import beast.base.spec.type.RealVector;
 import beast.base.util.Randomizer;
+import emat.helper.LinearSplineTreePriorApproximation;
+import emat.helper.LearnedTreePrior;
 import emat.helper.TreePriorApproximation;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
@@ -25,12 +27,19 @@ import java.util.Set;
     "enters the acceptance probability.")
 public class BatchNodeDisplacementOperator extends TreeOperator {
 
+    /** How the approximation of the tree prior depends on the midpoint of the range of a node. */
+    public enum TreePriorShape {
+        polynomial, spline
+    }
+
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "");
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "");
     final public Input<Integer> batchSizeInput = new Input<>("batchSize", "", 16);
     final public Input<Boolean> optimiseInput = new Input<>("optimise", "", true);
     final public Input<Integer> treePriorDegreeInput = new Input<>("treePriorDegree", "the degree of the polynomial that approximates the log tree prior around the midpoint of the range of a node, or 0 to draw from the genetic prior only", 3);
-    final public Input<Integer> treePriorMidpointDegreeInput = new Input<>("treePriorMidpointDegree", "the highest power of the midpoint of the range of a node that the approximation of the tree prior may depend on", 3);
+    final public Input<TreePriorShape> treePriorShapeInput = new Input<>("treePriorShape", "how the approximation of the tree prior depends on the midpoint of the range of a node: as a polynomial in the midpoint, or as a linear spline between knots along the height", TreePriorShape.polynomial, TreePriorShape.values());
+    final public Input<Integer> treePriorMidpointDegreeInput = new Input<>("treePriorMidpointDegree", "the highest power of the midpoint of the range of a node that the approximation of the tree prior may depend on, if its shape is polynomial", 3);
+    final public Input<Integer> treePriorKnotsInput = new Input<>("treePriorKnots", "the number of knots along the height between which the approximation of the tree prior is interpolated, if its shape is spline", 20);
     final public Input<List<StateNode>> treePriorParametersInput = new Input<>("treePriorParameter", "real scalar or vector parameters of the tree prior, which the approximation of the tree prior may depend on", new ArrayList<>());
     final public Input<Integer> treePriorWarmUpInput = new Input<>("treePriorWarmUp", "the number of proposals after which the approximation of the tree prior is fitted for the first time", 500);
 
@@ -46,7 +55,7 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     private int[] internalNodeNrs;
 
     // the approximation of the tree prior, or null to draw from the genetic prior only
-    private TreePriorApproximation treePriorApproximation;
+    private LearnedTreePrior treePriorApproximation;
 
     // the values of the parameters of the tree prior at the start of the last proposal
     private double[] treePriorParameterValues;
@@ -71,11 +80,19 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
 
         if (this.treePriorDegreeInput.get() > 0) {
             this.treePriorParameterValues = new double[this.countTreePriorParameterValues()];
-            this.treePriorApproximation = new TreePriorApproximation(
-                    this.treePriorDegreeInput.get(), this.treePriorMidpointDegreeInput.get(),
-                    this.treePriorParameterValues.length, this.treePriorWarmUpInput.get(), TREE_PRIOR_RIDGE
-            );
+            this.treePriorApproximation = this.createTreePriorApproximation();
         }
+    }
+
+    private LearnedTreePrior createTreePriorApproximation() {
+        int degree = this.treePriorDegreeInput.get();
+        int numParameters = this.treePriorParameterValues.length;
+        int warmUp = this.treePriorWarmUpInput.get();
+
+        if (this.treePriorShapeInput.get() == TreePriorShape.spline) {
+            return new LinearSplineTreePriorApproximation(degree, this.treePriorKnotsInput.get(), numParameters, warmUp, TREE_PRIOR_RIDGE);
+        }
+        return new TreePriorApproximation(degree, this.treePriorMidpointDegreeInput.get(), numParameters, warmUp, TREE_PRIOR_RIDGE);
     }
 
     @Override

@@ -174,6 +174,16 @@ public class BatchNodeDisplacementOperatorTest {
      */
     @Test
     public void testLearnsTreePriorSlopeFromParameter() {
+        this.checkLearnsTreePriorSlopeFromParameter("polynomial");
+    }
+
+    /** The same holds if the approximation of the tree prior is a linear spline between knots along the height. */
+    @Test
+    public void testLearnsTreePriorSlopeFromParameterWithSpline() {
+        this.checkLearnsTreePriorSlopeFromParameter("spline");
+    }
+
+    private void checkLearnsTreePriorSlopeFromParameter(String treePriorShape) {
         Randomizer.setSeed(1);
         Chain chain = this.createSixTipChain();
         TreeParser tree = chain.tree();
@@ -184,7 +194,8 @@ public class BatchNodeDisplacementOperatorTest {
 
         BatchNodeDisplacementOperator operator = new BatchNodeDisplacementOperator();
         operator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "geneticPrior", geneticPrior,
-                "batchSize", 3, "optimise", false, "treePriorDegree", 3, "treePriorWarmUp", 500, "treePriorParameter", theta);
+                "batchSize", 3, "optimise", false, "treePriorDegree", 3, "treePriorWarmUp", 500, "treePriorParameter", theta,
+                "treePriorShape", treePriorShape, "treePriorKnots", 4);
 
         int numProposals = 60000;
         int numLateProposals = 0;

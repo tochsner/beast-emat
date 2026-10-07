@@ -23,7 +23,7 @@ import java.util.List;
  * that the fit is well conditioned whatever the units of the tree and of the parameters. The weights are
  * refitted at growing intervals, so the approximation changes less and less as observations come in.
  */
-public class TreePriorApproximation {
+public class TreePriorApproximation implements LearnedTreePrior {
 
     // the factor by which the number of observations grows between two fits
     private static final double REFIT_GROWTH = 1.5;
@@ -118,6 +118,7 @@ public class TreePriorApproximation {
      * Returns the slope c_1 of the log tree prior at the given midpoint of the range of a node, for the given
      * values of the parameters of the tree prior. The slope is zero until the first fit.
      */
+    @Override
     public double getSlope(double midpoint, double[] parameters) {
         if (!this.isFitted) {
             return 0.0;
@@ -132,10 +133,12 @@ public class TreePriorApproximation {
         return slope / this.offsetScale;
     }
 
+    @Override
     public boolean isFitted() {
         return this.isFitted;
     }
 
+    @Override
     public long getNumObservations() {
         return this.numObservations;
     }
@@ -143,6 +146,7 @@ public class TreePriorApproximation {
     /* Observations */
 
     /** Starts a new observation, which drops the nodes of an observation that was not finished. */
+    @Override
     public void startObservation() {
         this.discardObservation();
     }
@@ -151,6 +155,7 @@ public class TreePriorApproximation {
      * Adds a node to the current observation that moved from the old to the new offset from the midpoint of its
      * range. The node contributes feature · (newOffset^i - oldOffset^i) to the factor of every weight.
      */
+    @Override
     public void addNode(double midpoint, double[] parameters, double oldOffset, double newOffset) {
         if (this.hasScales) {
             this.computeScaledFeatures(midpoint, parameters);
@@ -183,6 +188,7 @@ public class TreePriorApproximation {
      * if enough observations have come in since the last fit. An observation without nodes or with a target that
      * is not finite is dropped.
      */
+    @Override
     public void finishObservation(double target) {
         if (!this.hasCurrentNodes || !Double.isFinite(target)) {
             this.discardObservation();
@@ -214,6 +220,7 @@ public class TreePriorApproximation {
     }
 
     /** Drops the current observation. */
+    @Override
     public void discardObservation() {
         Arrays.fill(this.currentRow, 0.0);
         this.hasCurrentNodes = false;
