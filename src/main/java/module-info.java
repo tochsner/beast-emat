@@ -21,6 +21,7 @@ open module my.beast.example {
     requires beast.pkgmgmt;
     requires beast.base;
     requires org.apache.commons.statistics.distribution;
+    requires org.apache.commons.math4.legacy;
     requires java.xml;
 
     exports emat.alignment;
