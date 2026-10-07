@@ -13,6 +13,8 @@ import emat.operators.SiteRegionGibbsOperator;
 import emat.operators.SubtreeSlideOperator;
 import emat.operators.WilsonBaldingOperator;
 import emat.operators.RootScaleOperator;
+import emat.operators.ParameterFollowingOperator;
+import emat.helper.ParameterFollowing;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
 import emat.tree.InsertionSortTreeIntervals;
@@ -51,6 +53,8 @@ open module my.beast.example {
             IntervalScaleOperator,
             MutationDirectedSprOperator,
             BranchReformOperator,
+            ParameterFollowingOperator,
+            ParameterFollowing,
             InsertionSortTreeIntervals,
             TimedMCMC;
 }

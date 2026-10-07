@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BranchReformOperatorTest {
 
@@ -141,6 +142,66 @@ public class BranchReformOperatorTest {
         assertEquals(2.0 / 3.0, sumTimes[0] / NUM_SAMPLES, 0.01);
         assertEquals(1.0 / 3.0, sumTimes[1] / NUM_SAMPLES, 0.01);
         assertEquals(0.5, sumTimes[2] / NUM_SAMPLES, 0.01);
+    }
+
+    /**
+     * On the tree ((A,B)X,(C,D)Y)R, only the branch above A carries a mutation. Every proposal must reform a
+     * branch: one below the root, or the branch above A. The branches above B, C and D have nothing to reform
+     * and are never chosen, so no proposal is rejected for being invalid, and the branch above A is chosen in
+     * a third of the proposals.
+     */
+    @Test
+    public void testOnlyChoosesBranchesThatCanBeReformed() {
+        Randomizer.setSeed(1);
+
+        Alignment alignment = new Alignment();
+        alignment.initByName("sequence", List.of(
+                new Sequence("B", "A"), new Sequence("A", "C"), new Sequence("C", "A"), new Sequence("D", "A")
+        ), "dataType", "nucleotide");
+
+        TreeParser tree = new TreeParser();
+        tree.initByName("newick", "((A:1.0,B:1.0):1.0,(C:1.0,D:1.0):1.0);", "IsLabelledNewick", true, "adjustTipHeights", false);
+
+        Mutations mutations = new Mutations();
+        mutations.initByName("tree", tree, "alignment", alignment);
+
+        Node a = this.getNodeByTaxon(tree, "A");
+        List<List<Mutation>> history = this.createEmptyHistory(tree);
+        history.get(a.getNr()).add(new Mutation(a.getNr(), 0.5, 1.0, 0, A, C));
+        mutations.initialiseMutations(history);
+
+        GeneticPrior geneticPrior = this.createGeneticPrior(alignment, tree, mutations);
+        BranchReformOperator operator = new BranchReformOperator();
+        operator.initByName("weight", 1.0, "mutations", mutations, "geneticPrior", geneticPrior);
+
+        // the history is kept as it is, so that the same three branches can be reformed in every proposal
+
+        int numProposals = 30000;
+        int numMoved = 0;
+        geneticPrior.calculateLogP();
+
+        for (int i = 0; i < numProposals; i++) {
+            List<List<Mutation>> oldHistory = new ArrayList<>();
+            for (Node node : tree.getNodesAsArray()) {
+                oldHistory.add(new ArrayList<>(mutations.getMutations(node)));
+            }
+            double oldTime = mutations.getMutations(a).get(0).time();
+
+            double logHastingsRatio = operator.proposal();
+            assertTrue(Double.isFinite(logHastingsRatio));
+
+            List<Mutation> branchMutations = mutations.getMutations(a);
+            if (branchMutations.size() == 1 && branchMutations.get(0).time() != oldTime) {
+                numMoved++;
+            }
+
+            for (Node node : tree.getNodesAsArray()) {
+                mutations.applyMutations(node, oldHistory.get(node.getNr()), operator);
+            }
+            geneticPrior.calculateLogP();
+        }
+
+        assertEquals(1.0 / 3.0, (double) numMoved / numProposals, 0.02);
     }
 
     /**
