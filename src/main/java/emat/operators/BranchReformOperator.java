@@ -22,7 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-@Description("Reforms the history of a random branch without changing the tree (branch reform, " +
+@Description("Reforms the history of a random branch that lies below the root or carries a mutation, without " +
+        "changing the tree (branch reform, " +
         "docs/mcmc-moves.md §9.2). On a branch below an internal node, all mutation times are redrawn " +
         "uniformly on the branch, keeping the order of the mutations at each site. On a branch below the " +
         "root, the history of the whole path through the root to the other child is resampled by approximate " +
@@ -46,6 +47,9 @@ public class BranchReformOperator extends Operator {
     // reusable lookup of the states at X for the sites whose end states agree
     NodeStateLookup subtreeStates;
 
+    // the number of uniform draws of a node before the nodes whose branch can be reformed are listed
+    private static final int MAX_SAMPLING_ATTEMPTS = 64;
+
     @Override
     public void initAndValidate() {
         this.mutations = this.mutationsInput.get();
@@ -62,23 +66,16 @@ public class BranchReformOperator extends Operator {
     }
 
     /**
-     * Picks a non-root branch uniformly and reforms its history. The set of non-root
-     * branches does not change under the move, so the choice is symmetric.
+     * Picks a branch uniformly among the branches whose history can be reformed, and reforms it. These are the
+     * branches below the root and the other branches that carry a mutation. The move keeps the number of
+     * mutations on a branch below an internal node and only moves mutations between the two branches below the
+     * root, so the set of these branches does not change and the choice is symmetric.
      */
     @Override
     public double proposal() {
-        Node root = this.tree.getRoot();
-        int numNodes = this.tree.getNodeCount();
-        if (numNodes < 2) {
+        Node node = this.sampleReformableBranch();
+        if (node == null) {
             return Double.NEGATIVE_INFINITY;
-        }
-
-        // sample non-root node
-        int nodeNr = Randomizer.nextInt(numNodes);
-        Node node = this.tree.getNode(nodeNr);
-        while (node == root) {
-            nodeNr = Randomizer.nextInt(numNodes);
-            node = this.tree.getNode(nodeNr);
         }
 
         if (node.getParent().isRoot()) {
@@ -86,6 +83,52 @@ public class BranchReformOperator extends Operator {
         } else {
             return this.reformBranch(node);
         }
+    }
+
+    /**
+     * Returns a node drawn uniformly among the nodes whose branch can be reformed, or null if there is none.
+     * Nodes are drawn uniformly until one of them qualifies, which is a uniform draw among the nodes that do.
+     */
+    private Node sampleReformableBranch() {
+        int numNodes = this.tree.getNodeCount();
+
+        for (int attempt = 0; attempt < MAX_SAMPLING_ATTEMPTS; attempt++) {
+            Node node = this.tree.getNode(Randomizer.nextInt(numNodes));
+            if (this.isReformable(node)) {
+                return node;
+            }
+        }
+
+        // such nodes are rare or missing, so they are listed
+
+        List<Node> reformableNodes = new ArrayList<>();
+        for (int nodeNr = 0; nodeNr < numNodes; nodeNr++) {
+            Node node = this.tree.getNode(nodeNr);
+            if (this.isReformable(node)) {
+                reformableNodes.add(node);
+            }
+        }
+
+        if (reformableNodes.isEmpty()) {
+            return null;
+        }
+        return reformableNodes.get(Randomizer.nextInt(reformableNodes.size()));
+    }
+
+    /**
+     * Returns whether the history of the branch above the given node can be reformed: the branch lies below a
+     * binary root, or it carries a mutation whose time can be redrawn.
+     */
+    private boolean isReformable(Node node) {
+        if (node.isRoot()) {
+            return false;
+        }
+
+        Node parent = node.getParent();
+        if (parent.isRoot()) {
+            return parent.getChildCount() == 2;
+        }
+        return !this.mutations.getMutations(node).isEmpty();
     }
 
     /* Branches Below an Internal Node */
