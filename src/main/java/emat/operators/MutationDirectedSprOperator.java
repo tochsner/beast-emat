@@ -18,15 +18,32 @@ import java.util.List;
         "from a geometric distribution. The root is never changed.")
 public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
 
+    public enum SubtreeSelection {
+        UNIFORM, TIPS, SMALL_SUBTREES, BRANCH_LENGTH, MUTATIONS, SQRT_MUTATIONS, TIP_MUTATIONS, RECURRENT_MUTATIONS
+    }
+
     final public Input<Double> annealingInput = new Input<>("annealing", "the power f to which the grafting density is raised, which makes the proposals less eager", 0.8);
     final public Input<Double> fullExplorationProbabilityInput = new Input<>("fullExplorationProbability", "the probability of exploring the whole tree instead of the neighbourhood of the current attachment point", 0.01);
     final public Input<Double> windowProbabilityInput = new Input<>("windowProbability", "the parameter q of the geometric number of additional differences, q^j (1 - q), that the neighbourhood may have compared to the current attachment point. With 0, the neighbourhood never has more differences than the current attachment point", 0.0);
 
+    final public Input<SubtreeSelection> subtreeSelectionInput = new Input<>("subtreeSelection", "the strategy for choosing the subtree to regraft: UNIFORM picks every subtree with the same probability, " +
+            "TIPS only picks tips, SMALL_SUBTREES picks proportional to one over the number of tips of the subtree, " +
+            "BRANCH_LENGTH proportional to the length of the branch above it, " +
+            "MUTATIONS proportional to the number of mutations on the branch above it, counting a branch without mutations as having one, " +
+            "SQRT_MUTATIONS proportional to the square root of that number, TIP_MUTATIONS like MUTATIONS but only among the tips, " +
+            "RECURRENT_MUTATIONS proportional to one plus the number of mutations on the branch above it at sites that mutate more than once on the tree", SubtreeSelection.UNIFORM, SubtreeSelection.values());
+
     private static final int INITIAL_CAPACITY = 64;
 
+    SubtreeSelection subtreeSelection;
     double annealing;
     double fullExplorationProbability;
     double windowProbability;
+
+    // the selection weights of all nodes in the current state, which are zero for nodes that cannot be picked
+    double[] selectionWeights;
+    int[] numTipsBelowNode;
+    int[] numMutationsAtSite;
 
     // the state of the current proposal: X, the joined mutations of the branch above S, and the constant part log(λ(X) / 3L) of the log grafting density
     Node x;
@@ -80,6 +97,7 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
             throw new IllegalArgumentException("mdSPR does not support resampleNeighbourhood, as it changes the mutations of the pruned tree.");
         }
 
+        this.subtreeSelection = this.subtreeSelectionInput.get();
         this.annealing = this.annealingInput.get();
         this.fullExplorationProbability = this.fullExplorationProbabilityInput.get();
         this.windowProbability = this.windowProbabilityInput.get();
@@ -90,27 +108,134 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         this.subtreeSequenceChanges = new SiteChanges(this.mutations.getReferenceSequence().length);
 
         int numNodes = this.tree.getNodeCount();
+        this.selectionWeights = new double[numNodes];
+        this.numTipsBelowNode = new int[numNodes];
+        this.numMutationsAtSite = new int[this.mutations.getReferenceSequence().length];
         this.topRunStamps = new int[numNodes];
         this.bottomRunStamps = new int[numNodes];
     }
 
     /**
-     * Picks X uniformly among all nodes where neither X nor its parent is the root. This set
-     * does not change under moves that keep the root, so the choice is symmetric.
+     * Picks X with probability proportional to its selection weight among all nodes where
+     * neither X nor its parent is the root.
      */
     @Override
     protected Node pickSubtreeRoot() {
-        List<Node> candidates = new ArrayList<>();
+        double threshold = Randomizer.nextDouble() * this.computeSelectionWeights();
+
+        Node lastCandidate = null;
+        double cumulativeWeight = 0.0;
         for (Node node : this.tree.getNodesAsArray()) {
-            if (!node.isRoot() && !node.getParent().isRoot()) {
-                candidates.add(node);
+            double weight = this.selectionWeights[node.getNr()];
+            if (weight <= 0.0) {
+                continue;
+            }
+
+            lastCandidate = node;
+            cumulativeWeight += weight;
+            if (threshold < cumulativeWeight) {
+                return node;
             }
         }
 
-        if (candidates.isEmpty()) {
-            return null;
+        // only reached through rounding, or without any candidate
+        return lastCandidate;
+    }
+
+    /**
+     * Returns the log of the selection weight of X over the total weight of the candidates.
+     * With UNIFORM, the number of candidates stays the same under moves that keep the root,
+     * so the choice is symmetric. With the other strategies, the move changes the weights:
+     * it changes the mutations and the lengths of the branches around the old and the new
+     * attachment point, the sizes of the subtrees above them, and the nodes below the root.
+     */
+    @Override
+    protected double computeLogSubtreeRootProbability(Node x) {
+        if (this.subtreeSelection == SubtreeSelection.UNIFORM) {
+            return 0.0;
         }
-        return candidates.get(Randomizer.nextInt(candidates.size()));
+
+        double totalWeight = this.computeSelectionWeights();
+        return Math.log(this.selectionWeights[x.getNr()] / totalWeight);
+    }
+
+    /**
+     * Fills the selection weights of all nodes for the current state and returns their
+     * total. The root and its children get the weight zero.
+     */
+    private double computeSelectionWeights() {
+        if (this.subtreeSelection == SubtreeSelection.SMALL_SUBTREES) {
+            this.countTipsBelowNodes();
+        } else if (this.subtreeSelection == SubtreeSelection.RECURRENT_MUTATIONS) {
+            this.countMutationsAtSites(1);
+        }
+
+        double totalWeight = 0.0;
+        for (Node node : this.tree.getNodesAsArray()) {
+            double weight = node.isRoot() || node.getParent().isRoot() ? 0.0 : this.computeSelectionWeight(node);
+            this.selectionWeights[node.getNr()] = weight;
+            totalWeight += weight;
+        }
+
+        if (this.subtreeSelection == SubtreeSelection.RECURRENT_MUTATIONS) {
+            this.countMutationsAtSites(-1);
+        }
+
+        return totalWeight;
+    }
+
+    /** Computes the unnormalised probability of picking the given node as X. */
+    private double computeSelectionWeight(Node node) {
+        return switch (this.subtreeSelection) {
+            case UNIFORM -> 1.0;
+            case TIPS -> node.isLeaf() ? 1.0 : 0.0;
+            case SMALL_SUBTREES -> 1.0 / this.numTipsBelowNode[node.getNr()];
+            case BRANCH_LENGTH -> node.getLength();
+            case MUTATIONS -> Math.max(1, this.mutations.getMutations(node).size());
+            case SQRT_MUTATIONS -> Math.sqrt(Math.max(1, this.mutations.getMutations(node).size()));
+            case TIP_MUTATIONS -> node.isLeaf() ? Math.max(1, this.mutations.getMutations(node).size()) : 0.0;
+            case RECURRENT_MUTATIONS -> 1.0 + this.countRecurrentMutations(node);
+        };
+    }
+
+    /** Fills the number of tips below every node. */
+    private void countTipsBelowNodes() {
+        // the reversed pre-order visits the children before their parent
+        for (Node node : this.tree.getRoot().getAllChildNodesAndSelf().reversed()) {
+            int numTips = node.isLeaf() ? 1 : 0;
+            for (Node child : node.getChildren()) {
+                numTips += this.numTipsBelowNode[child.getNr()];
+            }
+            this.numTipsBelowNode[node.getNr()] = numTips;
+        }
+    }
+
+    /**
+     * Adds the given increment to the mutation count of its site for every mutation on the
+     * tree. The mutations above the root are left out, as they only encode the difference
+     * between the reference sequence and the root sequence.
+     */
+    private void countMutationsAtSites(int increment) {
+        for (Node node : this.tree.getNodesAsArray()) {
+            if (node.isRoot()) {
+                continue;
+            }
+
+            for (Mutation mutation : this.mutations.getMutations(node)) {
+                this.numMutationsAtSite[mutation.site()] += increment;
+            }
+        }
+    }
+
+    /** Counts the mutations on the branch above the given node at sites that mutate more than once on the tree. */
+    private int countRecurrentMutations(Node node) {
+        int numRecurrentMutations = 0;
+        for (Mutation mutation : this.mutations.getMutations(node)) {
+            if (this.numMutationsAtSite[mutation.site()] > 1) {
+                numRecurrentMutations++;
+            }
+        }
+        return numRecurrentMutations;
     }
 
     /**

@@ -128,6 +128,29 @@ public class SubtreePruneRegraftPosteriorTest {
         this.assertFrequencies(expectedFrequencies, topologyCounts);
     }
 
+    /**
+     * Runs mdSPR with every strategy of picking the subtrees, together with branch reform.
+     * The rooted topologies follow the same posterior as with the uniform choice.
+     */
+    @Test
+    public void testSubtreeSelectionsMatchPosterior() {
+        for (MutationDirectedSprOperator.SubtreeSelection subtreeSelection : MutationDirectedSprOperator.SubtreeSelection.values()) {
+            Randomizer.setSeed(1);
+            Setup setup = this.createSetup();
+
+            MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+            mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                    "subtreeSelection", subtreeSelection);
+
+            BranchReformOperator branchReformOperator = new BranchReformOperator();
+            branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
+
+            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup.alignment, null);
+            Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, branchReformOperator));
+            this.assertFrequencies(expectedFrequencies, topologyCounts);
+        }
+    }
+
     private record Setup(Alignment alignment, TreeParser tree, Mutations mutations, GeneticPrior geneticPrior) {
     }
 

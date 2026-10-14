@@ -154,6 +154,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
             return Double.NEGATIVE_INFINITY;
         }
 
+        double logForwardPickProbability = this.computeLogSubtreeRootProbability(x);
+
         this.updateModel(x);
         this.subtreeMissingSites = this.missingSitesOfNode[x.getNr()];
         this.subtreeMissingSiteSet = this.missingSiteSetOfNode[x.getNr()];
@@ -178,17 +180,29 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
             this.mutations.applyMutations(entry.getKey(), entry.getValue(), this);
         }
 
-        return graftingPoint.logHastingsRatio() + logMutationHastingsRatio;
+        double logBackwardPickProbability = this.computeLogSubtreeRootProbability(x);
+
+        return graftingPoint.logHastingsRatio() + logMutationHastingsRatio + logBackwardPickProbability - logForwardPickProbability;
     }
 
     /* Grafting Point Proposals */
 
     /**
      * Picks the root X of the subtree to prune, such that neither X nor its parent is the
-     * root. Returns null if there is no such node. The choice must be accounted for in the
-     * Hastings ratio unless the set of candidates does not change under the move.
+     * root. Returns null if there is no such node. If the probability of the choice changes
+     * under the move, computeLogSubtreeRootProbability has to return it.
      */
     protected abstract Node pickSubtreeRoot();
+
+    /**
+     * Computes the log probability that pickSubtreeRoot picks the given node in the current
+     * state, up to a constant. It is evaluated before and after the move, and the difference
+     * enters the Hastings ratio. A choice whose probability does not change under the move
+     * needs no correction.
+     */
+    protected double computeLogSubtreeRootProbability(Node x) {
+        return 0.0;
+    }
 
     /**
      * Proposes the new attachment point of the subtree below X in the pruned tree, i.e. with

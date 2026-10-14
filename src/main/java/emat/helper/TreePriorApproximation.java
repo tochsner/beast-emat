@@ -26,7 +26,7 @@ import java.util.List;
 public class TreePriorApproximation implements LearnedTreePrior {
 
     // the factor by which the number of observations grows between two fits
-    private static final double REFIT_GROWTH = 1.5;
+    private static final double REFIT_GROWTH = 1.25;
 
     private final int degree;
     private final int midpointDegree;

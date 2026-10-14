@@ -6,6 +6,7 @@ import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
+import beast.base.spec.type.IntVector;
 import beast.base.spec.type.RealScalar;
 import beast.base.spec.type.RealVector;
 import beast.base.util.Randomizer;
@@ -211,6 +212,8 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
             if (parameter instanceof RealScalar<?>) {
                 numValues++;
             } else if (parameter instanceof RealVector<?> vector) {
+                numValues += vector.size();
+            } else if (parameter instanceof IntVector<?> vector) {
                 numValues += vector.size();
             } else {
                 throw new IllegalArgumentException("The tree prior parameter " + parameter.getID() + " is neither a real scalar nor a real vector.");
