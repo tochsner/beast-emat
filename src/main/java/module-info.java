@@ -17,6 +17,7 @@ import emat.operators.ParameterFollowingOperator;
 import emat.helper.ParameterFollowing;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
+import emat.tree.IncrementalStoreTree;
 import emat.tree.InsertionSortTreeIntervals;
 
 open module my.beast.example {
@@ -56,5 +57,6 @@ open module my.beast.example {
             ParameterFollowingOperator,
             ParameterFollowing,
             InsertionSortTreeIntervals,
+            IncrementalStoreTree,
             TimedMCMC;
 }

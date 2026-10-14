@@ -22,6 +22,7 @@
         <provider classname="emat.operators.BranchReformOperator"/>
         <provider classname="emat.tree.InsertionSortTreeIntervals"/>
         <provider classname="emat.tree.TimSortTreeIntervals"/>
+        <provider classname="emat.tree.IncrementalStoreTree"/>
         <provider classname="emat.benchmark.TimedMCMC"/>
     </service>
 </package>
