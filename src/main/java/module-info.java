@@ -1,3 +1,4 @@
+import emat.adapters.MutationCountAdapter;
 import emat.alignment.FitchFilteredAlignment;
 import emat.benchmark.TimedMCMC;
 import emat.initalisation.ParsimonyMutationsInitialiser;
@@ -26,7 +27,9 @@ open module my.beast.example {
     requires org.apache.commons.statistics.distribution;
     requires org.apache.commons.math4.legacy;
     requires java.xml;
+    requires adaptiveoperators;
 
+    exports emat.adapters;
     exports emat.alignment;
     exports emat.benchmark;
     exports emat.prior;
@@ -58,5 +61,6 @@ open module my.beast.example {
             ParameterFollowing,
             InsertionSortTreeIntervals,
             IncrementalStoreTree,
+            MutationCountAdapter,
             TimedMCMC;
 }
