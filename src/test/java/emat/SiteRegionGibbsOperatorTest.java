@@ -65,6 +65,13 @@ public class SiteRegionGibbsOperatorTest {
     }
 
     @Test
+    public void testBranchLengthSelectionMatchesEnumeratedPosterior() {
+        for (int maxNodes : MAX_NODES) {
+            this.checkMatchesEnumeratedPosterior(maxNodes, Selection.BRANCH_LENGTH);
+        }
+    }
+
+    @Test
     public void testAnchoredSelectionMatchesEnumeratedPosterior() {
         for (int maxNodes : MAX_NODES) {
             this.checkMatchesEnumeratedPosterior(maxNodes, Selection.MUTATION_ANCHORED);
@@ -75,6 +82,7 @@ public class SiteRegionGibbsOperatorTest {
     public void testTipStatesStayCompatible() {
         for (int maxNodes : MAX_NODES) {
             this.checkTipStatesStayCompatible(maxNodes, Selection.UNIFORM);
+            this.checkTipStatesStayCompatible(maxNodes, Selection.BRANCH_LENGTH);
             this.checkTipStatesStayCompatible(maxNodes, Selection.MUTATION_ANCHORED);
         }
     }

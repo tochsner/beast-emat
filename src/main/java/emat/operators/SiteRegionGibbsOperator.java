@@ -27,21 +27,22 @@ import java.util.Set;
         "all branches at these nodes. With one node, the region is the star around the centre, and with enough " +
         "nodes the whole history of the site is resampled. The states of the inner nodes at the outer ends of " +
         "the region stay fixed, and tips at its ends keep a state compatible with their data. The centre and the " +
-        "site are chosen by the selection strategy. With uniform selection, the move is a Gibbs move that is " +
-        "always accepted. With mutation-anchored selection, the choice depends on the mutations, so the move is " +
-        "accepted by Metropolis-Hastings.")
+        "site are chosen by the selection strategy. With uniform and branch-length selection, the choice does not " +
+        "depend on the mutations, so the move is a Gibbs move that is always accepted. With mutation-anchored " +
+        "selection, the choice depends on the mutations, so the move is accepted by Metropolis-Hastings.")
 public class SiteRegionGibbsOperator extends Operator {
 
     /** The strategy for choosing the centre of the region and the site. */
     public enum Selection {
         UNIFORM,
+        BRANCH_LENGTH,
         MUTATION_ANCHORED
     }
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "the mutations to operate on", Input.Validate.REQUIRED);
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model", Input.Validate.REQUIRED);
     final public Input<Integer> maxNodesInput = new Input<>("maxNodes", "the maximum number of inner nodes whose states are resampled. The region grows breadth-first from the centre until it holds this many inner nodes or the whole tree", 1);
-    final public Input<Selection> selectionInput = new Input<>("selection", "the strategy for choosing the centre of the region and the site: UNIFORM picks an inner node (including the root) uniformly and a site uniformly or by parsimony score, MUTATION_ANCHORED picks a random mutation below the root and one of the inner nodes at the ends of its branch, mixed with uniform selection", Selection.UNIFORM, Selection.values());
+    final public Input<Selection> selectionInput = new Input<>("selection", "the strategy for choosing the centre of the region and the site: UNIFORM picks an inner node (including the root) uniformly and a site uniformly or by parsimony score, BRANCH_LENGTH picks a branch below the root proportional to its length and one of the inner nodes at its ends like MUTATION_ANCHORED, with the site picked like UNIFORM, MUTATION_ANCHORED picks a random mutation below the root and one of the inner nodes at the ends of its branch, mixed with uniform selection", Selection.BRANCH_LENGTH, Selection.values());
     final public Input<Double> uniformFractionInput = new Input<>("uniformFraction", "the probability of selecting uniformly instead of anchored at a mutation, which must be positive so that regions without mutations can be reached. Only used by MUTATION_ANCHORED", 0.1);
 
     final public Input<Boolean> parsimonySitesInput = new Input<>("parsimonySites", "whether a site that is not picked through a mutation is picked proportional to its Fitch parsimony score on the UPGMA tree of the alignment plus the pseudo count instead of uniformly", false);
@@ -96,8 +97,9 @@ public class SiteRegionGibbsOperator extends Operator {
     /**
      * Picks the centre of the region and the site by the selection strategy and replaces the
      * history of the site on the region by a draw from its exact conditional distribution.
-     * The region only depends on the centre and the tree. With uniform selection, the choice
-     * does not depend on the state, so as a Gibbs move it is always accepted. Otherwise, the
+     * The region only depends on the centre and the tree. With uniform and branch-length
+     * selection, the choice does not depend on the mutations, which are the only part of the
+     * state that the move changes, so as a Gibbs move it is always accepted. Otherwise, the
      * Hastings ratio is q(choice | new) p(old region) / (q(choice | old) p(new region)),
      * where p is the conditional distribution of the region history. As the posterior ratio
      * equals p(new region) / p(old region), the acceptance probability reduces to the ratio
@@ -109,7 +111,7 @@ public class SiteRegionGibbsOperator extends Operator {
             return Double.NEGATIVE_INFINITY;
         }
 
-        int numMutations = this.selection == Selection.UNIFORM ? 0 : this.mutations.getMutationCount();
+        int numMutations = this.selection == Selection.MUTATION_ANCHORED ? this.mutations.getMutationCount() : 0;
         RegionChoice choice = this.selectRegion(numMutations);
         Node centre = choice.centre();
         int site = choice.site();
@@ -133,7 +135,7 @@ public class SiteRegionGibbsOperator extends Operator {
         List<List<Mutation>> newRegionMutations = this.siteHistorySampler.sampleRegionHistory(site, startState, regionNodes, fixedStates);
 
         double logHastingsRatio = Double.POSITIVE_INFINITY;
-        if (this.selection != Selection.UNIFORM) {
+        if (this.selection == Selection.MUTATION_ANCHORED) {
             int numNewMutations = numMutations - this.countNonRootMutations(regionNodes, oldRegionMutations)
                     + this.countNonRootMutations(regionNodes, newRegionMutations);
 
@@ -260,11 +262,13 @@ public class SiteRegionGibbsOperator extends Operator {
      * back to uniform selection if there are none.
      */
     private RegionChoice selectRegion(int numMutations) {
-        boolean isAnchored = this.selection == Selection.MUTATION_ANCHORED
-                && numMutations > 0
-                && Randomizer.nextDouble() >= this.uniformFraction;
-
-        return isAnchored ? this.selectAnchoredRegion(numMutations) : this.selectUniformRegion();
+        return switch (this.selection) {
+            case UNIFORM -> this.selectUniformRegion();
+            case BRANCH_LENGTH -> this.selectBranchLengthRegion();
+            case MUTATION_ANCHORED -> numMutations > 0 && Randomizer.nextDouble() >= this.uniformFraction
+                    ? this.selectAnchoredRegion(numMutations)
+                    : this.selectUniformRegion();
+        };
     }
 
     /** Picks an inner node, including the root, uniformly, and a site proportional to its weight. */
@@ -319,9 +323,54 @@ public class SiteRegionGibbsOperator extends Operator {
     }
 
     /**
+     * Picks a branch below the root proportional to its length, one of the inner nodes at its
+     * ends as the centre, and a site proportional to its weight. Falls back to uniform
+     * selection if all branches have length zero.
+     */
+    private RegionChoice selectBranchLengthRegion() {
+        double totalLength = 0.0;
+        for (Node node : this.tree.getNodesAsArray()) {
+            if (!node.isRoot()) {
+                totalLength += node.getLength();
+            }
+        }
+
+        double threshold = Randomizer.nextDouble() * totalLength;
+
+        Node lastCandidate = null;
+        double cumulativeLength = 0.0;
+        for (Node node : this.tree.getNodesAsArray()) {
+            if (node.isRoot() || node.getLength() <= 0.0) {
+                continue;
+            }
+
+            lastCandidate = node;
+            cumulativeLength += node.getLength();
+            if (threshold < cumulativeLength) {
+                break;
+            }
+        }
+
+        // only null without any branch of positive length
+        if (lastCandidate == null) {
+            return this.selectUniformRegion();
+        }
+
+        return new RegionChoice(this.selectBranchEnd(lastCandidate), this.selectSite());
+    }
+
+    /**
+     * Picks one of the inner nodes at the ends of the branch above the given node with equal
+     * probability. The lower end of a branch above a tip is not an inner node, so the upper
+     * end is always picked there.
+     */
+    private Node selectBranchEnd(Node node) {
+        return node.isLeaf() || Randomizer.nextBoolean() ? node.getParent() : node;
+    }
+
+    /**
      * Picks a mutation uniformly among the given number of mutations below the root, and
-     * one of the inner nodes at the ends of its branch with equal probability. The lower end
-     * of a branch above a tip is not an inner node, so the upper end is always picked there.
+     * one of the inner nodes at the ends of its branch as the centre.
      */
     private RegionChoice selectAnchoredRegion(int numMutations) {
         int mutationNr = Randomizer.nextInt(numMutations);
@@ -333,8 +382,7 @@ public class SiteRegionGibbsOperator extends Operator {
 
             List<Mutation> branchMutations = this.mutations.getMutations(node);
             if (mutationNr < branchMutations.size()) {
-                Node centre = node.isLeaf() || Randomizer.nextBoolean() ? node.getParent() : node;
-                return new RegionChoice(centre, branchMutations.get(mutationNr).site());
+                return new RegionChoice(this.selectBranchEnd(node), branchMutations.get(mutationNr).site());
             }
             mutationNr -= branchMutations.size();
         }
