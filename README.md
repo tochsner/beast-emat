@@ -4,15 +4,9 @@ This project adds an implementation of Explicitly Annotated Mutation Trees (EMAT
 
 ## Current Results
 
-Currently, we achieve the following rough runtimes:
+Running time until all parameters reach an ESS of 200 (ignoring the tree topology), by number of sequences.
 
-| Type         | Num. Sequences | Hours to Converge |
-|--------------|----------------|-------------------|
-| SARS-CoV 2   | 787            | ~1.5              |
-| SARS-CoV 2   | 5000           | ~10               |
-| SARS-CoV 2   | 10000          | ~30               |
-| Ebola        | 1610           | ~2                |
-| Zika         | 174            | ~0.5              |
+![Running time until convergence](python/src/notebooks/convergence_time.png)
 
 ## Package Overview
 
