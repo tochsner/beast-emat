@@ -167,6 +167,97 @@ public class BatchNodeDisplacementOperatorTest {
     }
 
     /**
+     * Same chain as the test above with the tree prior exp(-3 h - 4 (h - 1)²) of the height h of X, which is
+     * centred on the midpoint 1 of its range [0.5, 1.5]. The operator must learn the quadratic term as well as the
+     * slope, so that the sampled mean matches the truncated density ∝ exp(-6 h - 4 (h - 1)²) and, as the
+     * quadratic approximation is exact, every proposal is accepted once it is learned.
+     */
+    @Test
+    public void testLearnsQuadraticTreePrior() {
+        this.checkLearnsQuadraticTreePrior(BatchNodeDisplacementOperator.TreePriorShape.polynomial, 20);
+    }
+
+    /** The global spline of the slope along the height learns the same quadratic tree prior. */
+    @Test
+    public void testGlobalSplineLearnsQuadraticTreePrior() {
+        this.checkLearnsQuadraticTreePrior(BatchNodeDisplacementOperator.TreePriorShape.global, 6);
+    }
+
+    private void checkLearnsQuadraticTreePrior(BatchNodeDisplacementOperator.TreePriorShape shape, int numKnots) {
+        Randomizer.setSeed(2);
+
+        Alignment alignment = new Alignment();
+        alignment.initByName("sequence", List.of(
+                new Sequence("A", "GAA"), new Sequence("B", "GAC"), new Sequence("C", "CCC")
+        ), "dataType", "nucleotide");
+
+        TreeParser tree = new TreeParser();
+        tree.initByName("newick", "((A:1.0,B:1.0):1.0,C:2.0);", "IsLabelledNewick", true, "adjustTipHeights", false);
+
+        Mutations mutations = new Mutations();
+        mutations.initByName("tree", tree, "alignment", alignment);
+        mutations.initialiseMutations(this.createThreeTipHistory(tree));
+
+        GeneticPrior geneticPrior = this.createGeneticPrior(alignment, tree, mutations);
+
+        BatchNodeDisplacementOperator operator = new BatchNodeDisplacementOperator();
+        operator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "geneticPrior", geneticPrior,
+                "batchSize", 1, "optimise", false, "treePriorDegree", 2, "treePriorWarmUp", 200,
+                "treePriorShape", shape, "treePriorKnots", numKnots);
+
+        Node x = this.getInternalChild(tree.getRoot());
+
+        int numBurnin = 2000;
+        int numSamples = 200000;
+        double logTarget = this.getQuadraticLogTreePrior(x.getHeight()) + geneticPrior.calculateLogP();
+        double sumHeights = 0.0;
+        int numLateAccepted = 0;
+
+        for (int i = 0; i < numBurnin + numSamples; i++) {
+            double oldHeight = x.getHeight();
+            List<List<Mutation>> oldMutations = this.getMutations(tree, mutations);
+
+            double logHastingsRatio = operator.proposal();
+            double newLogTarget = this.getQuadraticLogTreePrior(x.getHeight()) + geneticPrior.calculateLogP();
+            double logAlpha = newLogTarget - logTarget + logHastingsRatio;
+
+            if (Math.log(Randomizer.nextDouble()) < logAlpha) {
+                logTarget = newLogTarget;
+                if (i >= numBurnin) {
+                    numLateAccepted++;
+                }
+            } else {
+                x.setHeight(oldHeight);
+                this.restoreMutations(tree, mutations, oldMutations, operator);
+                geneticPrior.calculateLogP();
+            }
+            operator.optimize(logAlpha);
+
+            if (i >= numBurnin) {
+                sumHeights += x.getHeight();
+            }
+        }
+
+        // the mean of the truncated density by midpoint integration
+        double mass = 0.0;
+        double moment = 0.0;
+        int numCells = 100000;
+        for (int i = 0; i < numCells; i++) {
+            double h = 0.5 + (i + 0.5) / numCells;
+            double density = Math.exp(-6.0 * h - 4.0 * (h - 1.0) * (h - 1.0));
+            mass += density;
+            moment += density * h;
+        }
+
+        assertEquals(moment / mass, sumHeights / numSamples, 0.005);
+        assertTrue(numLateAccepted > 0.999 * numSamples);
+    }
+
+    private double getQuadraticLogTreePrior(double height) {
+        return -3.0 * height - 4.0 * (height - 1.0) * (height - 1.0);
+    }
+
+    /**
      * On the six-tip tree with a fixed history, the tree prior exp(-θ Σ h) over the internal nodes below the root
      * has the slope -θ in every height, and θ is redrawn from time to time. With θ as a parameter of the tree
      * prior, the operator must learn the slope as a function of θ from batches of several nodes, so that in the
@@ -238,6 +329,66 @@ public class BatchNodeDisplacementOperatorTest {
         }
 
         assertTrue(numLateAccepted >= 0.999 * numLateProposals);
+    }
+
+    /**
+     * When X moves, the first mutation at every site on the branches below it starts at the new height of X, and
+     * all other mutations and all mutation times stay as they are.
+     */
+    @Test
+    public void testOnlyFirstMutationAtEverySiteFollowsTheNode() {
+        Randomizer.setSeed(4);
+
+        Alignment alignment = new Alignment();
+        alignment.initByName("sequence", List.of(
+                new Sequence("A", "GAA"), new Sequence("B", "GAT"), new Sequence("C", "CCC")
+        ), "dataType", "nucleotide");
+
+        TreeParser tree = new TreeParser();
+        tree.initByName("newick", "((A:1.0,B:1.0):1.0,C:2.0);", "IsLabelledNewick", true, "adjustTipHeights", false);
+
+        Node root = tree.getRoot();
+        Node x = this.getInternalChild(root);
+        Node b = this.getNodeByTaxon(tree, "B");
+
+        // B first gains C at site 2 and then T, and A is unchanged
+        List<List<Mutation>> history = new ArrayList<>();
+        for (int i = 0; i < tree.getNodeCount(); i++) {
+            history.add(new ArrayList<>());
+        }
+        history.get(b.getNr()).addAll(List.of(
+                new Mutation(b.getNr(), 0.8, 1.0, 2, A, C),
+                new Mutation(b.getNr(), 0.4, 0.8, 2, C, 3),
+                new Mutation(b.getNr(), 0.3, 1.0, 1, A, G)
+        ));
+
+        Mutations mutations = new Mutations();
+        mutations.initByName("tree", tree, "alignment", alignment);
+        mutations.initialiseMutations(history);
+
+        GeneticPrior geneticPrior = this.createGeneticPrior(alignment, tree, mutations);
+        geneticPrior.calculateLogP();
+
+        BatchNodeDisplacementOperator operator = new BatchNodeDisplacementOperator();
+        operator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "geneticPrior", geneticPrior,
+                "batchSize", 1, "optimise", false, "treePriorDegree", 0);
+
+        for (int i = 0; i < 20; i++) {
+            operator.proposal();
+
+            List<Mutation> bMutations = mutations.getMutations(b);
+            assertEquals(3, bMutations.size());
+
+            // sorted by descending time, with the times unchanged
+            assertEquals(0.8, bMutations.get(0).time(), 0.0);
+            assertEquals(0.4, bMutations.get(1).time(), 0.0);
+            assertEquals(0.3, bMutations.get(2).time(), 0.0);
+
+            // the first mutation at site 2 and the one at site 1 start at X, the second at site 2 follows the first
+            assertEquals(x.getHeight(), bMutations.get(0).timeOfPreviousMutation(), 0.0);
+            assertEquals(0.8, bMutations.get(1).timeOfPreviousMutation(), 0.0);
+            assertEquals(x.getHeight(), bMutations.get(2).timeOfPreviousMutation(), 0.0);
+        }
     }
 
     /* Helpers */

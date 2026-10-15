@@ -71,6 +71,9 @@ public class LinearSplineTreePriorApproximation implements LearnedTreePrior {
 
     // the weights of the linear coefficient c_1 for the knots and the scaled parameters
     private final double[] slopeWeights;
+
+    // the weights of the quadratic coefficient c_2, which stay zero for a polynomial of degree one
+    private final double[] curvatureWeights;
     private boolean isFitted;
 
     // the knot interval of the node at hand: the knot below its midpoint, and the weight of the knot above
@@ -107,6 +110,7 @@ public class LinearSplineTreePriorApproximation implements LearnedTreePrior {
         this.gramMatrix = new double[this.numWeights][this.numWeights];
         this.momentVector = new double[this.numWeights];
         this.slopeWeights = new double[this.numFeatures];
+        this.curvatureWeights = new double[this.numFeatures];
     }
 
     @Override
@@ -115,16 +119,30 @@ public class LinearSplineTreePriorApproximation implements LearnedTreePrior {
             return 0.0;
         }
 
+        return this.evaluateCoefficient(this.slopeWeights, midpoint, parameters) / this.offsetScale;
+    }
+
+    @Override
+    public double getCurvature(double midpoint, double[] parameters) {
+        if (!this.isFitted) {
+            return 0.0;
+        }
+
+        return this.evaluateCoefficient(this.curvatureWeights, midpoint, parameters) / (this.offsetScale * this.offsetScale);
+    }
+
+    /** Returns the coefficient with the given weights in scaled units at the midpoint and the parameters. */
+    private double evaluateCoefficient(double[] weights, double midpoint, double[] parameters) {
         this.locateKnotInterval(midpoint);
 
-        double slope = (1.0 - this.upperKnotWeight) * this.slopeWeights[this.lowerKnotIndex];
+        double coefficient = (1.0 - this.upperKnotWeight) * weights[this.lowerKnotIndex];
         if (this.upperKnotWeight > 0.0) {
-            slope += this.upperKnotWeight * this.slopeWeights[this.lowerKnotIndex + 1];
+            coefficient += this.upperKnotWeight * weights[this.lowerKnotIndex + 1];
         }
         for (int j = 0; j < this.numParameters; j++) {
-            slope += this.slopeWeights[this.numKnots + j] * this.scaleParameter(j, parameters[j]);
+            coefficient += weights[this.numKnots + j] * this.scaleParameter(j, parameters[j]);
         }
-        return slope / this.offsetScale;
+        return coefficient;
     }
 
     @Override
@@ -379,8 +397,11 @@ public class LinearSplineTreePriorApproximation implements LearnedTreePrior {
             }
         }
 
-        // the weights of the linear coefficient are the first block
+        // the weights of the linear and the quadratic coefficient are the first two blocks
         System.arraycopy(weights, 0, this.slopeWeights, 0, this.numFeatures);
+        if (this.degree >= 2) {
+            System.arraycopy(weights, this.numFeatures, this.curvatureWeights, 0, this.numFeatures);
+        }
         this.isFitted = true;
     }
 

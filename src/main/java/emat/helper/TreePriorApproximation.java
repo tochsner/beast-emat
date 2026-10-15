@@ -74,6 +74,9 @@ public class TreePriorApproximation implements LearnedTreePrior {
 
     // the weights of the linear coefficient c_1 for the scaled features
     private final double[] slopeWeights;
+
+    // the weights of the quadratic coefficient c_2, which stay zero for a polynomial of degree one
+    private final double[] curvatureWeights;
     private boolean isFitted;
 
     // the features of the node at hand, unscaled during the warm-up and scaled after it
@@ -111,6 +114,7 @@ public class TreePriorApproximation implements LearnedTreePrior {
         this.xtx = new double[this.numUnknowns][this.numUnknowns];
         this.xty = new double[this.numUnknowns];
         this.slopeWeights = new double[this.numFeatures];
+        this.curvatureWeights = new double[this.numFeatures];
         this.nodeFeatures = new double[this.numFeatures];
     }
 
@@ -131,6 +135,25 @@ public class TreePriorApproximation implements LearnedTreePrior {
             slope += this.slopeWeights[j] * this.nodeFeatures[j];
         }
         return slope / this.offsetScale;
+    }
+
+    /**
+     * Returns the quadratic coefficient c_2 of the log tree prior at the given midpoint of the range of a node,
+     * for the given values of the parameters of the tree prior. The curvature is zero until the first fit.
+     */
+    @Override
+    public double getCurvature(double midpoint, double[] parameters) {
+        if (!this.isFitted) {
+            return 0.0;
+        }
+
+        this.computeScaledFeatures(midpoint, parameters);
+
+        double curvature = 0.0;
+        for (int j = 0; j < this.numFeatures; j++) {
+            curvature += this.curvatureWeights[j] * this.nodeFeatures[j];
+        }
+        return curvature / (this.offsetScale * this.offsetScale);
     }
 
     @Override
@@ -395,8 +418,11 @@ public class TreePriorApproximation implements LearnedTreePrior {
             }
         }
 
-        // the weights of the linear coefficient are the first block
+        // the weights of the linear and the quadratic coefficient are the first two blocks
         System.arraycopy(weights, 0, this.slopeWeights, 0, this.numFeatures);
+        if (this.degree >= 2) {
+            System.arraycopy(weights, this.numFeatures, this.curvatureWeights, 0, this.numFeatures);
+        }
         this.isFitted = true;
     }
 
