@@ -40,7 +40,7 @@ public class GlobalSplineTreePriorApproximation implements LearnedTreePrior {
 
     // the defaults for the least number of observations the fit looks back on and the least between two fits
     public static final int DEFAULT_MIN_WINDOW = 1000;
-    public static final int DEFAULT_MIN_REFIT_INTERVAL = 100;
+    public static final int DEFAULT_MIN_REFIT_INTERVAL = 5_000;
 
     // the window is the most recent part of all observations of this fraction, the interval between fits that of all
     private static final double WINDOW_FRACTION = 0.5;
