@@ -18,7 +18,9 @@ import emat.tree.IncrementalStoreTree;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -71,6 +73,42 @@ public class IncrementalStoreTreeTest {
             assertEquals(tree, node.getTree());
         }
         assertEquals(parser.getRoot().toNewick(), tree.getRoot().toNewick());
+    }
+
+    /**
+     * Checks that the initial caterpillar of a large taxon set, whose depth is the number of
+     * taxa, can be initialised and copied without overflowing the stack.
+     */
+    @Test
+    public void testCopiesDeepCaterpillar() {
+        int numTaxa = 10000;
+        List<Taxon> taxa = new ArrayList<>();
+        for (int i = 0; i < numTaxa; i++) {
+            taxa.add(new Taxon("t" + i));
+        }
+
+        IncrementalStoreTree tree = new IncrementalStoreTree();
+        tree.initByName("taxonset", new TaxonSet(taxa));
+        Node copiedRoot = tree.getRoot().copy();
+
+        // walk the copy without recursion, which would overflow the stack itself
+
+        int numCopiedNodes = 0;
+        Deque<Node> nodes = new ArrayDeque<>();
+        nodes.push(copiedRoot);
+        while (!nodes.isEmpty()) {
+            Node node = nodes.pop();
+            Node original = tree.getNode(node.getNr());
+            assertInstanceOf(IncrementalStoreNode.class, node);
+            assertEquals(original.getHeight(), node.getHeight());
+            assertEquals(original.getChildCount(), node.getChildCount());
+            for (Node child : node.getChildren()) {
+                assertEquals(node, child.getParent());
+                nodes.push(child);
+            }
+            numCopiedNodes++;
+        }
+        assertEquals(2 * numTaxa - 1, numCopiedNodes);
     }
 
     private List<String> runChain(long seed, Tree tree, boolean isCheckingRestores) {

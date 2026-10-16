@@ -5,6 +5,9 @@ import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+
 @Description("Tree that only stores and cleans the nodes changed since the last store instead of all " +
         "nodes, which makes storing and restoring independent of the tree size for operators that change " +
         "few nodes. Changes are tracked through the setters of IncrementalStoreNode, so the tree must not " +
@@ -195,14 +198,19 @@ public class IncrementalStoreTree extends Tree {
         this.numFlaggedNodes = 0;
     }
 
-    private boolean isIncremental(Node node) {
-        if (!(node instanceof IncrementalStoreNode)) {
-            return false;
-        }
-        for (Node child : node.getChildren()) {
-            if (!this.isIncremental(child)) {
+    /**
+     * Checks whether all nodes of the subtree are incremental store nodes, without recursion
+     * so that deep trees do not overflow the stack.
+     */
+    private boolean isIncremental(Node root) {
+        Deque<Node> nodes = new ArrayDeque<>();
+        nodes.push(root);
+        while (!nodes.isEmpty()) {
+            Node node = nodes.pop();
+            if (!(node instanceof IncrementalStoreNode)) {
                 return false;
             }
+            node.getChildren().forEach(nodes::push);
         }
         return true;
     }

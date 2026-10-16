@@ -4,17 +4,51 @@ import beast.base.core.Description;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
-import java.util.TreeMap;
 
 @Description("Tree node that reports its changes to an IncrementalStoreTree, so that the tree only " +
         "stores the nodes that changed.")
 public class IncrementalStoreNode extends Node {
 
+    @Override
+    public Node copy() {
+        return copyOf(this);
+    }
+
     /**
-     * Creates a copy of the given node and its subtree, made of incremental store nodes.
+     * Creates a copy of the given node and its subtree, made of incremental store nodes. The
+     * subtree is traversed without recursion, so that deep trees such as the initial
+     * caterpillar of a large taxon set do not overflow the stack.
      */
     static IncrementalStoreNode copyOf(Node source) {
+        IncrementalStoreNode root = copyValuesOf(source);
+
+        Deque<Node> sources = new ArrayDeque<>();
+        Deque<IncrementalStoreNode> copies = new ArrayDeque<>();
+        sources.push(source);
+        copies.push(root);
+
+        while (!sources.isEmpty()) {
+            Node node = sources.pop();
+            IncrementalStoreNode copy = copies.pop();
+
+            for (Node child : node.getChildren()) {
+                IncrementalStoreNode childCopy = copyValuesOf(child);
+                copy.addChild(childCopy);
+                sources.push(child);
+                copies.push(childCopy);
+            }
+        }
+        return root;
+    }
+
+    /**
+     * Creates an incremental store node with the height, number, metadata and ID of the
+     * given node, but without parent or children.
+     */
+    private static IncrementalStoreNode copyValuesOf(Node source) {
         IncrementalStoreNode node = new IncrementalStoreNode();
         node.height = source.getHeight();
         node.labelNr = source.getNr();
@@ -27,27 +61,6 @@ public class IncrementalStoreNode extends Node {
             node.lengthMetaData.put(name, source.getLengthMetaData(name));
         }
         node.setID(source.getID());
-
-        for (Node child : source.getChildren()) {
-            node.addChild(copyOf(child));
-        }
-        return node;
-    }
-
-    @Override
-    public Node copy() {
-        IncrementalStoreNode node = new IncrementalStoreNode();
-        node.height = this.height;
-        node.labelNr = this.labelNr;
-        node.metaDataString = this.metaDataString;
-        node.lengthMetaDataString = this.lengthMetaDataString;
-        node.metaData = new TreeMap<>(this.metaData);
-        node.lengthMetaData = new TreeMap<>(this.lengthMetaData);
-        node.setID(this.getID());
-
-        for (Node child : this.children) {
-            node.addChild(child.copy());
-        }
         return node;
     }
 
