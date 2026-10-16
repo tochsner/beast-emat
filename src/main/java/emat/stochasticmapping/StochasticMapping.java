@@ -34,6 +34,23 @@ public interface StochasticMapping {
     double computeLogSiteHistoryDensity(List<Mutation> siteMutations, double branchStartHeight, double branchEndHeight,
                                         int startState, int endState, double rateScale, double endProbability);
 
+    /**
+     * Returns the rate λ of the jumps that sampleSameStateHistory expects, before the scaling
+     * of a branch: on a branch with rate scale s and duration t, their number is drawn from
+     * the unconditioned Poisson(λ s t) distribution.
+     */
+    double getJumpRate();
+
+    /**
+     * Samples the history on a branch whose ends have the same state, given a number of jumps
+     * drawn from the unconditioned Poisson(λ s t) distribution of the branch. The draw is
+     * accepted with the probability that the jumps return to the state, which turns the
+     * Poisson distribution into the distribution conditional on the end state. Returns null
+     * if the draw is rejected, in which case sampleSiteHistory provides an exact draw instead.
+     */
+    List<Mutation> sampleSameStateHistory(int nodeNr, int site, double branchStartHeight, double branchEndHeight,
+                                          int state, int numJumps);
+
     /* Helpers */
 
     /**

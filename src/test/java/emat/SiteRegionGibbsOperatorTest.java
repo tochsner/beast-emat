@@ -305,7 +305,8 @@ public class SiteRegionGibbsOperatorTest {
      * On a five-tip tree with nested clades and an ambiguous tip (R, i.e. A or G) under HKY,
      * runs the operator with Metropolis-Hastings acceptance and checks the sampled states of
      * every node against their exact posterior marginals, obtained by enumerating all
-     * assignments of states to the nodes that are compatible with the tips.
+     * assignments of states to the nodes that are compatible with the tips. The tolerance
+     * follows from the Monte Carlo error, as small regions mix slowly.
      */
     private void checkMatchesEnumeratedPosterior(int maxNodes, Selection selection) {
         Randomizer.setSeed(4);
@@ -334,14 +335,20 @@ public class SiteRegionGibbsOperatorTest {
         int numBurnin = 1000;
         int numSamples = 2000000;
 
-        double[][] stateCounts = new double[numNodes][4];
+        BatchMeans[][] stateFrequencies = new BatchMeans[numNodes][4];
+        for (BatchMeans[] nodeFrequencies : stateFrequencies) {
+            Arrays.setAll(nodeFrequencies, state -> new BatchMeans(numSamples, 100));
+        }
+
         for (int i = 0; i < numBurnin + numSamples; i++) {
             setup.runMetropolisHastingsStep(i);
 
             if (i >= numBurnin) {
                 int[] nodeStates = setup.getNodeStates();
                 for (int nodeNr = 0; nodeNr < numNodes; nodeNr++) {
-                    stateCounts[nodeNr][nodeStates[nodeNr]]++;
+                    for (int state = 0; state < 4; state++) {
+                        stateFrequencies[nodeNr][state].add(nodeStates[nodeNr] == state ? 1.0 : 0.0);
+                    }
                 }
             }
         }
@@ -394,7 +401,7 @@ public class SiteRegionGibbsOperatorTest {
 
         for (int nodeNr = 0; nodeNr < numNodes; nodeNr++) {
             for (int state = 0; state < 4; state++) {
-                assertEquals(probabilities[nodeNr][state] / normalisation, stateCounts[nodeNr][state] / numSamples, 0.006,
+                stateFrequencies[nodeNr][state].assertMean(probabilities[nodeNr][state] / normalisation,
                         "Max nodes " + maxNodes + ", node " + nodeNr + ", state " + state + ".");
             }
         }

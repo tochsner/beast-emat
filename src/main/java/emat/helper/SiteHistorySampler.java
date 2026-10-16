@@ -10,7 +10,6 @@ import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
 import emat.stochasticmapping.StochasticMapping;
-import emat.stochasticmapping.UniformisedStochasticMapping;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -56,16 +55,20 @@ public class SiteHistorySampler {
     // per tip node: the index of its taxon in the alignment
     final int[] taxonIndices;
 
-    // per character code: the tip partial likelihoods, created when first needed
+    // per character code: the tip partial likelihoods, and the only state compatible with
+    // it or -1 if there are several, created when first needed
     double[][] tipPartials = new double[0][];
+    int[] tipStates = new int[0];
 
     // per node: the scale of Q on the branch above it, the scaled branch length for which
     // the transition probabilities were computed, the transition probabilities of the
-    // branch, the partial likelihoods of the subtree below it, and its sampled state
+    // branch, the partial likelihoods of the subtree below it, the only state its partial
+    // likelihoods allow or -1 if they allow several, and its sampled state
     final double[] rateScales;
     final double[] durations;
     final double[][] transitionProbabilities;
     final double[][] partials;
+    final int[] knownStates;
     final int[] nodeStates;
 
     public SiteHistorySampler(Mutations mutations, GeneticPrior geneticPrior, StochasticMapping stochasticMapping) {
@@ -85,6 +88,7 @@ public class SiteHistorySampler {
         this.durations = new double[numNodes];
         this.transitionProbabilities = new double[numNodes][this.numStates * this.numStates];
         this.partials = new double[numNodes][this.numStates];
+        this.knownStates = new int[numNodes];
         this.nodeStates = new int[numNodes];
 
         Arrays.fill(this.durations, Double.NaN);
@@ -172,32 +176,23 @@ public class SiteHistorySampler {
 
         // sample the path on every branch given its end states
 
-        if (this.stochasticMapping instanceof UniformisedStochasticMapping uniformisedMapping) {
-            return this.sampleUniformisedBranchHistories(site, uniformisedMapping);
-        }
-
-        List<List<Mutation>> siteMutations = new ArrayList<>();
-        for (int nodeNr = 0; nodeNr < this.tree.getNodeCount(); nodeNr++) {
-            Node node = this.tree.getNode(nodeNr);
-            siteMutations.add(node.isRoot() ? this.createRootHistory(node, site) : this.sampleBranchHistory(node, site));
-        }
-
-        return siteMutations;
+        return this.sampleBranchHistories(site);
     }
 
     /**
      * Samples the paths of the given site on every branch given the sampled node states,
      * like sampleBranchHistory on every branch, but without a random draw for most branches.
-     * On a branch whose ends have the same state, the number of uniformised jumps is first
-     * drawn from the unconditioned Poisson(μ* s t) distribution, by placing a single Poisson
-     * process of rate 1 along the expected numbers of jumps μ* s t of all such branches laid
-     * end to end. A branch without jumps then keeps its state without a mutation, and one
-     * with jumps is accepted with probability (B^n)_{ii}, which makes n exact given the end
-     * states, or else falls back to an exact draw. As the expected number of jumps on the
-     * whole tree is small for most sites, only few random draws are needed.
+     * On a branch whose ends have the same state, the number of jumps of the stochastic
+     * mapping is first drawn from the unconditioned Poisson(λ s t) distribution, where λ is
+     * its jump rate, by placing a single Poisson process of rate 1 along the expected numbers
+     * of jumps λ s t of all such branches laid end to end. A branch without jumps then keeps
+     * its state without a mutation, and one with jumps is accepted with the probability that
+     * the jumps return to the state, which makes n exact given the end states, or else falls
+     * back to an exact draw. As the expected number of jumps on the whole tree is small for
+     * most sites, only few random draws are needed.
      */
-    private List<List<Mutation>> sampleUniformisedBranchHistories(int site, UniformisedStochasticMapping uniformisedMapping) {
-        double uniformisationRate = uniformisedMapping.getUniformisationRate();
+    private List<List<Mutation>> sampleBranchHistories(int site) {
+        double jumpRate = this.stochasticMapping.getJumpRate();
 
         // the position of the next jump on the axis of expected jumps, and how far the branches reach along it
         double nextJumpPosition = this.drawExponential();
@@ -219,7 +214,7 @@ public class SiteHistorySampler {
 
             double startHeight = node.getParent().getHeight();
             double endHeight = node.getHeight();
-            branchesEndPosition += uniformisationRate * this.rateScales[nodeNr] * Math.max(startHeight - endHeight, 0.0);
+            branchesEndPosition += jumpRate * this.rateScales[nodeNr] * Math.max(startHeight - endHeight, 0.0);
 
             int numJumps = 0;
             while (nextJumpPosition < branchesEndPosition) {
@@ -232,7 +227,7 @@ public class SiteHistorySampler {
                 continue;
             }
 
-            List<Mutation> branchMutations = uniformisedMapping.sampleSameStateHistory(nodeNr, site, startHeight, endHeight, state, numJumps);
+            List<Mutation> branchMutations = this.stochasticMapping.sampleSameStateHistory(nodeNr, site, startHeight, endHeight, state, numJumps);
             siteMutations.add(branchMutations != null ? branchMutations : this.sampleBranchHistory(node, site));
         }
 
@@ -399,6 +394,7 @@ public class SiteHistorySampler {
                 double[] partial = this.partials[node.getNr()];
                 Arrays.fill(partial, 0.0);
                 partial[fixedStates[i]] = 1.0;
+                this.knownStates[node.getNr()] = fixedStates[i];
             } else {
                 this.computePartial(node, patternIndex);
             }
@@ -466,9 +462,11 @@ public class SiteHistorySampler {
         if (node.isLeaf()) {
             int code = this.alignment.getPattern(this.taxonIndices[node.getNr()], patternIndex);
             System.arraycopy(this.getTipPartial(code), 0, partial, 0, this.numStates);
+            this.knownStates[node.getNr()] = this.tipStates[code];
             return 1.0;
         }
 
+        this.knownStates[node.getNr()] = -1;
         Arrays.fill(partial, 1.0);
 
         // index the children directly, as getChildren wraps them in a new view on every call
@@ -477,6 +475,16 @@ public class SiteHistorySampler {
             Node child = node.getChild(childIndex);
             double[] childPartial = this.partials[child.getNr()];
             double[] childTransitionProbabilities = this.transitionProbabilities[child.getNr()];
+
+            // a child that allows a single state, like most tips, only needs the column of that state
+
+            int knownChildState = this.knownStates[child.getNr()];
+            if (knownChildState >= 0) {
+                for (int parentState = 0; parentState < this.numStates; parentState++) {
+                    partial[parentState] *= childTransitionProbabilities[parentState * this.numStates + knownChildState];
+                }
+                continue;
+            }
 
             for (int parentState = 0; parentState < this.numStates; parentState++) {
                 double sum = 0.0;
@@ -503,7 +511,8 @@ public class SiteHistorySampler {
     /**
      * Samples the states of every node below the root, given the state of the root, from
      * the top down. A child state is drawn proportional to the transition probability from
-     * the parent state times the partial likelihood of the child.
+     * the parent state times the partial likelihood of the child, unless the partial
+     * likelihood only allows a single state, like at most tips.
      */
     private void sampleNodeStates() {
         double[] weights = new double[this.numStates];
@@ -511,6 +520,12 @@ public class SiteHistorySampler {
         for (int i = this.postOrderNodes.length - 1; i >= 0; i--) {
             Node node = this.postOrderNodes[i];
             if (node.isRoot()) {
+                continue;
+            }
+
+            int knownState = this.knownStates[node.getNr()];
+            if (knownState >= 0) {
+                this.nodeStates[node.getNr()] = knownState;
                 continue;
             }
 
@@ -633,18 +648,26 @@ public class SiteHistorySampler {
         }
     }
 
-    /** Returns the tip partial likelihoods of the given character code: 1 for every compatible state and 0 otherwise. */
+    /**
+     * Returns the tip partial likelihoods of the given character code: 1 for every compatible
+     * state and 0 otherwise. Also caches the only compatible state of the code in tipStates,
+     * or -1 if there are several.
+     */
     private double[] getTipPartial(int code) {
         if (code >= this.tipPartials.length) {
             this.tipPartials = Arrays.copyOf(this.tipPartials, code + 1);
+            this.tipStates = Arrays.copyOf(this.tipStates, code + 1);
         }
 
         if (this.tipPartials[code] == null) {
+            int[] compatibleStates = this.dataType.getStatesForCode(code);
+
             double[] partial = new double[this.numStates];
-            for (int state : this.dataType.getStatesForCode(code)) {
+            for (int state : compatibleStates) {
                 partial[state] = 1.0;
             }
             this.tipPartials[code] = partial;
+            this.tipStates[code] = compatibleStates.length == 1 ? compatibleStates[0] : -1;
         }
 
         return this.tipPartials[code];

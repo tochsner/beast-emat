@@ -100,7 +100,8 @@ public class UniformisedStochasticMapping implements StochasticMapping {
     }
 
     /** Returns the uniformisation rate μ* of Q, before the scaling of a branch. */
-    public double getUniformisationRate() {
+    @Override
+    public double getJumpRate() {
         return this.uniformisationRate;
     }
 
@@ -112,6 +113,7 @@ public class UniformisedStochasticMapping implements StochasticMapping {
      * jumps are then sampled as in sampleSiteHistory. Returns null if the draw is rejected,
      * in which case sampleSiteHistory provides an exact draw instead.
      */
+    @Override
     public List<Mutation> sampleSameStateHistory(int nodeNr, int site, double branchStartHeight, double branchEndHeight,
                                                  int state, int numJumps) {
         if (numJumps > MAX_JUMPS) {

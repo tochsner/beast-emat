@@ -24,6 +24,7 @@ import emat.state.Mutations;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
 
@@ -219,7 +220,8 @@ public class SiteHistoryGibbsOperatorTest {
     /**
      * On a two-tip tree under HKY, where the Jukes-Cantor sampler only approximates the
      * model, runs the operator with Metropolis-Hastings acceptance and checks the sampled
-     * root state and number of mutations against their exact posterior values.
+     * root state and number of mutations against their exact posterior values, with a
+     * tolerance that follows from the Monte Carlo error.
      */
     @Test
     public void testJukesCantorSamplerMatchesExactPosteriorUnderHky() {
@@ -249,8 +251,9 @@ public class SiteHistoryGibbsOperatorTest {
         int numBurnin = 1000;
         int numSamples = 200000;
 
-        int[] rootStateCounts = new int[4];
-        double sumNumMutations = 0.0;
+        BatchMeans[] rootStateFrequencies = new BatchMeans[4];
+        Arrays.setAll(rootStateFrequencies, rootState -> new BatchMeans(numSamples, 100));
+        BatchMeans numMutations = new BatchMeans(numSamples, 100);
 
         for (int i = 0; i < numBurnin + numSamples; i++) {
             state.store(i);
@@ -273,12 +276,18 @@ public class SiteHistoryGibbsOperatorTest {
                 continue;
             }
 
-            rootStateCounts[setup.getRootState(0)]++;
+            int rootState = setup.getRootState(0);
+            for (int otherState = 0; otherState < 4; otherState++) {
+                rootStateFrequencies[otherState].add(otherState == rootState ? 1.0 : 0.0);
+            }
+
+            int numBranchMutations = 0;
             for (Node node : setup.tree.getNodesAsArray()) {
                 if (!node.isRoot()) {
-                    sumNumMutations += setup.mutations.getMutations(node).size();
+                    numBranchMutations += setup.mutations.getMutations(node).size();
                 }
             }
+            numMutations.add(numBranchMutations);
         }
 
         // compare with the exact posterior
@@ -306,9 +315,9 @@ public class SiteHistoryGibbsOperatorTest {
         expectedNumMutations /= normalisation;
 
         for (int rootState = 0; rootState < 4; rootState++) {
-            assertEquals(rootProbabilities[rootState] / normalisation, (double) rootStateCounts[rootState] / numSamples, 0.005);
+            rootStateFrequencies[rootState].assertMean(rootProbabilities[rootState] / normalisation, "Root state " + rootState + ".");
         }
-        assertEquals(expectedNumMutations, sumNumMutations / numSamples, 0.01);
+        numMutations.assertMean(expectedNumMutations, "Number of mutations.");
     }
 
     /* General Reference Values */

@@ -97,6 +97,32 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
         return logDensity - this.computeLogEndStatesProbability(expectedJumps, 1, startState == endState ? 0 : 1);
     }
 
+    /** Returns the average escape rate μ̄ of Q, before the scaling of a branch. */
+    @Override
+    public double getJumpRate() {
+        return this.meanEscapeRate;
+    }
+
+    /**
+     * Samples the history on a branch whose ends have the same state, given a number of
+     * jumps drawn from the unconditioned Poisson(μ̃ t) distribution of the branch. A jump
+     * chain is drawn from the state and accepted if it returns to it, which happens with
+     * exactly the probability that the jumps return to the state, and the accepted chain
+     * is then a draw conditional on returning. Returns null if the chain is rejected.
+     */
+    @Override
+    public List<Mutation> sampleSameStateHistory(int nodeNr, int site, double branchStartHeight, double branchEndHeight,
+                                                 int state, int numJumps) {
+        int[] states = this.sampleJumpChain(numJumps, state);
+        if (states[numJumps] != state) {
+            return null;
+        }
+
+        List<Mutation> siteMutations = new ArrayList<>();
+        this.addSiteMutations(siteMutations, nodeNr, site, branchStartHeight, branchStartHeight - branchEndHeight, states);
+        return siteMutations;
+    }
+
     /* Branch Histories */
 
     /**
