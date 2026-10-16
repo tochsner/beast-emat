@@ -32,8 +32,12 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
             "MUTATIONS proportional to the number of mutations on the branch above it, counting a branch without mutations as having one, " +
             "SQRT_MUTATIONS proportional to the square root of that number, TIP_MUTATIONS like MUTATIONS but only among the tips, " +
             "RECURRENT_MUTATIONS proportional to one plus the number of mutations on the branch above it at sites that mutate more than once on the tree", SubtreeSelection.UNIFORM, SubtreeSelection.values());
+    final public Input<Boolean> scaleWeightByLogNumTipsInput = new Input<>("scaleWeightByLogNumTips", "whether to scale the weight by the natural logarithm of the number of tips n, so that the operator is selected with weight * ln(n). Otherwise, the weight is used as given", false);
 
     private static final int INITIAL_CAPACITY = 64;
+
+    // the factor ln(n) or one by which the weight of the operator is scaled
+    double weightFactor;
 
     SubtreeSelection subtreeSelection;
     double annealing;
@@ -113,6 +117,17 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         this.numMutationsAtSite = new int[this.mutations.getReferenceSequence().length];
         this.topRunStamps = new int[numNodes];
         this.bottomRunStamps = new int[numNodes];
+
+        this.weightFactor = this.scaleWeightByLogNumTipsInput.get() ? Math.log(this.tree.getLeafNodeCount()) : 1.0;
+    }
+
+    /**
+     * Returns the weight, scaled by the logarithm of the number of tips if requested, which
+     * lets the share of the proposals grow with the size of the tree.
+     */
+    @Override
+    public double getWeight() {
+        return super.getWeight() * this.weightFactor;
     }
 
     /**

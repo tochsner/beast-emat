@@ -151,6 +151,21 @@ public class SubtreePruneRegraftPosteriorTest {
         }
     }
 
+    /** Checks that the weight of mdSPR is scaled by the logarithm of the number of tips if requested. */
+    @Test
+    public void testWeightScalesWithNumTips() {
+        Setup setup = this.createSetup();
+
+        MutationDirectedSprOperator unscaledOperator = new MutationDirectedSprOperator();
+        unscaledOperator.initByName("weight", 100.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
+        assertEquals(100.0, unscaledOperator.getWeight(), 1e-12);
+
+        MutationDirectedSprOperator scaledOperator = new MutationDirectedSprOperator();
+        scaledOperator.initByName("weight", 100.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                "scaleWeightByLogNumTips", true);
+        assertEquals(100.0 * Math.log(4), scaledOperator.getWeight(), 1e-12);
+    }
+
     private record Setup(Alignment alignment, TreeParser tree, Mutations mutations, GeneticPrior geneticPrior) {
     }
 
