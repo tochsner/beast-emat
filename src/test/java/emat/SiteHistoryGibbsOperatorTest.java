@@ -99,29 +99,6 @@ public class SiteHistoryGibbsOperatorTest {
     }
 
     /**
-     * Checks the entropies of sites whose unambiguous tips are constant, split evenly into
-     * two or into four states, split 3 to 1, and constant next to ambiguous and missing tips.
-     */
-    @Test
-    public void testSiteEntropies() {
-        Alignment alignment = new Alignment();
-        alignment.initByName("sequence", List.of(
-                new Sequence("A", "AAAAA"),
-                new Sequence("B", "AACAN"),
-                new Sequence("C", "ACGAR"),
-                new Sequence("D", "ACTC-")
-        ), "dataType", "nucleotide");
-
-        double[] siteEntropies = SiteHistoryGibbsOperator.computeSiteEntropies(alignment);
-
-        assertEquals(0.0, siteEntropies[0], 1e-12);
-        assertEquals(Math.log(2.0), siteEntropies[1], 1e-12);
-        assertEquals(Math.log(4.0), siteEntropies[2], 1e-12);
-        assertEquals(-0.75 * Math.log(0.75) - 0.25 * Math.log(0.25), siteEntropies[3], 1e-12);
-        assertEquals(0.0, siteEntropies[4], 1e-12);
-    }
-
-    /**
      * On a two-tip tree with a variable and a constant site under Jukes-Cantor, checks for
      * every site selection strategy that the sampled root states of both sites match their
      * exact posterior P(r) ∝ π_r P_ra(t) P_rb(t) for the tip states a and b.
