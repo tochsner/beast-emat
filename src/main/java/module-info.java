@@ -16,6 +16,7 @@ import emat.operators.WilsonBaldingOperator;
 import emat.operators.RootScaleOperator;
 import emat.operators.ParameterFollowingOperator;
 import emat.helper.ParameterFollowing;
+import emat.helper.TreePriorSurrogate;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
 import emat.tree.IncrementalStoreTree;
@@ -59,6 +60,7 @@ open module my.beast.example {
             BranchReformOperator,
             ParameterFollowingOperator,
             ParameterFollowing,
+            TreePriorSurrogate,
             InsertionSortTreeIntervals,
             IncrementalStoreTree,
             MutationCountAdapter,

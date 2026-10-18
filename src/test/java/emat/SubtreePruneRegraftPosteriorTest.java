@@ -5,6 +5,7 @@ import beast.base.evolution.alignment.Sequence;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeParser;
 import beast.base.inference.Operator;
+import beast.base.inference.OperatorSchedule;
 import beast.base.inference.State;
 import beast.base.spec.domain.PositiveReal;
 import beast.base.spec.evolution.branchratemodel.StrictClockModel;
@@ -16,6 +17,7 @@ import emat.helper.MutationPaths;
 import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.BranchReformOperator;
 import emat.operators.MutationDirectedSprOperator;
+import emat.operators.SubtreePruneRegraftOperator;
 import emat.operators.SubtreeSlideOperator;
 import emat.operators.WilsonBaldingOperator;
 import emat.prior.GeneticPrior;
@@ -107,6 +109,41 @@ public class SubtreePruneRegraftPosteriorTest {
     }
 
     /**
+     * Runs Wilson–Balding, subtree slide and mdSPR with the exact and with the hybrid history
+     * sampler, together with branch reform. The rooted topologies follow the same posterior
+     * as with the Jukes-Cantor history sampler.
+     */
+    @Test
+    public void testExactAndHybridHistorySamplersTopologiesMatchPosterior() {
+        for (SubtreePruneRegraftOperator.HistorySampler historySampler : List.of(
+                SubtreePruneRegraftOperator.HistorySampler.EXACT, SubtreePruneRegraftOperator.HistorySampler.HYBRID)) {
+            Randomizer.setSeed(17);
+            Setup setup = this.createSetup();
+
+            WilsonBaldingOperator wilsonBaldingOperator = new WilsonBaldingOperator();
+            wilsonBaldingOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                    "historySampler", historySampler);
+
+            SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
+            subtreeSlideOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
+                    "geneticPrior", setup.geneticPrior, "size", 0.3, "optimise", false, "historySampler", historySampler);
+
+            MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+            mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                    "historySampler", historySampler);
+
+            BranchReformOperator branchReformOperator = new BranchReformOperator();
+            branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
+
+            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup.alignment, null);
+            Map<String, Integer> topologyCounts = this.runChain(
+                    setup, List.of(wilsonBaldingOperator, subtreeSlideOperator, mdSprOperator, branchReformOperator)
+            );
+            this.assertFrequencies(expectedFrequencies, topologyCounts);
+        }
+    }
+
+    /**
      * Runs mdSPR with local explorations only, whose thresholds are drawn from the geometric
      * window, together with branch reform. The rooted topologies follow the same posterior
      * as with the other subtree moves.
@@ -130,25 +167,33 @@ public class SubtreePruneRegraftPosteriorTest {
 
     /**
      * Runs mdSPR with every strategy of picking the subtrees, together with branch reform.
-     * The rooted topologies follow the same posterior as with the uniform choice.
+     * The rooted topologies follow the same posterior as with the uniform choice. The
+     * move-distance strategies run both with and without counting the rejected proposals.
      */
     @Test
     public void testSubtreeSelectionsMatchPosterior() {
         for (MutationDirectedSprOperator.SubtreeSelection subtreeSelection : MutationDirectedSprOperator.SubtreeSelection.values()) {
-            Randomizer.setSeed(1);
-            Setup setup = this.createSetup();
-
-            MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
-            mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
-                    "subtreeSelection", subtreeSelection);
-
-            BranchReformOperator branchReformOperator = new BranchReformOperator();
-            branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
-
-            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup.alignment, null);
-            Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, branchReformOperator));
-            this.assertFrequencies(expectedFrequencies, topologyCounts);
+            boolean isMoveDistanceSelection = subtreeSelection.name().startsWith("MOVED_");
+            for (boolean countRejectedMoves : isMoveDistanceSelection ? new boolean[]{false, true} : new boolean[]{false}) {
+                this.assertSubtreeSelectionMatchesPosterior(subtreeSelection, countRejectedMoves);
+            }
         }
+    }
+
+    private void assertSubtreeSelectionMatchesPosterior(MutationDirectedSprOperator.SubtreeSelection subtreeSelection, boolean countRejectedMoves) {
+        Randomizer.setSeed(1);
+        Setup setup = this.createSetup();
+
+        MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+        mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                "subtreeSelection", subtreeSelection, "countRejectedMoves", countRejectedMoves);
+
+        BranchReformOperator branchReformOperator = new BranchReformOperator();
+        branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
+
+        Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup.alignment, null);
+        Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, branchReformOperator));
+        this.assertFrequencies(expectedFrequencies, topologyCounts);
     }
 
     /** Checks that the weight of mdSPR is scaled by the logarithm of the number of tips if requested. */
@@ -226,6 +271,13 @@ public class SubtreePruneRegraftPosteriorTest {
         double oldLogP = geneticPrior.calculateLogP();
         state.setEverythingDirty(false);
 
+        // the operators need a schedule to count their accepted and rejected proposals
+        OperatorSchedule operatorSchedule = new OperatorSchedule();
+        operatorSchedule.initAndValidate();
+        for (Operator operator : operators) {
+            operator.setOperatorSchedule(operatorSchedule);
+        }
+
         Map<String, Integer> topologyCounts = new HashMap<>();
 
         for (long i = 0; i < NUM_BURNIN + NUM_SAMPLES; i++) {
@@ -235,6 +287,7 @@ public class SubtreePruneRegraftPosteriorTest {
             double logHastingsRatio = operator.proposal();
             if (logHastingsRatio == Double.NEGATIVE_INFINITY) {
                 state.restore();
+                operator.reject(-1);
             } else {
                 state.storeCalculationNodes();
                 state.checkCalculationNodesDirtiness();
@@ -243,9 +296,11 @@ public class SubtreePruneRegraftPosteriorTest {
                 if (Math.log(Randomizer.nextDouble()) < newLogP - oldLogP + logHastingsRatio) {
                     oldLogP = newLogP;
                     state.acceptCalculationNodes();
+                    operator.accept();
                 } else {
                     state.restore();
                     state.restoreCalculationNodes();
+                    operator.reject(0);
                 }
             }
             state.setEverythingDirty(false);

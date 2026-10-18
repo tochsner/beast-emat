@@ -6,15 +6,10 @@ import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
-import beast.base.spec.type.IntVector;
-import beast.base.spec.type.RealScalar;
-import beast.base.spec.type.RealVector;
 import beast.base.util.Randomizer;
-import emat.helper.GlobalSplineTreePriorApproximation;
-import emat.helper.LinearSplineTreePriorApproximation;
 import emat.helper.LearnedTreePrior;
+import emat.helper.TreePriorSurrogate;
 import emat.helper.TruncatedDensitySampler;
-import emat.helper.TreePriorApproximation;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
@@ -44,18 +39,20 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     final public Input<Integer> treePriorKnotsInput = new Input<>("treePriorKnots", "the number of knots along the height between which the approximation of the tree prior is interpolated, if its shape is spline or global", 20);
     final public Input<List<StateNode>> treePriorParametersInput = new Input<>("treePriorParameter", "real scalar or vector parameters of the tree prior, which the approximation of the tree prior may depend on", new ArrayList<>());
     final public Input<Integer> treePriorWarmUpInput = new Input<>("treePriorWarmUp", "the number of proposals after which the approximation of the tree prior is fitted for the first time", 500);
+    final public Input<Boolean> scaleWeightByLogNumTipsInput = new Input<>("scaleWeightByLogNumTips", "whether to scale the weight by the natural logarithm of the number of tips n, so that the operator is selected with weight * ln(n). Otherwise, the weight is used as given", false);
+    final public Input<TreePriorSurrogate> treePriorInput = new Input<>("treePrior", "a shared approximation of the tree prior, which this operator teaches and other operators may draw from. If it is given, the other tree prior inputs are ignored");
 
     private Tree tree;
     private Mutations mutations;
     private GeneticPrior geneticPrior;
     private double batchSize;
 
+    // the factor ln(n) or one by which the weight of the operator is scaled
+    private double weightFactor;
+
     // the gain of the batch size tuning decays with the number of proposals, but not below this value, as the
     // approximation of the tree prior makes large batches acceptable and the batch size has to cover a wide range
     private static final double MIN_TUNING_GAIN = 0.01;
-
-    // the ridge penalty per proposal of the fit of the approximation of the tree prior
-    private static final double TREE_PRIOR_RIDGE = 1e-8;
 
     // the numbers of the internal nodes, in the order they were visited for the last batch
     private int[] internalNodeNrs;
@@ -74,7 +71,8 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     private int[] siteStamps;
     private int siteStamp;
 
-    // the approximation of the tree prior, or null to draw from the genetic prior only
+    // the approximation of the tree prior and the object that holds it, or null to draw from the genetic prior only
+    private TreePriorSurrogate treePrior;
     private LearnedTreePrior treePriorApproximation;
 
     // the values of the parameters of the tree prior at the start of the last proposal
@@ -109,25 +107,40 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         this.siteStamps = new int[this.mutations.getReferenceSequence().length];
 
         this.setCoercableParameterValue(this.batchSizeInput.get());
+        this.weightFactor = this.scaleWeightByLogNumTipsInput.get() ? Math.log(this.tree.getLeafNodeCount()) : 1.0;
 
-        if (this.treePriorDegreeInput.get() > 0) {
-            this.treePriorParameterValues = new double[this.countTreePriorParameterValues()];
-            this.treePriorApproximation = this.createTreePriorApproximation();
+        this.treePrior = this.treePriorInput.get();
+        if (this.treePrior == null && this.treePriorDegreeInput.get() > 0) {
+            this.treePrior = this.createTreePrior();
+        }
+        if (this.treePrior != null) {
+            this.treePriorApproximation = this.treePrior.getApproximation();
         }
     }
 
-    private LearnedTreePrior createTreePriorApproximation() {
-        int degree = this.treePriorDegreeInput.get();
-        int numParameters = this.treePriorParameterValues.length;
-        int warmUp = this.treePriorWarmUpInput.get();
+    /** Creates an approximation of the tree prior of its own from the tree prior inputs of this operator. */
+    private TreePriorSurrogate createTreePrior() {
+        TreePriorSurrogate surrogate = new TreePriorSurrogate();
+        for (StateNode parameter : this.treePriorParametersInput.get()) {
+            surrogate.setInputValue("parameter", parameter);
+        }
+        surrogate.initByName(
+                "degree", this.treePriorDegreeInput.get(),
+                "shape", TreePriorSurrogate.Shape.valueOf(this.treePriorShapeInput.get().name()),
+                "midpointDegree", this.treePriorMidpointDegreeInput.get(),
+                "knots", this.treePriorKnotsInput.get(),
+                "warmUp", this.treePriorWarmUpInput.get()
+        );
+        return surrogate;
+    }
 
-        if (this.treePriorShapeInput.get() == TreePriorShape.spline) {
-            return new LinearSplineTreePriorApproximation(degree, this.treePriorKnotsInput.get(), numParameters, warmUp, TREE_PRIOR_RIDGE);
-        }
-        if (this.treePriorShapeInput.get() == TreePriorShape.global) {
-            return new GlobalSplineTreePriorApproximation(this.treePriorKnotsInput.get(), numParameters, warmUp, TREE_PRIOR_RIDGE);
-        }
-        return new TreePriorApproximation(degree, this.treePriorMidpointDegreeInput.get(), numParameters, warmUp, TREE_PRIOR_RIDGE);
+    /**
+     * Returns the weight, scaled by the logarithm of the number of tips if requested, which
+     * lets the share of the proposals grow with the size of the tree.
+     */
+    @Override
+    public double getWeight() {
+        return super.getWeight() * this.weightFactor;
     }
 
     @Override
@@ -136,7 +149,7 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
 
         this.approximateTreePriorChange = 0.0;
         if (this.treePriorApproximation != null) {
-            this.readTreePriorParameterValues();
+            this.treePriorParameterValues = this.treePrior.readParameterValues();
             this.treePriorApproximation.startObservation();
         }
 
@@ -240,37 +253,6 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         }
 
         return logHastingsRatio;
-    }
-
-    /** Returns the number of values of the parameters of the tree prior, and checks that they are real. */
-    private int countTreePriorParameterValues() {
-        int numValues = 0;
-        for (StateNode parameter : this.treePriorParametersInput.get()) {
-            if (parameter instanceof RealScalar<?>) {
-                numValues++;
-            } else if (parameter instanceof RealVector<?> vector) {
-                numValues += vector.size();
-            } else if (parameter instanceof IntVector<?> vector) {
-                numValues += vector.size();
-            } else {
-                throw new IllegalArgumentException("The tree prior parameter " + parameter.getID() + " is neither a real scalar nor a real vector.");
-            }
-        }
-        return numValues;
-    }
-
-    /** Reads the current values of the parameters of the tree prior. */
-    private void readTreePriorParameterValues() {
-        int index = 0;
-        for (StateNode parameter : this.treePriorParametersInput.get()) {
-            if (parameter instanceof RealScalar<?> scalar) {
-                this.treePriorParameterValues[index++] = scalar.get();
-            } else if (parameter instanceof RealVector<?> vector) {
-                for (int i = 0; i < vector.size(); i++) {
-                    this.treePriorParameterValues[index++] = vector.get(i);
-                }
-            }
-        }
     }
 
     /**

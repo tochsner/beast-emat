@@ -223,7 +223,9 @@ public class TimedMCMC extends MCMC {
             out.println("# logging_ns=" + this.loggingNanos);
             for (Operator operator : operators) {
                 if (operator instanceof MutationDirectedSprOperator mdSprOperator) {
-                    out.println("# mdspr_local_regions=" + mdSprOperator.getMeanNumLocalRegions());
+                    for (Map.Entry<String, Double> entry : mdSprOperator.getDiagnostics().entrySet()) {
+                        out.println("# " + entry.getKey() + "=" + entry.getValue());
+                    }
                 }
             }
             out.println("operator,spec,weight,proposals,accepted,direct_rejects,topology_changes,proposal_ns,evaluation_ns,resolution_ns");

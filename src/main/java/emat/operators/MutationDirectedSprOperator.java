@@ -10,7 +10,9 @@ import emat.state.Mutation;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Description("Regrafts a random subtree preferably where the sequence is close to the sequence of the subtree, " +
         "using the mutations of the EMAT as a parsimony map (mutation-directed SPR, docs/mcmc-moves.md §8.3). " +
@@ -19,7 +21,7 @@ import java.util.List;
 public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
 
     public enum SubtreeSelection {
-        UNIFORM, BRANCH_LENGTH
+        UNIFORM, BRANCH_LENGTH, MOVED_NUM_NODES, MOVED_PATH_LENGTH, MOVED_SQUARED_PATH_LENGTH
     }
 
     final public Input<Double> annealingInput = new Input<>("annealing", "the power f to which the grafting density is raised, which makes the proposals less eager", 0.8);
@@ -27,7 +29,13 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     final public Input<Double> windowProbabilityInput = new Input<>("windowProbability", "the parameter q of the geometric number of additional differences, q^j (1 - q), that the neighbourhood may have compared to the current attachment point. With 0, the neighbourhood never has more differences than the current attachment point", 0.0);
 
     final public Input<SubtreeSelection> subtreeSelectionInput = new Input<>("subtreeSelection", "the strategy for choosing the subtree to regraft: UNIFORM picks every subtree with the same probability, " +
-            "BRANCH_LENGTH proportional to the length of the branch above it", SubtreeSelection.UNIFORM, SubtreeSelection.values());
+            "BRANCH_LENGTH proportional to the length of the branch above it, and MOVED_NUM_NODES, MOVED_PATH_LENGTH and MOVED_SQUARED_PATH_LENGTH " +
+            "proportional to the running mean distance of its accepted moves, measured as the number of nodes, the length or the squared length " +
+            "of the path between the old and the new attachment point", SubtreeSelection.UNIFORM, SubtreeSelection.values());
+    final public Input<Double> moveDistancePseudocountInput = new Input<>("moveDistancePseudocount", "the number of pseudo-moves with the mean distance of all recorded moves " +
+            "that the running mean distance of every subtree starts with", 10.0);
+    final public Input<Boolean> countRejectedMovesInput = new Input<>("countRejectedMoves", "whether the running mean distance of a subtree also counts its rejected proposals " +
+            "as moves of distance zero, which makes it the expected distance per proposal. Otherwise, it is the mean distance of the accepted moves", false);
     final public Input<Boolean> scaleWeightByLogNumTipsInput = new Input<>("scaleWeightByLogNumTips", "whether to scale the weight by the natural logarithm of the number of tips n, so that the operator is selected with weight * ln(n). Otherwise, the weight is used as given", false);
 
     private static final int INITIAL_CAPACITY = 64;
@@ -39,6 +47,8 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     double annealing;
     double fullExplorationProbability;
     double windowProbability;
+    double moveDistancePseudocount;
+    boolean countRejectedMoves;
 
     // the selection weights of all nodes in the current state, which are zero for nodes that cannot be picked
     double[] selectionWeights;
@@ -73,6 +83,32 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     int[] bottomRunStamps;
     int threshold;
 
+    // the subtree root of the current proposal, its old attachment point, its new grafting point and the distance between them, which are recorded as a move once accepted
+    Node pickedSubtreeRoot;
+    double oldParentHeight;
+    GraftingPoint proposedGraftingPoint;
+    int proposedNumNodes;
+    double proposedPathLength;
+
+    // per node, the number and the total distance of its recorded moves, and the same over all nodes
+    int[] numMoves;
+    double[] totalMoveDistances;
+    long numAllMoves;
+    double totalAllMoveDistance;
+
+    // per node, the number of steps from the old sibling to the node, or -1 if it is no ancestor of the old sibling in the pruned tree
+    int[] ancestorSteps;
+
+    // the diagnostics of the proposals so far: how often each node was picked, and the distances of the proposed and the accepted moves
+    int[] numPicks;
+    long numMeasuredProposals;
+    long numSameBranchProposals;
+    long totalProposedNumNodes;
+    double totalProposedPathLength;
+    long numMeasuredAccepts;
+    long totalAcceptedNumNodes;
+    double totalAcceptedPathLength;
+
     // the number of local explorations so far and the number of regions they explored
     long numLocalExplorations;
     long numLocalRegions;
@@ -102,6 +138,11 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         if (this.windowProbability < 0.0 || this.windowProbability >= 1.0) {
             throw new IllegalArgumentException("windowProbability must be at least 0 and less than 1.");
         }
+        this.moveDistancePseudocount = this.moveDistancePseudocountInput.get();
+        if (this.moveDistancePseudocount <= 0.0) {
+            throw new IllegalArgumentException("moveDistancePseudocount must be positive.");
+        }
+        this.countRejectedMoves = this.countRejectedMovesInput.get();
 
         this.subtreeSequenceChanges = new SiteChanges(this.mutations.getReferenceSequence().length);
 
@@ -109,6 +150,11 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         this.selectionWeights = new double[numNodes];
         this.topRunStamps = new int[numNodes];
         this.bottomRunStamps = new int[numNodes];
+        this.numMoves = new int[numNodes];
+        this.totalMoveDistances = new double[numNodes];
+        this.ancestorSteps = new int[numNodes];
+        this.numPicks = new int[numNodes];
+        Arrays.fill(this.ancestorSteps, -1);
 
         this.weightFactor = this.scaleWeightByLogNumTipsInput.get() ? Math.log(this.tree.getLeafNodeCount()) : 1.0;
     }
@@ -128,6 +174,8 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
      */
     @Override
     protected Node pickSubtreeRoot() {
+        this.pickedSubtreeRoot = null;
+        this.proposedGraftingPoint = null;
         double threshold = Randomizer.nextDouble() * this.computeSelectionWeights();
 
         Node lastCandidate = null;
@@ -141,12 +189,20 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
             lastCandidate = node;
             cumulativeWeight += weight;
             if (threshold < cumulativeWeight) {
-                return node;
+                return this.markPicked(node);
             }
         }
 
         // only reached through rounding, or without any candidate
-        return lastCandidate;
+        return this.markPicked(lastCandidate);
+    }
+
+    private Node markPicked(Node node) {
+        this.pickedSubtreeRoot = node;
+        if (node != null) {
+            this.numPicks[node.getNr()]++;
+        }
+        return node;
     }
 
     /**
@@ -154,6 +210,8 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
      * With UNIFORM, the number of candidates stays the same under moves that keep the root,
      * so the choice is symmetric. With BRANCH_LENGTH, the move changes the lengths of the
      * branches around the old and the new attachment point, and the nodes below the root.
+     * The mean move distances only change between proposals, but the move can still change
+     * which nodes hang below the root and hence the total weight.
      */
     @Override
     protected double computeLogSubtreeRootProbability(Node x) {
@@ -184,7 +242,24 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         return switch (this.subtreeSelection) {
             case UNIFORM -> 1.0;
             case BRANCH_LENGTH -> node.getLength();
+            case MOVED_NUM_NODES, MOVED_PATH_LENGTH, MOVED_SQUARED_PATH_LENGTH -> this.computeMeanMoveDistance(node);
         };
+    }
+
+    /**
+     * Computes the running mean distance of the recorded moves of the given node, which
+     * starts with a pseudocount of moves at the mean distance of all recorded moves. Without
+     * any distance yet, every node gets the same weight.
+     */
+    private double computeMeanMoveDistance(Node node) {
+        if (this.totalAllMoveDistance <= 0.0) {
+            return 1.0;
+        }
+
+        double priorMeanDistance = this.totalAllMoveDistance / this.numAllMoves;
+        int nr = node.getNr();
+        return (this.moveDistancePseudocount * priorMeanDistance + this.totalMoveDistances[nr])
+                / (this.moveDistancePseudocount + this.numMoves[nr]);
     }
 
     /**
@@ -270,7 +345,10 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         double logForwardDensity = this.computeLogDensity(newRegion) - logTotalWeight;
         double logBackwardDensity = this.computeLogDensity(oldRegion) - logTotalWeight;
 
-        return new GraftingPoint(newRegion.node(), newParentHeight, logBackwardDensity - logForwardDensity + logThresholdRatio);
+        this.oldParentHeight = parent.getHeight();
+        this.proposedGraftingPoint = new GraftingPoint(newRegion.node(), newParentHeight, logBackwardDensity - logForwardDensity + logThresholdRatio);
+        this.measureProposedMove();
+        return this.proposedGraftingPoint;
     }
 
     /**
@@ -590,6 +668,152 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         double logDensity = -this.subtreeTotalRate * distance
                 + numDifferences * (this.logRatePerSite + Math.log(distance));
         return this.annealing * logDensity;
+    }
+
+    /* Move Distances */
+
+    /**
+     * Measures the distance between the old and the new attachment point in the pruned
+     * tree, which is the same before and after the move, as the number of nodes and the
+     * length of the path between them. The path leads through the most recent common
+     * ancestor M of the old sibling S and the new sibling S', and the heights change
+     * monotonically on the way from either point to M.
+     */
+    private void measureProposedMove() {
+        Node oldSibling = this.sibling;
+        Node newSibling = this.proposedGraftingPoint.newSibling();
+        double newParentHeight = this.proposedGraftingPoint.newParentHeight();
+
+        if (newSibling == oldSibling) {
+            this.proposedNumNodes = 0;
+            this.proposedPathLength = Math.abs(newParentHeight - this.oldParentHeight);
+        } else {
+            int steps = 0;
+            for (Node node = oldSibling; node != null; node = this.getPrunedParent(this.x, node)) {
+                this.ancestorSteps[node.getNr()] = steps++;
+            }
+
+            Node mrca = newSibling;
+            int numNewSteps = 0;
+            while (this.ancestorSteps[mrca.getNr()] < 0) {
+                mrca = this.getPrunedParent(this.x, mrca);
+                numNewSteps++;
+            }
+            int numOldSteps = this.ancestorSteps[mrca.getNr()];
+
+            for (Node node = oldSibling; node != null; node = this.getPrunedParent(this.x, node)) {
+                this.ancestorSteps[node.getNr()] = -1;
+            }
+
+            // M is crossed by the paths from both siblings unless it is one of them
+            boolean isMrcaSibling = mrca == oldSibling || mrca == newSibling;
+            this.proposedNumNodes = numOldSteps + numNewSteps - (isMrcaSibling ? 0 : 1);
+            this.proposedPathLength = Math.abs(mrca.getHeight() - this.oldParentHeight) + Math.abs(mrca.getHeight() - newParentHeight);
+        }
+
+        this.numMeasuredProposals++;
+        this.totalProposedNumNodes += this.proposedNumNodes;
+        this.totalProposedPathLength += this.proposedPathLength;
+        if (this.proposedNumNodes == 0) {
+            this.numSameBranchProposals++;
+        }
+    }
+
+    /** Records the distance of the accepted move for the diagnostics and the subtree selection. */
+    @Override
+    public void accept() {
+        super.accept();
+        if (this.proposedGraftingPoint == null) {
+            return;
+        }
+
+        this.numMeasuredAccepts++;
+        this.totalAcceptedNumNodes += this.proposedNumNodes;
+        this.totalAcceptedPathLength += this.proposedPathLength;
+
+        if (this.isMoveDistanceSelection()) {
+            this.recordMove(this.getSelectionDistance());
+        }
+    }
+
+    /** Records the rejected proposal as a move of distance zero, if rejected proposals count. */
+    @Override
+    public void reject(int reason) {
+        super.reject(reason);
+        if (this.pickedSubtreeRoot != null && this.countRejectedMoves && this.isMoveDistanceSelection()) {
+            this.recordMove(0.0);
+        }
+    }
+
+    private boolean isMoveDistanceSelection() {
+        return this.subtreeSelection != SubtreeSelection.UNIFORM && this.subtreeSelection != SubtreeSelection.BRANCH_LENGTH;
+    }
+
+    /** Returns the distance of the proposed move in the measure of the subtree selection. */
+    private double getSelectionDistance() {
+        return switch (this.subtreeSelection) {
+            case MOVED_NUM_NODES -> this.proposedNumNodes;
+            case MOVED_PATH_LENGTH -> this.proposedPathLength;
+            case MOVED_SQUARED_PATH_LENGTH -> this.proposedPathLength * this.proposedPathLength;
+            case UNIFORM, BRANCH_LENGTH -> throw new IllegalStateException("No move distance for " + this.subtreeSelection + ".");
+        };
+    }
+
+    /** Adds a move of the given distance to the running mean of the picked subtree root, once per proposal. */
+    private void recordMove(double distance) {
+        int nr = this.pickedSubtreeRoot.getNr();
+        this.numMoves[nr]++;
+        this.totalMoveDistances[nr] += distance;
+        this.numAllMoves++;
+        this.totalAllMoveDistance += distance;
+
+        this.pickedSubtreeRoot = null;
+        this.proposedGraftingPoint = null;
+    }
+
+    /* Diagnostics */
+
+    /**
+     * Returns the diagnostics of the proposals so far by name: the mean number of candidate
+     * regions of the local explorations, the mean distances of the proposed and the accepted
+     * moves, the fraction of proposals that stay on the joined branch, and how evenly the
+     * subtrees are picked. The effective number of subtrees is (Σc)² / Σc² over the pick
+     * counts c, or over the selection weights in the current state, and equals the number of
+     * candidates if all are picked equally often.
+     */
+    public Map<String, Double> getDiagnostics() {
+        Map<String, Double> diagnostics = new LinkedHashMap<>();
+        diagnostics.put("mdspr_local_regions", this.getMeanNumLocalRegions());
+        diagnostics.put("mdspr_mean_proposed_nodes", (double) this.totalProposedNumNodes / this.numMeasuredProposals);
+        diagnostics.put("mdspr_mean_proposed_path_length", this.totalProposedPathLength / this.numMeasuredProposals);
+        diagnostics.put("mdspr_same_branch_fraction", (double) this.numSameBranchProposals / this.numMeasuredProposals);
+        diagnostics.put("mdspr_mean_accepted_nodes", (double) this.totalAcceptedNumNodes / this.numMeasuredAccepts);
+        diagnostics.put("mdspr_mean_accepted_path_length", this.totalAcceptedPathLength / this.numMeasuredAccepts);
+
+        double totalPicks = 0.0;
+        double totalSquaredPicks = 0.0;
+        double tipPicks = 0.0;
+        for (Node node : this.tree.getNodesAsArray()) {
+            double picks = this.numPicks[node.getNr()];
+            totalPicks += picks;
+            totalSquaredPicks += picks * picks;
+            if (node.isLeaf()) {
+                tipPicks += picks;
+            }
+        }
+        diagnostics.put("mdspr_effective_picked_subtrees", totalPicks * totalPicks / totalSquaredPicks);
+        diagnostics.put("mdspr_tip_pick_fraction", tipPicks / totalPicks);
+
+        double totalWeight = this.computeSelectionWeights();
+        double totalSquaredWeight = 0.0;
+        int numCandidates = 0;
+        for (double weight : this.selectionWeights) {
+            totalSquaredWeight += weight * weight;
+            numCandidates += weight > 0.0 ? 1 : 0;
+        }
+        diagnostics.put("mdspr_effective_weighted_subtrees", totalWeight * totalWeight / totalSquaredWeight);
+        diagnostics.put("mdspr_num_candidates", (double) numCandidates);
+        return diagnostics;
     }
 
 }

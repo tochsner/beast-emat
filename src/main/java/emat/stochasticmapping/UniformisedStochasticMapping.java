@@ -129,6 +129,78 @@ public class UniformisedStochasticMapping implements StochasticMapping {
     }
 
     /**
+     * Samples the history of the given site exactly from its conditional distribution under
+     * R = s Q, given that it starts and ends in the given state and has at least one mutation.
+     * The non-empty probability is the probability of returning to the state with at least one
+     * mutation, P_ii(t) - exp(R_ii t). A uniformised path is empty if all its jumps stay in the
+     * state, which has probability B_ii^n for n jumps, so the number of jumps is drawn with
+     * P(n) ∝ Poisson(n; μ* t) ((B^n)_ii - B_ii^n), and the states of the jumps exclude the path
+     * that never leaves the state.
+     */
+    public List<Mutation> sampleNonEmptySameStateHistory(int nodeNr, int site, double branchStartHeight, double branchEndHeight,
+                                                         int state, double rateScale, double nonEmptyProbability) {
+        double duration = branchStartHeight - branchEndHeight;
+        double expectedJumps = rateScale * this.uniformisationRate * duration;
+        int diagonal = state * this.numStates + state;
+        double selfJumpProbability = this.jumpMatrix[diagonal];
+
+        // sample the number of uniformised jumps, of which at least two are needed to leave and return
+
+        double threshold = Randomizer.nextDouble() * nonEmptyProbability;
+        double poissonProbability = Math.exp(-expectedJumps);
+        double cumulativeProbability = 0.0;
+        int numJumps = 0;
+
+        while (cumulativeProbability < threshold || numJumps < 2) {
+            numJumps++;
+            if (numJumps > MAX_JUMPS) {
+                throw new RuntimeException("Could not sample the number of jumps of a non-empty site history.");
+            }
+
+            poissonProbability *= expectedJumps / numJumps;
+            cumulativeProbability += poissonProbability
+                    * Math.max(this.getJumpMatrixPower(numJumps)[diagonal] - Math.pow(selfJumpProbability, numJumps), 0.0);
+        }
+
+        double[] jumpTimes = new double[numJumps];
+        for (int i = 0; i < numJumps; i++) {
+            jumpTimes[i] = Randomizer.nextDouble() * duration;
+        }
+        Arrays.sort(jumpTimes);
+
+        // sample the state after every jump; until the first mutation, the path is still in the state and must not stay there
+
+        List<Mutation> siteMutations = new ArrayList<>();
+        int currentState = state;
+        boolean hasMutated = false;
+        double previousHeight = branchStartHeight;
+        double[] weights = new double[this.numStates];
+
+        for (int i = 0; i < numJumps; i++) {
+            int remainingJumps = numJumps - i - 1;
+            double[] remainingPower = this.getJumpMatrixPower(remainingJumps);
+            for (int nextState = 0; nextState < this.numStates; nextState++) {
+                double reachProbability = remainingPower[nextState * this.numStates + state];
+                if (!hasMutated && nextState == state) {
+                    reachProbability = Math.max(reachProbability - Math.pow(selfJumpProbability, remainingJumps), 0.0);
+                }
+                weights[nextState] = this.jumpMatrix[currentState * this.numStates + nextState] * reachProbability;
+            }
+            int nextState = StochasticMapping.sampleIndex(weights);
+
+            if (nextState != currentState) {
+                double height = branchStartHeight - jumpTimes[i];
+                siteMutations.add(new Mutation(nodeNr, height, previousHeight, site, currentState, nextState));
+                previousHeight = height;
+                currentState = nextState;
+                hasMutated = true;
+            }
+        }
+
+        return siteMutations;
+    }
+
+    /**
      * Samples the times of the given number of uniformised jumps uniformly on the branch and
      * then the state after every jump, conditional on reaching the end state, and returns the
      * real jumps as mutations sorted by descending height.

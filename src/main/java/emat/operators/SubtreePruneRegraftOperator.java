@@ -2,14 +2,15 @@ package emat.operators;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
-import beast.base.evolution.alignment.Alignment;
-import beast.base.evolution.datatype.DataType;
 import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import emat.helper.BranchMutations;
+import emat.stochasticmapping.ExactBranchHistories;
+import emat.stochasticmapping.HybridBranchHistories;
 import emat.stochasticmapping.JukesCantorStochasticMapping;
 import emat.state.Mutation;
+import emat.helper.MissingSites;
 import emat.helper.MutationPaths;
 import emat.helper.NodeStateLookup;
 import emat.helper.SiteChanges;
@@ -18,7 +19,6 @@ import emat.helper.StarHistories;
 import emat.state.Mutations;
 import emat.prior.GeneticPrior;
 
-import java.util.Arrays;
 import java.util.BitSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -27,16 +27,24 @@ import java.util.function.IntUnaryOperator;
 
 @Description("Prunes a subtree and regrafts it elsewhere without changing the root (docs/mcmc-moves.md §3). " +
         "By default, only the history on the branch above the pruned subtree is resampled, by approximate " +
-        "Jukes-Cantor stochastic mapping (docs/mcmc-moves.md §3.4). Optionally, the histories on all branches " +
+        "Jukes-Cantor stochastic mapping (docs/mcmc-moves.md §3.4) or, optionally, exactly under the model of the " +
+        "genetic prior. Optionally, the histories on all branches " +
         "around the old and the new attachment point are resampled (docs/mcmc-moves.md §3.5). If the pruned " +
         "subtree is a tip, its states at the sites where its data is missing are resampled as well, so that " +
         "they follow its placement. Missations are not supported. Subclasses choose the pruned subtree and the " +
         "grafting point.")
 public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
+    public enum HistorySampler {
+        JUKES_CANTOR, EXACT, HYBRID
+    }
+
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "the mutations to operate on", Input.Validate.REQUIRED);
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model", Input.Validate.REQUIRED);
     final public Input<Boolean> resampleNeighbourhoodInput = new Input<>("resampleNeighbourhood", "whether to resample the histories on all branches around the old and the new attachment point instead of only on the branch above the pruned subtree", false);
+    final public Input<HistorySampler> historySamplerInput = new Input<>("historySampler", "how the history on the branch above the pruned subtree is resampled: JUKES_CANTOR under an approximating Jukes-Cantor model, " +
+            "EXACT from its conditional distribution under the model of the genetic prior, site by site, " +
+            "HYBRID by choosing the sites with mutations under Jukes-Cantor and then sampling their histories exactly. EXACT and HYBRID are not supported together with resampleNeighbourhood", HistorySampler.JUKES_CANTOR, HistorySampler.values());
 
     // the columns of the star states: the outer ends G, S and X of a star around P, and its centre P
     static final int TOP = StarHistories.TOP;
@@ -48,6 +56,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     GeneticPrior geneticPrior;
     Tree tree;
     JukesCantorStochasticMapping stochasticMapping;
+    ExactBranchHistories exactBranchHistories;
+    HybridBranchHistories hybridBranchHistories;
     StarHistories starHistories;
     BranchMutations branchMutations;
     boolean resampleNeighbourhood;
@@ -65,9 +75,11 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     // reusable lookup of the states at X for the sites whose end states agree
     NodeStateLookup subtreeStates;
 
-    // per node: the sorted sites where the data of a tip is missing, which are empty for inner nodes, and the same sites as a set
-    int[][] missingSitesOfNode;
-    BitSet[] missingSiteSetOfNode;
+    // reusable lookup of the states at the old parent P, which start the old history on the branch above X
+    NodeStateLookup parentStates;
+
+    // per node: the sites where the data of a tip is missing, which are empty for inner nodes
+    MissingSites missingSites;
 
     // the missing sites of X in the current proposal, whose states at X are resampled
     int[] subtreeMissingSites;
@@ -95,6 +107,16 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         this.stochasticMapping = new JukesCantorStochasticMapping(this.mutations.getAlignment().getMaxStateCount(), numSites);
         this.branchMutations = new BranchMutations(numSites);
         this.resampleNeighbourhood = this.resampleNeighbourhoodInput.get();
+        HistorySampler historySampler = this.historySamplerInput.get();
+        if (historySampler != HistorySampler.JUKES_CANTOR && this.resampleNeighbourhood) {
+            throw new IllegalArgumentException("The " + historySampler + " history sampler does not support resampleNeighbourhood.");
+        }
+        int numStates = this.mutations.getAlignment().getMaxStateCount();
+        if (historySampler == HistorySampler.EXACT) {
+            this.exactBranchHistories = new ExactBranchHistories(numStates, numSites);
+        } else if (historySampler == HistorySampler.HYBRID) {
+            this.hybridBranchHistories = new HybridBranchHistories(numStates, numSites);
+        }
 
         this.subtreeChanges = new SiteChanges(numSites);
         this.newParentChanges = new SiteChanges(numSites);
@@ -104,41 +126,9 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         this.oldStarStates = new SiteStates(numSites, StarHistories.NUM_COLUMNS);
         this.newStarStates = new SiteStates(numSites, StarHistories.NUM_COLUMNS);
         this.subtreeStates = new NodeStateLookup(this.mutations, numSites);
+        this.parentStates = new NodeStateLookup(this.mutations, numSites);
 
-        this.collectMissingSites();
-    }
-
-    /**
-     * Collects the sites where the data of every tip is missing, i.e. compatible with every
-     * state. Partially ambiguous characters are not included, so their states stay fixed.
-     */
-    private void collectMissingSites() {
-        Alignment alignment = this.mutations.getAlignment();
-        DataType dataType = alignment.getDataType();
-        int numStates = alignment.getMaxStateCount();
-        int numSites = this.mutations.getReferenceSequence().length;
-        int numNodes = this.tree.getNodeCount();
-
-        this.missingSitesOfNode = new int[numNodes][];
-        this.missingSiteSetOfNode = new BitSet[numNodes];
-        Arrays.fill(this.missingSitesOfNode, new int[0]);
-        Arrays.fill(this.missingSiteSetOfNode, new BitSet());
-
-        // the tips keep their numbers and taxa when the tree changes
-        for (Node tip : this.tree.getExternalNodes()) {
-            int taxonIndex = alignment.getTaxonIndex(tip.getID());
-
-            BitSet missingSites = new BitSet(numSites);
-            for (int site = 0; site < numSites; site++) {
-                int code = alignment.getPattern(taxonIndex, alignment.getPatternIndex(site));
-                if (dataType.getStatesForCode(code).length == numStates) {
-                    missingSites.set(site);
-                }
-            }
-
-            this.missingSitesOfNode[tip.getNr()] = missingSites.stream().toArray();
-            this.missingSiteSetOfNode[tip.getNr()] = missingSites;
-        }
+        this.missingSites = new MissingSites(this.mutations, this.tree);
     }
 
     /**
@@ -157,8 +147,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         double logForwardPickProbability = this.computeLogSubtreeRootProbability(x);
 
         this.updateModel(x);
-        this.subtreeMissingSites = this.missingSitesOfNode[x.getNr()];
-        this.subtreeMissingSiteSet = this.missingSiteSetOfNode[x.getNr()];
+        this.subtreeMissingSites = this.missingSites.getSites(x);
+        this.subtreeMissingSiteSet = this.missingSites.getSiteSet(x);
 
         // choose a grafting point
 
@@ -290,9 +280,16 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         // sample the history on the new P'–X branch while the tree still holds the old sequences, where every agreeing site is in the state of P'
 
-        List<Mutation> newSubtreeMutations = this.stochasticMapping.sampleBranchHistory(
-                x.getNr(), newParentHeight, x.getHeight(), this.jukesCantorRate, this.differingSites, newParentStates
-        );
+        List<Mutation> newSubtreeMutations;
+        if (this.exactBranchHistories != null) {
+            newSubtreeMutations = this.sampleExactBranchHistory(x, newParentHeight, newParentStates);
+        } else if (this.hybridBranchHistories != null) {
+            newSubtreeMutations = this.sampleHybridBranchHistory(x, newParentHeight, newParentStates);
+        } else {
+            newSubtreeMutations = this.stochasticMapping.sampleBranchHistory(
+                    x.getNr(), newParentHeight, x.getHeight(), this.jukesCantorRate, this.differingSites, newParentStates
+            );
+        }
 
         // rearrange the mutations: join G–P–S into G–S, then split G'–S' into G'–P'–S'
 
@@ -313,10 +310,29 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         double oldExpectedJumps = this.jukesCantorRate * (oldParentHeight - x.getHeight());
 
-        double logForwardDensity = this.computeLogBranchHistoryDensity(x, newParentHeight, newSubtreeMutations, this.differingSites.getSize())
-                + this.stochasticMapping.computeLogFreeEndStatesDensity(newExpectedJumps, this.subtreeMissingSites.length, newNumDifferingMissingSites);
-        double logBackwardDensity = this.computeLogBranchHistoryDensity(x, oldParentHeight, oldSubtreeMutations, oldNumDifferingSites)
-                + this.stochasticMapping.computeLogFreeEndStatesDensity(oldExpectedJumps, this.subtreeMissingSites.length, oldNumDifferingMissingSites);
+        double logForwardDensity = this.stochasticMapping.computeLogFreeEndStatesDensity(newExpectedJumps, this.subtreeMissingSites.length, newNumDifferingMissingSites);
+        double logBackwardDensity = this.stochasticMapping.computeLogFreeEndStatesDensity(oldExpectedJumps, this.subtreeMissingSites.length, oldNumDifferingMissingSites);
+
+        if (this.hybridBranchHistories != null) {
+            double rateScale = this.computeExactRateScale(x);
+            logForwardDensity += this.hybridBranchHistories.computeLogBranchHistoryDensity(
+                    newSubtreeMutations, newParentHeight, x.getHeight(), rateScale, this.jukesCantorRate, this.differingSites.getSize()
+            );
+            logBackwardDensity += this.hybridBranchHistories.computeLogBranchHistoryDensity(
+                    oldSubtreeMutations, oldParentHeight, x.getHeight(), rateScale, this.jukesCantorRate, oldNumDifferingSites
+            );
+        } else if (this.exactBranchHistories == null) {
+            logForwardDensity += this.computeLogBranchHistoryDensity(x, newParentHeight, newSubtreeMutations, this.differingSites.getSize());
+            logBackwardDensity += this.computeLogBranchHistoryDensity(x, oldParentHeight, oldSubtreeMutations, oldNumDifferingSites);
+        } else {
+            double rateScale = this.computeExactRateScale(x);
+            logForwardDensity += this.exactBranchHistories.computeLogBranchHistoryDensity(
+                    newSubtreeMutations, newParentHeight, x.getHeight(), rateScale, newParentStates
+            );
+            logBackwardDensity += this.exactBranchHistories.computeLogBranchHistoryDensity(
+                    oldSubtreeMutations, oldParentHeight, x.getHeight(), rateScale, this.parentStates.resetFor(parent)
+            );
+        }
 
         return logBackwardDensity - logForwardDensity;
     }
@@ -484,6 +500,37 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
             }
         }
         return numDifferingMissingSites;
+    }
+
+    /**
+     * Samples the history on the new P'-X branch exactly under the model of the genetic prior,
+     * given the differing sites and, at every other site, the state at P'.
+     */
+    private List<Mutation> sampleExactBranchHistory(Node x, double newParentHeight, IntUnaryOperator newParentStates) {
+        Node root = this.tree.getRoot();
+        this.exactBranchHistories.setModel(this.geneticPrior.computeRateMatrix(), this.geneticPrior.substitutionModel.getEigenDecomposition(root));
+
+        return this.exactBranchHistories.sampleBranchHistory(
+                x.getNr(), newParentHeight, x.getHeight(), this.computeExactRateScale(x), this.differingSites, newParentStates
+        );
+    }
+
+    /**
+     * Samples the history on the new P'-X branch with the sites chosen under Jukes-Cantor with
+     * the rate μ̃ and their histories drawn exactly under the model of the genetic prior.
+     */
+    private List<Mutation> sampleHybridBranchHistory(Node x, double newParentHeight, IntUnaryOperator newParentStates) {
+        Node root = this.tree.getRoot();
+        this.hybridBranchHistories.setModel(this.geneticPrior.computeRateMatrix(), this.geneticPrior.substitutionModel.getEigenDecomposition(root));
+
+        return this.hybridBranchHistories.sampleBranchHistory(
+                x.getNr(), newParentHeight, x.getHeight(), this.computeExactRateScale(x), this.jukesCantorRate, this.differingSites, newParentStates
+        );
+    }
+
+    /** Returns the scale s of the rate matrix Q on the branch above X: its branch rate times the site rate. The move keeps both. */
+    private double computeExactRateScale(Node x) {
+        return this.geneticPrior.branchRateModel.getRateForBranch(x) * this.geneticPrior.siteModel.getRateForCategory(0, this.tree.getRoot());
     }
 
     /**
