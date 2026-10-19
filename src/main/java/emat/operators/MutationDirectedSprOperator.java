@@ -572,14 +572,18 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
 
     /**
      * Counts the sites whose states differ between the start and the end of the given
-     * changes, leaving out the missing sites of X.
+     * changes, leaving out the missing sites of X. At the resampled ambiguous sites of X,
+     * the start state only counts if it is incompatible with the data of X.
      */
     private int countObservedDifferences(SiteChanges changes) {
         int numDifferences = 0;
         for (int slot = 0; slot < changes.getSize(); slot++) {
-            if (changes.getStartState(slot) != changes.getEndState(slot) && !this.subtreeMissingSiteSet.get(changes.getSite(slot))) {
-                numDifferences++;
+            int site = changes.getSite(slot);
+            if (changes.getStartState(slot) == changes.getEndState(slot) || this.subtreeMissingSiteSet.get(site)) {
+                continue;
             }
+
+            numDifferences += !this.subtreeAmbiguousSiteSet.get(site) || !this.isCompatibleState(site, changes.getStartState(slot)) ? 1 : 0;
         }
         return numDifferences;
     }
@@ -587,15 +591,27 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     /**
      * Returns how much crossing the given mutation downwards changes the number of
      * differences to X. The missing sites of X are left out, as the move resamples the
-     * states of X there, and the grafting density must not depend on them.
+     * states of X there, and the grafting density must not depend on them. At the
+     * resampled ambiguous sites of X, a state differs only if it is incompatible with the
+     * data of X, which does not depend on the current states of X there either.
      */
     private int computeDifferenceChange(Mutation mutation) {
-        if (this.subtreeMissingSiteSet.get(mutation.site())) {
+        int site = mutation.site();
+        if (this.subtreeMissingSiteSet.get(site)) {
             return 0;
         }
+        if (this.subtreeAmbiguousSiteSet.get(site)) {
+            return (this.isCompatibleState(site, mutation.newState()) ? 0 : 1) - (this.isCompatibleState(site, mutation.oldState()) ? 0 : 1);
+        }
 
-        int subtreeState = this.getSubtreeState(mutation.site());
+        int subtreeState = this.getSubtreeState(site);
         return (mutation.newState() != subtreeState ? 1 : 0) - (mutation.oldState() != subtreeState ? 1 : 0);
+    }
+
+    /** Checks whether the given state is compatible with the data of X at the given resampled ambiguous site. */
+    private boolean isCompatibleState(int site, int state) {
+        int index = Arrays.binarySearch(this.subtreeAmbiguousSites, site);
+        return (this.subtreeCompatibleStates[index] & (1 << state)) != 0;
     }
 
     /** Returns the state of X at the given site. */

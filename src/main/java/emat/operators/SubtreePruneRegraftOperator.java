@@ -31,7 +31,7 @@ import java.util.function.IntUnaryOperator;
         "genetic prior. Optionally, the histories on all branches " +
         "around the old and the new attachment point are resampled (docs/mcmc-moves.md §3.5). If the pruned " +
         "subtree is a tip, its states at the sites where its data is missing are resampled as well, so that " +
-        "they follow its placement. Missations are not supported. Subclasses choose the pruned subtree and the " +
+        "they follow its placement, and by default also among the compatible states where its data is partially ambiguous. Missations are not supported. Subclasses choose the pruned subtree and the " +
         "grafting point.")
 public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
@@ -45,12 +45,17 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     final public Input<HistorySampler> historySamplerInput = new Input<>("historySampler", "how the history on the branch above the pruned subtree is resampled: JUKES_CANTOR under an approximating Jukes-Cantor model, " +
             "EXACT from its conditional distribution under the model of the genetic prior, site by site, " +
             "HYBRID by choosing the sites with mutations under Jukes-Cantor and then sampling their histories exactly. EXACT and HYBRID are not supported together with resampleNeighbourhood", HistorySampler.JUKES_CANTOR, HistorySampler.values());
+    final public Input<Boolean> resampleAmbiguousSitesInput = new Input<>("resampleAmbiguousSites", "whether a pruned tip also resamples its states among the compatible states at the sites where its data is partially ambiguous, " +
+            "so that they follow its placement. Otherwise, these states stay fixed. Only the history on the branch above the pruned subtree supports it, so it has no effect with resampleNeighbourhood", true);
 
     // the columns of the star states: the outer ends G, S and X of a star around P, and its centre P
     static final int TOP = StarHistories.TOP;
     static final int SIBLING = StarHistories.FIRST;
     static final int SUBTREE = StarHistories.SECOND;
     static final int CENTRE = StarHistories.CENTRE;
+
+    private static final int[] NO_SITES = new int[0];
+    private static final BitSet NO_SITE_SET = new BitSet();
 
     Mutations mutations;
     GeneticPrior geneticPrior;
@@ -84,6 +89,12 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     // the missing sites of X in the current proposal, whose states at X are resampled
     int[] subtreeMissingSites;
     BitSet subtreeMissingSiteSet;
+
+    // whether the partially ambiguous sites of a pruned tip are resampled, and those of X in the current proposal with the bit masks of their compatible states, which are empty otherwise
+    boolean resampleAmbiguousSites;
+    int[] subtreeAmbiguousSites;
+    BitSet subtreeAmbiguousSiteSet;
+    int[] subtreeCompatibleStates;
 
     // the model of the current proposal on the branch above X: the total mutation rate λ(R) of the root sequence times the branch rate, and the fictitious Jukes-Cantor rate μ̃
     double subtreeTotalRate;
@@ -129,6 +140,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         this.parentStates = new NodeStateLookup(this.mutations, numSites);
 
         this.missingSites = new MissingSites(this.mutations, this.tree);
+        this.resampleAmbiguousSites = this.resampleAmbiguousSitesInput.get() && !this.resampleNeighbourhood;
     }
 
     /**
@@ -149,6 +161,9 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         this.updateModel(x);
         this.subtreeMissingSites = this.missingSites.getSites(x);
         this.subtreeMissingSiteSet = this.missingSites.getSiteSet(x);
+        this.subtreeAmbiguousSites = this.resampleAmbiguousSites ? this.missingSites.getAmbiguousSites(x) : NO_SITES;
+        this.subtreeAmbiguousSiteSet = this.resampleAmbiguousSites ? this.missingSites.getAmbiguousSiteSet(x) : NO_SITE_SET;
+        this.subtreeCompatibleStates = this.resampleAmbiguousSites ? this.missingSites.getCompatibleStates(x) : NO_SITES;
 
         // choose a grafting point
 
@@ -228,7 +243,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
      * history on the new P'–X branch. The mutations of the old P branch are merged into the
      * branch of the old sibling S, the branch above S' is split at t_P', and everything else
      * is kept. At the missing sites of X, the states at X are first sampled from the states
-     * at P' under Jukes-Cantor, and the history is then sampled given the end states. The
+     * at P' under Jukes-Cantor, and likewise among the compatible states at the partially
+     * ambiguous sites if they are resampled. The history is then sampled given the end states. The
      * new mutations are put into the given map in the order in which they must be applied
      * after the regraft. Returns the log of α_mut(n → o) / α_mut(o → n).
      */
@@ -260,12 +276,12 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         MutationPaths.collectChanges(this.mutations, mrca, newParentBranchNode, newParentHeight, this.newParentChanges);
         MutationPaths.combineChanges(this.newParentChanges, this.subtreeChanges, this.combinedChanges);
 
-        // keep the differing sites where the data of X is observed, and sample the states of X at its missing sites
+        // keep the differing sites where the data of X is observed, and sample the states of X at its missing and its ambiguous sites
 
         this.differingSites.clear();
         for (int slot = 0; slot < this.combinedChanges.getSize(); slot++) {
             int site = this.combinedChanges.getSite(slot);
-            if (!this.subtreeMissingSiteSet.get(site)) {
+            if (!this.subtreeMissingSiteSet.get(site) && !this.subtreeAmbiguousSiteSet.get(site)) {
                 this.differingSites.addSite(site, this.combinedChanges.getStartState(slot), this.combinedChanges.getEndState(slot));
             }
         }
@@ -276,6 +292,9 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         double newExpectedJumps = this.jukesCantorRate * (newParentHeight - x.getHeight());
         int newNumDifferingMissingSites = this.stochasticMapping.sampleFreeEndStates(
                 newExpectedJumps, this.subtreeMissingSites, newParentStates, this.differingSites
+        );
+        double logAmbiguousForwardDensity = this.stochasticMapping.sampleCompatibleEndStates(
+                newExpectedJumps, this.subtreeAmbiguousSites, this.subtreeCompatibleStates, newParentStates, this.differingSites
         );
 
         // sample the history on the new P'–X branch while the tree still holds the old sequences, where every agreeing site is in the state of P'
@@ -312,6 +331,12 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         double logForwardDensity = this.stochasticMapping.computeLogFreeEndStatesDensity(newExpectedJumps, this.subtreeMissingSites.length, newNumDifferingMissingSites);
         double logBackwardDensity = this.stochasticMapping.computeLogFreeEndStatesDensity(oldExpectedJumps, this.subtreeMissingSites.length, oldNumDifferingMissingSites);
+
+        // the reverse move samples the old states of X at its ambiguous sites from the states at the old P, which the tree still holds
+        logForwardDensity += logAmbiguousForwardDensity;
+        logBackwardDensity += this.stochasticMapping.computeLogCompatibleEndStatesDensity(
+                oldExpectedJumps, this.subtreeAmbiguousSites, this.subtreeCompatibleStates, this.parentStates.resetFor(parent), this.subtreeStates
+        );
 
         if (this.hybridBranchHistories != null) {
             double rateScale = this.computeExactRateScale(x);

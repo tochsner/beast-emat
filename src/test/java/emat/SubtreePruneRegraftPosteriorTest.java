@@ -2,6 +2,8 @@ package emat;
 
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;
+import beast.base.evolution.datatype.Nucleotide;
+import beast.base.evolution.substitutionmodel.SubstitutionModel;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeParser;
 import beast.base.inference.Operator;
@@ -10,8 +12,11 @@ import beast.base.inference.State;
 import beast.base.spec.domain.PositiveReal;
 import beast.base.spec.evolution.branchratemodel.StrictClockModel;
 import beast.base.spec.evolution.sitemodel.SiteModel;
+import beast.base.spec.evolution.substitutionmodel.Frequencies;
+import beast.base.spec.evolution.substitutionmodel.HKY;
 import beast.base.spec.evolution.substitutionmodel.JukesCantor;
 import beast.base.spec.inference.parameter.RealScalarParam;
+import beast.base.spec.inference.parameter.SimplexParam;
 import beast.base.util.Randomizer;
 import emat.helper.MutationPaths;
 import emat.initalisation.ParsimonyMutationsInitialiser;
@@ -22,8 +27,12 @@ import emat.operators.SubtreeSlideOperator;
 import emat.operators.WilsonBaldingOperator;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
+import emat.stochasticmapping.StochasticMapping;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -32,6 +41,7 @@ import java.util.Map;
 import java.util.TreeSet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class SubtreePruneRegraftPosteriorTest {
 
@@ -43,37 +53,84 @@ public class SubtreePruneRegraftPosteriorTest {
     private static final String[] TAXA = {"A", "B", "C", "D"};
     // B and D have missing data, whose states the moves resample when they prune these tips
     private static final String[] SEQUENCES = {"ACGTC", "ACGAN", "TCGAC", "TNNAT"};
+    // B and D also have partially ambiguous data, whose states the moves resample among the compatible ones
+    private static final String[] AMBIGUOUS_SEQUENCES = {"AAGTC", "WWKAN", "TTGAC", "TNNAY"};
+    private static final Nucleotide NUCLEOTIDE = new Nucleotide();
+
+    // the transition probabilities of the posterior computation per number of half grid steps, stored row by row
+    private double[][] halfStepTransitionProbabilities;
 
     /**
-     * Runs Wilson–Balding and subtree slide with neighbourhood resampling against the
-     * genetic prior under Jukes-Cantor on four tips at height 0, two of them with missing
+     * Runs Wilson–Balding and subtree slide with neighbourhood resampling, with the
+     * Jukes-Cantor and with the hybrid history sampler, against the genetic prior under
+     * Jukes-Cantor on four tips at height 0, two of them with missing
      * data. Neither operator changes the root height or the root sequence, so the rooted
      * topologies follow the Felsenstein likelihood given the root sequence, integrated over
      * the heights of the two internal nodes below the root.
      */
     @Test
     public void testNeighbourhoodTopologiesMatchPosterior() {
-        Randomizer.setSeed(7);
-        Setup setup = this.createSetup();
+        for (SubtreePruneRegraftOperator.HistorySampler historySampler : List.of(
+                SubtreePruneRegraftOperator.HistorySampler.JUKES_CANTOR, SubtreePruneRegraftOperator.HistorySampler.HYBRID)) {
+            Randomizer.setSeed(7);
+            Setup setup = this.createSetup();
 
-        WilsonBaldingOperator wilsonBaldingOperator = new WilsonBaldingOperator();
-        wilsonBaldingOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
-                "geneticPrior", setup.geneticPrior, "resampleNeighbourhood", true);
+            WilsonBaldingOperator wilsonBaldingOperator = new WilsonBaldingOperator();
+            wilsonBaldingOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
+                    "geneticPrior", setup.geneticPrior, "resampleNeighbourhood", true, "historySampler", historySampler);
 
-        SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
-        subtreeSlideOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
-                "geneticPrior", setup.geneticPrior, "size", 0.3, "optimise", false, "resampleNeighbourhood", true);
+            SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
+            subtreeSlideOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
+                    "geneticPrior", setup.geneticPrior, "size", 0.3, "optimise", false, "resampleNeighbourhood", true, "historySampler", historySampler);
 
-        // the root sequence stays fixed, so the posterior is conditioned on it
+            // the root sequence stays fixed, so the posterior is conditioned on it
 
-        int[] rootSequence = new int[SEQUENCES[0].length()];
-        for (int site = 0; site < rootSequence.length; site++) {
-            rootSequence[site] = MutationPaths.getState(setup.mutations, setup.tree.getRoot(), site);
+            int[] rootSequence = new int[SEQUENCES[0].length()];
+            for (int site = 0; site < rootSequence.length; site++) {
+                rootSequence[site] = MutationPaths.getState(setup.mutations, setup.tree.getRoot(), site);
+            }
+
+            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, rootSequence);
+            Map<String, Integer> topologyCounts = this.runChain(setup, List.of(wilsonBaldingOperator, subtreeSlideOperator));
+            this.assertFrequencies(expectedFrequencies, topologyCounts);
         }
+    }
 
-        Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup.alignment, rootSequence);
-        Map<String, Integer> topologyCounts = this.runChain(setup, List.of(wilsonBaldingOperator, subtreeSlideOperator));
-        this.assertFrequencies(expectedFrequencies, topologyCounts);
+    /**
+     * Runs mdSPR with neighbourhood resampling, whose reverse grafting density is computed on
+     * the pruned tree after the move, together with subtree slide with neighbourhood
+     * resampling. Neither changes the root sequence, so the rooted topologies follow the same
+     * posterior as in testNeighbourhoodTopologiesMatchPosterior. Both local explorations with
+     * a window and full explorations are checked, with the Jukes-Cantor and with the hybrid
+     * history sampler.
+     */
+    @Test
+    public void testMdSprNeighbourhoodTopologiesMatchPosterior() {
+        for (SubtreePruneRegraftOperator.HistorySampler historySampler : List.of(
+                SubtreePruneRegraftOperator.HistorySampler.JUKES_CANTOR, SubtreePruneRegraftOperator.HistorySampler.HYBRID)) {
+            for (double fullExplorationProbability : new double[]{0.1, 1.0}) {
+                Randomizer.setSeed(13);
+                Setup setup = this.createSetup();
+
+                MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+                mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                        "resampleNeighbourhood", true, "historySampler", historySampler,
+                        "windowProbability", 0.5, "fullExplorationProbability", fullExplorationProbability);
+
+                SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
+                subtreeSlideOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
+                        "geneticPrior", setup.geneticPrior, "size", 0.3, "optimise", false, "resampleNeighbourhood", true, "historySampler", historySampler);
+
+                int[] rootSequence = new int[SEQUENCES[0].length()];
+                for (int site = 0; site < rootSequence.length; site++) {
+                    rootSequence[site] = MutationPaths.getState(setup.mutations, setup.tree.getRoot(), site);
+                }
+
+                Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, rootSequence);
+                Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, subtreeSlideOperator));
+                this.assertFrequencies(expectedFrequencies, topologyCounts);
+            }
+        }
     }
 
     /**
@@ -101,11 +158,92 @@ public class SubtreePruneRegraftPosteriorTest {
         BranchReformOperator branchReformOperator = new BranchReformOperator();
         branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
 
-        Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup.alignment, null);
+        Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
         Map<String, Integer> topologyCounts = this.runChain(
                 setup, List.of(wilsonBaldingOperator, subtreeSlideOperator, mdSprOperator, branchReformOperator)
         );
         this.assertFrequencies(expectedFrequencies, topologyCounts);
+    }
+
+    /**
+     * Runs Wilson–Balding, subtree slide and mdSPR, which resample the states of a pruned
+     * tip among the compatible ones where its data is partially ambiguous, together with
+     * branch reform. The rooted topologies follow the Felsenstein likelihood whose tip
+     * partials are one at every compatible state.
+     */
+    @Test
+    public void testAmbiguousTipsMatchPosterior() {
+        Randomizer.setSeed(13);
+        Setup setup = this.createSetup(new JukesCantor(), 1.0, AMBIGUOUS_SEQUENCES);
+
+        WilsonBaldingOperator wilsonBaldingOperator = new WilsonBaldingOperator();
+        wilsonBaldingOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
+
+        SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
+        subtreeSlideOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
+                "geneticPrior", setup.geneticPrior, "size", 0.3, "optimise", false);
+
+        MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+        mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                "windowProbability", 0.3);
+
+        BranchReformOperator branchReformOperator = new BranchReformOperator();
+        branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
+
+        Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
+        Map<String, Integer> topologyCounts = this.runChain(
+                setup, List.of(wilsonBaldingOperator, subtreeSlideOperator, mdSprOperator, branchReformOperator)
+        );
+        this.assertFrequencies(expectedFrequencies, topologyCounts);
+    }
+
+    /**
+     * Runs Wilson–Balding, subtree slide and mdSPR under HKY with unequal frequencies and a
+     * clock rate other than one, where the Jukes-Cantor proposals differ from the model and
+     * the hybrid histories have to scale the rate matrix correctly. This is checked with
+     * neighbourhood resampling under the Jukes-Cantor and the hybrid history sampler, and
+     * with the hybrid history sampler resampling only the branch above the pruned subtree.
+     * None of the moves changes the root sequence, so the posterior is conditioned on it.
+     */
+    @Test
+    public void testHkyTopologiesMatchPosterior() {
+        record Case(SubtreePruneRegraftOperator.HistorySampler historySampler, boolean resampleNeighbourhood) {
+        }
+
+        for (Case testCase : List.of(
+                new Case(SubtreePruneRegraftOperator.HistorySampler.JUKES_CANTOR, true),
+                new Case(SubtreePruneRegraftOperator.HistorySampler.HYBRID, true),
+                new Case(SubtreePruneRegraftOperator.HistorySampler.HYBRID, false))) {
+            Randomizer.setSeed(23);
+
+            Frequencies frequencies = new Frequencies();
+            frequencies.initByName("frequencies", new SimplexParam(new double[]{0.1, 0.2, 0.3, 0.4}));
+            HKY hky = new HKY();
+            hky.initByName("kappa", new RealScalarParam<>(4.0, PositiveReal.INSTANCE), "frequencies", frequencies);
+            Setup setup = this.createSetup(hky, 0.7);
+
+            WilsonBaldingOperator wilsonBaldingOperator = new WilsonBaldingOperator();
+            wilsonBaldingOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                    "resampleNeighbourhood", testCase.resampleNeighbourhood(), "historySampler", testCase.historySampler());
+
+            SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
+            subtreeSlideOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                    "size", 0.3, "optimise", false, "resampleNeighbourhood", testCase.resampleNeighbourhood(), "historySampler", testCase.historySampler());
+
+            MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+            mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                    "resampleNeighbourhood", testCase.resampleNeighbourhood(), "historySampler", testCase.historySampler(),
+                    "windowProbability", 0.5, "fullExplorationProbability", 0.1);
+
+            int[] rootSequence = new int[SEQUENCES[0].length()];
+            for (int site = 0; site < rootSequence.length; site++) {
+                rootSequence[site] = MutationPaths.getState(setup.mutations, setup.tree.getRoot(), site);
+            }
+
+            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, rootSequence);
+            Map<String, Integer> topologyCounts = this.runChain(setup, List.of(wilsonBaldingOperator, subtreeSlideOperator, mdSprOperator));
+            this.assertFrequencies(expectedFrequencies, topologyCounts);
+        }
     }
 
     /**
@@ -135,7 +273,7 @@ public class SubtreePruneRegraftPosteriorTest {
             BranchReformOperator branchReformOperator = new BranchReformOperator();
             branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
 
-            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup.alignment, null);
+            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
             Map<String, Integer> topologyCounts = this.runChain(
                     setup, List.of(wilsonBaldingOperator, subtreeSlideOperator, mdSprOperator, branchReformOperator)
             );
@@ -160,7 +298,7 @@ public class SubtreePruneRegraftPosteriorTest {
         BranchReformOperator branchReformOperator = new BranchReformOperator();
         branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
 
-        Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup.alignment, null);
+        Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
         Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, branchReformOperator));
         this.assertFrequencies(expectedFrequencies, topologyCounts);
     }
@@ -185,15 +323,67 @@ public class SubtreePruneRegraftPosteriorTest {
         Setup setup = this.createSetup();
 
         MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+        // the sister autocorrelation looks often and with short lags, so that the weights change within the chain
         mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
-                "subtreeSelection", subtreeSelection, "countRejectedMoves", countRejectedMoves);
+                "subtreeSelection", subtreeSelection, "countRejectedMoves", countRejectedMoves, "sisterLookInterval", 3, "sisterMaxLag", 4, "sisterBranchLengthMixture", 0.2);
 
         BranchReformOperator branchReformOperator = new BranchReformOperator();
         branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
 
-        Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup.alignment, null);
+        Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
         Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, branchReformOperator));
         this.assertFrequencies(expectedFrequencies, topologyCounts);
+    }
+
+    /**
+     * Tracks the tip A, which can attach next to B, C or D, and the cherry (A,B), which can
+     * attach next to C or D. The proposals are drawn in proportion to the region weights, so
+     * the fraction of proposals to another listed sister matches the mean proposal mass on
+     * those sisters, and only proposals off the branch can be accepted as moves to a sister.
+     */
+    @Test
+    public void testTrackedSubtreesMatchProposals() throws IOException {
+        Randomizer.setSeed(5);
+        Setup setup = this.createSetup();
+        Path trackedLogPath = Files.createTempFile("tracked", ".tsv");
+
+        MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+        mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                "fullExplorationProbability", 0.5, "windowProbability", 0.5, "trackedSubtrees", "A#B#C#D; A,B#C#D",
+                "trackedPosterior", setup.geneticPrior, "trackedLogFile", trackedLogPath.toString());
+
+        BranchReformOperator branchReformOperator = new BranchReformOperator();
+        branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
+
+        this.runChain(setup, List.of(mdSprOperator, branchReformOperator));
+
+        Map<String, Double> diagnostics = mdSprOperator.getDiagnostics();
+        for (int i = 0; i < 2; i++) {
+            String prefix = "mdspr_tracked_" + i + "_";
+            double numProposals = diagnostics.get(prefix + "proposals");
+            double numProposedToSister = diagnostics.get(prefix + "proposed_to_sister");
+            assertTrue(numProposals > 10000, "Proposals of " + prefix);
+            assertTrue(numProposedToSister > 1000, "Proposals to a sister of " + prefix);
+            assertEquals(diagnostics.get(prefix + "mean_sister_mass"), numProposedToSister / numProposals, 0.01, "Sister mass of " + prefix);
+            assertEquals(diagnostics.get(prefix + "mean_off_branch_mass"), diagnostics.get(prefix + "proposed_off_branch") / numProposals, 0.01, "Off-branch mass of " + prefix);
+            assertTrue(numProposedToSister <= diagnostics.get(prefix + "proposed_off_branch"));
+            assertTrue(diagnostics.get(prefix + "accepted_to_sister") <= numProposedToSister);
+        }
+
+        // the logged terms make up the acceptance ratio, so its expected acceptance matches the accepted rows
+
+        List<String> rows = Files.readAllLines(trackedLogPath);
+        assertEquals("subtree\taccepted\t" + setup.geneticPrior.getID() + "\tgrafting\thistories\tpick", rows.get(0));
+        double numAccepted = 0.0;
+        double expectedNumAccepted = 0.0;
+        for (String row : rows.subList(1, rows.size())) {
+            double[] values = Arrays.stream(row.split("\t")).mapToDouble(Double::parseDouble).toArray();
+            numAccepted += values[1];
+            expectedNumAccepted += Math.min(1.0, Math.exp(values[2] + values[3] + values[4] + values[5]));
+        }
+        double numRows = rows.size() - 1;
+        assertEquals(diagnostics.get("mdspr_tracked_0_accepted_to_sister") + diagnostics.get("mdspr_tracked_1_accepted_to_sister"), numAccepted, 1e-9);
+        assertEquals(expectedNumAccepted / numRows, numAccepted / numRows, 0.02);
     }
 
     /** Checks that the weight of mdSPR is scaled by the logarithm of the number of tips if requested. */
@@ -211,15 +401,26 @@ public class SubtreePruneRegraftPosteriorTest {
         assertEquals(100.0 * Math.log(4), scaledOperator.getWeight(), 1e-12);
     }
 
-    private record Setup(Alignment alignment, TreeParser tree, Mutations mutations, GeneticPrior geneticPrior) {
+    private record Setup(Alignment alignment, TreeParser tree, Mutations mutations, GeneticPrior geneticPrior,
+                         SubstitutionModel substitutionModel, double clockRate) {
     }
 
-    /** Creates the alignment, a starting tree with parsimonious mutations and the genetic prior under Jukes-Cantor. */
+    /** Creates the alignment, a starting tree with parsimonious mutations and the genetic prior under Jukes-Cantor with clock rate one. */
     private Setup createSetup() {
+        return this.createSetup(new JukesCantor(), 1.0);
+    }
+
+    /** Creates the alignment, a starting tree with parsimonious mutations and the genetic prior under the given model and clock rate. */
+    private Setup createSetup(SubstitutionModel substitutionModel, double clockRate) {
+        return this.createSetup(substitutionModel, clockRate, SEQUENCES);
+    }
+
+    /** Creates the setup of the given model and clock rate for the given sequences of the taxa. */
+    private Setup createSetup(SubstitutionModel substitutionModel, double clockRate, String[] taxonSequences) {
         Alignment alignment = new Alignment();
         List<Sequence> sequences = new ArrayList<>();
         for (int i = 0; i < TAXA.length; i++) {
-            sequences.add(new Sequence(TAXA[i], SEQUENCES[i]));
+            sequences.add(new Sequence(TAXA[i], taxonSequences[i]));
         }
         alignment.initByName("sequence", sequences, "dataType", "nucleotide");
 
@@ -234,15 +435,15 @@ public class SubtreePruneRegraftPosteriorTest {
         initialiser.initStateNodes();
 
         SiteModel siteModel = new SiteModel();
-        siteModel.initByName("substModel", new JukesCantor());
+        siteModel.initByName("substModel", substitutionModel);
 
         StrictClockModel clockModel = new StrictClockModel();
-        clockModel.initByName("clock.rate", new RealScalarParam<>(1.0, PositiveReal.INSTANCE));
+        clockModel.initByName("clock.rate", new RealScalarParam<>(clockRate, PositiveReal.INSTANCE));
 
         GeneticPrior geneticPrior = new GeneticPrior();
         geneticPrior.initByName("data", alignment, "tree", tree, "siteModel", siteModel, "branchRateModel", clockModel, "mutations", mutations);
 
-        return new Setup(alignment, tree, mutations, geneticPrior);
+        return new Setup(alignment, tree, mutations, geneticPrior, substitutionModel, clockRate);
     }
 
     private void assertFrequencies(Map<String, Double> expectedFrequencies, Map<String, Integer> topologyCounts) {
@@ -286,8 +487,8 @@ public class SubtreePruneRegraftPosteriorTest {
 
             double logHastingsRatio = operator.proposal();
             if (logHastingsRatio == Double.NEGATIVE_INFINITY) {
+                operator.reject(-2);
                 state.restore();
-                operator.reject(-1);
             } else {
                 state.storeCalculationNodes();
                 state.checkCalculationNodesDirtiness();
@@ -298,9 +499,9 @@ public class SubtreePruneRegraftPosteriorTest {
                     state.acceptCalculationNodes();
                     operator.accept();
                 } else {
+                    operator.reject(0);
                     state.restore();
                     state.restoreCalculationNodes();
-                    operator.reject(0);
                 }
             }
             state.setEverythingDirty(false);
@@ -318,17 +519,28 @@ public class SubtreePruneRegraftPosteriorTest {
     /**
      * Computes the posterior of every rooted topology on the four taxa by integrating the
      * likelihood over the heights of the internal nodes on a grid, with the density of the
-     * heights being uniform below the root. The likelihood is conditioned on the given root
-     * sequence, or averages over uniform root states if there is none.
+     * heights being uniform below the root, under the substitution model and clock rate of
+     * the given setup. The likelihood is conditioned on the given root sequence, or averages
+     * over uniform root states if there is none.
      */
-    private Map<String, Double> computeTopologyPosterior(Alignment alignment, int[] rootSequence) {
+    private Map<String, Double> computeTopologyPosterior(Setup setup, int[] rootSequence) {
+        Alignment alignment = setup.alignment();
+        double step = ROOT_HEIGHT / NUM_GRID_POINTS;
+
+        // every branch on the grid is a multiple of half a step long
+        this.halfStepTransitionProbabilities = new double[2 * NUM_GRID_POINTS + 1][];
+        for (int k = 0; k <= 2 * NUM_GRID_POINTS; k++) {
+            this.halfStepTransitionProbabilities[k] = StochasticMapping.computeTransitionProbabilities(
+                    setup.substitutionModel().getEigenDecomposition(null), setup.clockRate() * k * 0.5 * step
+            );
+        }
+
         int[][] tipStates = new int[TAXA.length][];
         for (int i = 0; i < TAXA.length; i++) {
             tipStates[i] = alignment.getCounts().get(alignment.getTaxonIndex(TAXA[i])).stream().mapToInt(Integer::intValue).toArray();
         }
 
         Map<String, Double> weights = new HashMap<>();
-        double step = ROOT_HEIGHT / NUM_GRID_POINTS;
 
         for (int[] order : this.getTaxonOrders()) {
             int a = order[0];
@@ -409,27 +621,24 @@ public class SubtreePruneRegraftPosteriorTest {
         );
     }
 
-    /** Returns the partials of a tip, which are one for every state at a missing site. */
+    /** Returns the partials of a tip, which are one for every state that is compatible with its data. */
     private double[] getTipPartials(int[][] tipStates, int site, int taxon) {
         double[] partials = new double[4];
-        int state = tipStates[taxon][site];
-        if (state < 4) {
+        for (int state : NUCLEOTIDE.getStatesForCode(tipStates[taxon][site])) {
             partials[state] = 1.0;
-        } else {
-            Arrays.fill(partials, 1.0);
         }
         return partials;
     }
 
-    /** Returns the partials at the top of a branch of the given length from those at its bottom under Jukes-Cantor. */
+    /** Returns the partials at the top of a branch of the given length, a multiple of half a grid step, from those at its bottom. */
     private double[] propagate(double[] partials, double length) {
-        double stayProbability = 0.25 * (1.0 + 3.0 * Math.exp(-4.0 / 3.0 * length));
-        double changeProbability = 0.25 * (1.0 - Math.exp(-4.0 / 3.0 * length));
+        int numHalfSteps = (int) Math.round(2.0 * length * NUM_GRID_POINTS / ROOT_HEIGHT);
+        double[] transitionProbabilities = this.halfStepTransitionProbabilities[numHalfSteps];
 
         double[] result = new double[4];
         for (int from = 0; from < 4; from++) {
             for (int to = 0; to < 4; to++) {
-                result[from] += (from == to ? stayProbability : changeProbability) * partials[to];
+                result[from] += transitionProbabilities[from * 4 + to] * partials[to];
             }
         }
         return result;

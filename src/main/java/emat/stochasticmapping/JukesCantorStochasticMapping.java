@@ -475,6 +475,72 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
         return this.computeLogEndStatesProbability(expectedJumps, numFreeSites, numDifferingFreeSites);
     }
 
+    /* Compatible End States */
+
+    /**
+     * Samples the end states of a branch at the given sites, which are sorted, among the
+     * compatible states given as bit masks, from their start states under Jukes-Cantor with
+     * the given expected number of jumps, conditioned on the end state being compatible.
+     * Every site whose end state differs from its start state is added to the given
+     * differing sites, which must not hold any of these sites yet. Returns the log
+     * probability of the sampled end states.
+     */
+    public double sampleCompatibleEndStates(double expectedJumps, int[] sites, int[] compatibleStates, IntUnaryOperator startStates,
+                                            SiteChanges differingSites) {
+        double changeProbability = this.computeChangeProbability(expectedJumps);
+        double sameProbability = 1.0 - (this.numStates - 1.0) * changeProbability;
+
+        double logProbability = 0.0;
+        for (int i = 0; i < sites.length; i++) {
+            int startState = startStates.applyAsInt(sites[i]);
+            double totalProbability = this.computeCompatibleProbability(compatibleStates[i], startState, sameProbability, changeProbability);
+
+            double threshold = Randomizer.nextDouble() * totalProbability;
+            int endState = -1;
+            double probability = 0.0;
+            for (int state = 0; state < this.numStates && threshold >= 0.0; state++) {
+                if ((compatibleStates[i] & (1 << state)) != 0) {
+                    endState = state;
+                    probability = state == startState ? sameProbability : changeProbability;
+                    threshold -= probability;
+                }
+            }
+
+            if (endState != startState) {
+                differingSites.addSite(sites[i], startState, endState);
+            }
+            logProbability += Math.log(probability / totalProbability);
+        }
+        return logProbability;
+    }
+
+    /**
+     * Computes the log probability that sampleCompatibleEndStates samples the given end
+     * states at the given sites from the given start states.
+     */
+    public double computeLogCompatibleEndStatesDensity(double expectedJumps, int[] sites, int[] compatibleStates, IntUnaryOperator startStates,
+                                                       IntUnaryOperator endStates) {
+        double changeProbability = this.computeChangeProbability(expectedJumps);
+        double sameProbability = 1.0 - (this.numStates - 1.0) * changeProbability;
+
+        double logProbability = 0.0;
+        for (int i = 0; i < sites.length; i++) {
+            int startState = startStates.applyAsInt(sites[i]);
+            int endState = endStates.applyAsInt(sites[i]);
+            double probability = endState == startState ? sameProbability : changeProbability;
+            logProbability += Math.log(probability / this.computeCompatibleProbability(compatibleStates[i], startState, sameProbability, changeProbability));
+        }
+        return logProbability;
+    }
+
+    /** Computes the Jukes-Cantor probability that a site in the given start state ends in one of the compatible states. */
+    private double computeCompatibleProbability(int compatibleStates, int startState, double sameProbability, double changeProbability) {
+        int numCompatibleStates = Integer.bitCount(compatibleStates);
+        return (compatibleStates & (1 << startState)) != 0
+                ? sameProbability + (numCompatibleStates - 1) * changeProbability
+                : numCompatibleStates * changeProbability;
+    }
+
     /* Probabilities */
 
     /**
