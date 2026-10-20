@@ -221,10 +221,14 @@ public class TimedMCMC extends MCMC {
             out.println("# total_ns=" + this.totalNanos);
             out.println("# store_ns=" + this.storeNanos);
             out.println("# logging_ns=" + this.loggingNanos);
+            // the diagnostics of the first mdSPR operator keep their names, those of further ones get the id of their operator as prefix
+            boolean isFirstMdSpr = true;
             for (Operator operator : operators) {
                 if (operator instanceof MutationDirectedSprOperator mdSprOperator) {
+                    String prefix = isFirstMdSpr ? "" : operator.getID() + ".";
+                    isFirstMdSpr = false;
                     for (Map.Entry<String, Double> entry : mdSprOperator.getDiagnostics().entrySet()) {
-                        out.println("# " + entry.getKey() + "=" + entry.getValue());
+                        out.println("# " + prefix + entry.getKey() + "=" + entry.getValue());
                     }
                 }
             }

@@ -6,10 +6,20 @@ import beast.base.evolution.tree.Node;
 import beast.base.util.Randomizer;
 import emat.helper.MutationPaths;
 import emat.helper.SiteChanges;
+import emat.helper.TipNeighbours;
+import emat.operators.mdspr.BranchLengthSubtreeSelector;
+import emat.operators.mdspr.MoveDistanceSubtreeSelector;
+import emat.operators.mdspr.ProposedMove;
+import emat.operators.mdspr.Region;
+import emat.operators.mdspr.RegionBuffer;
+import emat.operators.mdspr.SisterActSubtreeSelector;
+import emat.operators.mdspr.SubtreeSelector;
+import emat.operators.mdspr.UniformSubtreeSelector;
 import emat.state.Mutation;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,25 +27,36 @@ import java.util.Map;
 @Description("Regrafts a random subtree preferably where the sequence is close to the sequence of the subtree, " +
         "using the mutations of the EMAT as a parsimony map (mutation-directed SPR, docs/mcmc-moves.md §8.3). " +
         "Most proposals only explore the neighbourhood of the current attachment point, whose extent is drawn " +
-        "from a geometric distribution. The root is never changed.")
+        "from a geometric distribution, and may jump between tips with close data. The root is never changed.")
 public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
 
     public enum SubtreeSelection {
-        UNIFORM, BRANCH_LENGTH, MOVED_NUM_NODES, MOVED_PATH_LENGTH, MOVED_SQUARED_PATH_LENGTH
+        UNIFORM, BRANCH_LENGTH, MOVED_NUM_NODES, MOVED_PATH_LENGTH, MOVED_SQUARED_PATH_LENGTH, SISTER_ACT
     }
 
     final public Input<Double> annealingInput = new Input<>("annealing", "the power f to which the grafting density is raised, which makes the proposals less eager", 0.8);
     final public Input<Double> fullExplorationProbabilityInput = new Input<>("fullExplorationProbability", "the probability of exploring the whole tree instead of the neighbourhood of the current attachment point", 0.01);
     final public Input<Double> windowProbabilityInput = new Input<>("windowProbability", "the parameter q of the geometric number of additional differences, q^j (1 - q), that the neighbourhood may have compared to the current attachment point. With 0, the neighbourhood never has more differences than the current attachment point", 0.0);
 
+    // the subtree selection and the parameters of its strategies, which each strategy validates and uses on its own
     final public Input<SubtreeSelection> subtreeSelectionInput = new Input<>("subtreeSelection", "the strategy for choosing the subtree to regraft: UNIFORM picks every subtree with the same probability, " +
             "BRANCH_LENGTH proportional to the length of the branch above it, and MOVED_NUM_NODES, MOVED_PATH_LENGTH and MOVED_SQUARED_PATH_LENGTH " +
             "proportional to the running mean distance of its accepted moves, measured as the number of nodes, the length or the squared length " +
-            "of the path between the old and the new attachment point", SubtreeSelection.UNIFORM, SubtreeSelection.values());
+            "of the path between the old and the new attachment point. SISTER_ACT only picks tips, in proportion to a power of the autocorrelation time of the size of their sister clade, " +
+            "which is estimated from the history of the chain, so that tips that rarely change their sister are picked more often", SubtreeSelection.UNIFORM, SubtreeSelection.values());
     final public Input<Double> moveDistancePseudocountInput = new Input<>("moveDistancePseudocount", "the number of pseudo-moves with the mean distance of all recorded moves " +
             "that the running mean distance of every subtree starts with", 10.0);
     final public Input<Boolean> countRejectedMovesInput = new Input<>("countRejectedMoves", "whether the running mean distance of a subtree also counts its rejected proposals " +
             "as moves of distance zero, which makes it the expected distance per proposal. Otherwise, it is the mean distance of the accepted moves", false);
+    final public Input<Double> sisterActPowerInput = new Input<>("sisterActPower", "the power to which the estimated autocorrelation time of the sister clade size of a tip is raised for SISTER_ACT. " +
+            "With 0, all tips are picked equally often; larger values concentrate the picks on the slowest tips", 3.0);
+    final public Input<Double> sisterActFloorInput = new Input<>("sisterActFloor", "the share of the SISTER_ACT picks that is spread uniformly over all tips, so that every tip keeps being picked", 0.1);
+    final public Input<Integer> sisterActIntervalInput = new Input<>("sisterActInterval", "the number of proposals between two samples of the sister clade sizes of all tips for SISTER_ACT", 100);
+    final public Input<Integer> sisterActWarmupInput = new Input<>("sisterActWarmup", "the number of samples of the sister clade sizes that SISTER_ACT discards before it starts estimating, while all tips are picked equally often", 1000);
+
+    final public Input<Integer> shortcutDistanceInput = new Input<>("shortcutDistance", "the largest number of sites at which the data of two tips may differ for the neighbourhood " +
+            "to also connect the regions at the bottom of their branches, as if a path ran between them on which the differences to the subtree never exceed the larger number of either end. " +
+            "With a negative value, there are no such shortcuts", -1);
     final public Input<Boolean> scaleWeightByLogNumTipsInput = new Input<>("scaleWeightByLogNumTips", "whether to scale the weight by the natural logarithm of the number of tips n, so that the operator is selected with weight * ln(n). Otherwise, the weight is used as given", false);
 
     private static final int INITIAL_CAPACITY = 64;
@@ -43,15 +64,11 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     // the factor ln(n) or one by which the weight of the operator is scaled
     double weightFactor;
 
-    SubtreeSelection subtreeSelection;
     double annealing;
     double fullExplorationProbability;
     double windowProbability;
-    double moveDistancePseudocount;
-    boolean countRejectedMoves;
 
-    // the selection weights of all nodes in the current state, which are zero for nodes that cannot be picked
-    double[] selectionWeights;
+    SubtreeSelector subtreeSelector;
 
     // the state of the current proposal: X, the joined mutations of the branch above S, and the constant part log(λ(X) / 3L) of the log grafting density
     Node x;
@@ -63,14 +80,8 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     SiteChanges subtreeSequenceChanges;
     int[] referenceSequence;
 
-    // the explored regions of the current proposal, with their log weights and then their weights relative to the largest one
-    int numRegions;
-    Node[] regionNodes = new Node[INITIAL_CAPACITY];
-    int[] regionIndices = new int[INITIAL_CAPACITY];
-    int[] regionNumDifferences = new int[INITIAL_CAPACITY];
-    double[] regionLowerHeights = new double[INITIAL_CAPACITY];
-    double[] regionUpperHeights = new double[INITIAL_CAPACITY];
-    double[] regionWeights = new double[INITIAL_CAPACITY];
+    // the explored regions of the current proposal
+    final RegionBuffer regions = new RegionBuffer();
 
     // the junctions still to explore, i.e. nodes of the pruned tree where branches meet, with their number of differences to X
     int numJunctions;
@@ -83,24 +94,36 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     int[] bottomRunStamps;
     int threshold;
 
+    // per tip, the tips with close data that the bottom region of its branch has shortcuts to, or null without shortcuts
+    TipNeighbours tipNeighbours;
+
+    // per class of tips with identical data, the exploration that took the shortcuts of the class
+    int[] classStamps;
+
+    // per node, the exploration that checked the tip as the end of a shortcut, and the exploration that knows the number of differences at the node, with that number
+    int[] shortcutStamps;
+    int[] knownDifferenceStamps;
+    int[] knownNumDifferences;
+
+    // the nodes on the path from a tip up to a node with a known number of differences, with the change of the number from each of them down to the tip
+    Node[] pathNodes;
+    int[] pathDifferenceChanges;
+
+    // the sites where X differs from the base sequence of the tip neighbours, which are collected once per exploration that needs them
+    int[] subtreeBaseDifferenceSites;
+    int numSubtreeBaseDifferences;
+    boolean hasSubtreeBaseDifferences;
+
     // the subtree root of the current proposal, its old attachment point, its new grafting point and the distance between them, which are recorded as a move once accepted
     Node pickedSubtreeRoot;
     double oldParentHeight;
     GraftingPoint proposedGraftingPoint;
-    int proposedNumNodes;
-    double proposedPathLength;
-
-    // per node, the number and the total distance of its recorded moves, and the same over all nodes
-    int[] numMoves;
-    double[] totalMoveDistances;
-    long numAllMoves;
-    double totalAllMoveDistance;
+    ProposedMove proposedMove;
 
     // per node, the number of steps from the old sibling to the node, or -1 if it is no ancestor of the old sibling in the pruned tree
     int[] ancestorSteps;
 
-    // the diagnostics of the proposals so far: how often each node was picked, and the distances of the proposed and the accepted moves
-    int[] numPicks;
+    // the diagnostics of the proposals so far: the distances of the proposed and the accepted moves
     long numMeasuredProposals;
     long numSameBranchProposals;
     long totalProposedNumNodes;
@@ -109,18 +132,10 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     long totalAcceptedNumNodes;
     double totalAcceptedPathLength;
 
-    // the number of local explorations so far and the number of regions they explored
+    // the number of local explorations so far, the number of regions they explored and the number of tips they entered through shortcuts
     long numLocalExplorations;
     long numLocalRegions;
-
-    /**
-     * A part of a branch of the pruned tree with a constant sequence: the node below the
-     * branch, the index of the part counted from the top of the branch, the height range
-     * of the part that is older than X, and the number of sites where its sequence differs
-     * from the sequence of X, leaving out the sites where the data of X is missing.
-     */
-    record Region(Node node, int index, double lowerHeight, double upperHeight, int numDifferences) {
-    }
+    long numShortcutTips;
 
     @Override
     public void initAndValidate() {
@@ -131,29 +146,34 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
             throw new IllegalArgumentException("mdSPR does not support resampleNeighbourhood, as it changes the mutations of the pruned tree.");
         }
 
-        this.subtreeSelection = this.subtreeSelectionInput.get();
         this.annealing = this.annealingInput.get();
         this.fullExplorationProbability = this.fullExplorationProbabilityInput.get();
         this.windowProbability = this.windowProbabilityInput.get();
         if (this.windowProbability < 0.0 || this.windowProbability >= 1.0) {
             throw new IllegalArgumentException("windowProbability must be at least 0 and less than 1.");
         }
-        this.moveDistancePseudocount = this.moveDistancePseudocountInput.get();
-        if (this.moveDistancePseudocount <= 0.0) {
-            throw new IllegalArgumentException("moveDistancePseudocount must be positive.");
-        }
-        this.countRejectedMoves = this.countRejectedMovesInput.get();
+        this.subtreeSelector = this.createSubtreeSelector();
 
         this.subtreeSequenceChanges = new SiteChanges(this.mutations.getReferenceSequence().length);
 
+        int shortcutDistance = this.shortcutDistanceInput.get();
+        if (shortcutDistance >= 0) {
+            this.tipNeighbours = new TipNeighbours(this.mutations, this.tree, shortcutDistance);
+            this.subtreeBaseDifferenceSites = new int[this.mutations.getReferenceSequence().length];
+        }
+
         int numNodes = this.tree.getNodeCount();
-        this.selectionWeights = new double[numNodes];
+        if (this.tipNeighbours != null) {
+            this.classStamps = new int[this.tipNeighbours.getNumClasses()];
+            this.shortcutStamps = new int[numNodes];
+            this.knownDifferenceStamps = new int[numNodes];
+            this.knownNumDifferences = new int[numNodes];
+            this.pathNodes = new Node[numNodes];
+            this.pathDifferenceChanges = new int[numNodes];
+        }
         this.topRunStamps = new int[numNodes];
         this.bottomRunStamps = new int[numNodes];
-        this.numMoves = new int[numNodes];
-        this.totalMoveDistances = new double[numNodes];
         this.ancestorSteps = new int[numNodes];
-        this.numPicks = new int[numNodes];
         Arrays.fill(this.ancestorSteps, -1);
 
         this.weightFactor = this.scaleWeightByLogNumTipsInput.get() ? Math.log(this.tree.getLeafNodeCount()) : 1.0;
@@ -168,98 +188,37 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         return super.getWeight() * this.weightFactor;
     }
 
-    /**
-     * Picks X with probability proportional to its selection weight among all nodes where
-     * neither X nor its parent is the root.
-     */
-    @Override
-    protected Node pickSubtreeRoot() {
-        this.pickedSubtreeRoot = null;
-        this.proposedGraftingPoint = null;
-        double threshold = Randomizer.nextDouble() * this.computeSelectionWeights();
-
-        Node lastCandidate = null;
-        double cumulativeWeight = 0.0;
-        for (Node node : this.tree.getNodesAsArray()) {
-            double weight = this.selectionWeights[node.getNr()];
-            if (weight <= 0.0) {
-                continue;
-            }
-
-            lastCandidate = node;
-            cumulativeWeight += weight;
-            if (threshold < cumulativeWeight) {
-                return this.markPicked(node);
-            }
-        }
-
-        // only reached through rounding, or without any candidate
-        return this.markPicked(lastCandidate);
-    }
-
-    private Node markPicked(Node node) {
-        this.pickedSubtreeRoot = node;
-        if (node != null) {
-            this.numPicks[node.getNr()]++;
-        }
-        return node;
-    }
-
-    /**
-     * Returns the log of the selection weight of X over the total weight of the candidates.
-     * With UNIFORM, the number of candidates stays the same under moves that keep the root,
-     * so the choice is symmetric. With BRANCH_LENGTH, the move changes the lengths of the
-     * branches around the old and the new attachment point, and the nodes below the root.
-     * The mean move distances only change between proposals, but the move can still change
-     * which nodes hang below the root and hence the total weight.
-     */
-    @Override
-    protected double computeLogSubtreeRootProbability(Node x) {
-        if (this.subtreeSelection == SubtreeSelection.UNIFORM) {
-            return 0.0;
-        }
-
-        double totalWeight = this.computeSelectionWeights();
-        return Math.log(this.selectionWeights[x.getNr()] / totalWeight);
-    }
-
-    /**
-     * Fills the selection weights of all nodes for the current state and returns their
-     * total. The root and its children get the weight zero.
-     */
-    private double computeSelectionWeights() {
-        double totalWeight = 0.0;
-        for (Node node : this.tree.getNodesAsArray()) {
-            double weight = node.isRoot() || node.getParent().isRoot() ? 0.0 : this.computeSelectionWeight(node);
-            this.selectionWeights[node.getNr()] = weight;
-            totalWeight += weight;
-        }
-        return totalWeight;
-    }
-
-    /** Computes the unnormalised probability of picking the given node as X. */
-    private double computeSelectionWeight(Node node) {
-        return switch (this.subtreeSelection) {
-            case UNIFORM -> 1.0;
-            case BRANCH_LENGTH -> node.getLength();
-            case MOVED_NUM_NODES, MOVED_PATH_LENGTH, MOVED_SQUARED_PATH_LENGTH -> this.computeMeanMoveDistance(node);
+    private SubtreeSelector createSubtreeSelector() {
+        return switch (this.subtreeSelectionInput.get()) {
+            case UNIFORM -> new UniformSubtreeSelector(this.tree);
+            case BRANCH_LENGTH -> new BranchLengthSubtreeSelector(this.tree);
+            case MOVED_NUM_NODES -> this.createMoveDistanceSelector(MoveDistanceSubtreeSelector.Measure.NUM_NODES);
+            case MOVED_PATH_LENGTH -> this.createMoveDistanceSelector(MoveDistanceSubtreeSelector.Measure.PATH_LENGTH);
+            case MOVED_SQUARED_PATH_LENGTH -> this.createMoveDistanceSelector(MoveDistanceSubtreeSelector.Measure.SQUARED_PATH_LENGTH);
+            case SISTER_ACT -> new SisterActSubtreeSelector(
+                    this.tree, this.sisterActPowerInput.get(), this.sisterActFloorInput.get(),
+                    this.sisterActIntervalInput.get(), this.sisterActWarmupInput.get()
+            );
         };
     }
 
-    /**
-     * Computes the running mean distance of the recorded moves of the given node, which
-     * starts with a pseudocount of moves at the mean distance of all recorded moves. Without
-     * any distance yet, every node gets the same weight.
-     */
-    private double computeMeanMoveDistance(Node node) {
-        if (this.totalAllMoveDistance <= 0.0) {
-            return 1.0;
-        }
+    private SubtreeSelector createMoveDistanceSelector(MoveDistanceSubtreeSelector.Measure measure) {
+        return new MoveDistanceSubtreeSelector(this.tree, measure, this.moveDistancePseudocountInput.get(), this.countRejectedMovesInput.get());
+    }
 
-        double priorMeanDistance = this.totalAllMoveDistance / this.numAllMoves;
-        int nr = node.getNr();
-        return (this.moveDistancePseudocount * priorMeanDistance + this.totalMoveDistances[nr])
-                / (this.moveDistancePseudocount + this.numMoves[nr]);
+    /** Picks X with the subtree selector among all nodes where neither X nor its parent is the root. */
+    @Override
+    protected Node pickSubtreeRoot() {
+        this.proposedGraftingPoint = null;
+        this.subtreeSelector.prepare();
+        this.pickedSubtreeRoot = this.subtreeSelector.pick();
+        return this.pickedSubtreeRoot;
+    }
+
+    /** Returns the log of the selection probability of X in the current state, which the move can change through the weights of the nodes around it. */
+    @Override
+    protected double computeLogSubtreeRootProbability(Node x) {
+        return this.subtreeSelector.computeLogProbability(x);
     }
 
     /**
@@ -280,6 +239,10 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
      * it draws that threshold with j' = T - max(1, N'), so the Hastings ratio gains the
      * factor q^(max(1, N) - max(1, N')). With q = 0, a move to fewer differences cannot be
      * reversed and is rejected.
+     * <p>
+     * With shortcuts, the regions at the bottom of the branches above tips with close data
+     * are connected as well if both are within T. This is symmetric and does not depend on
+     * the attachment point of X, so the reverse move still finds the same regions.
      */
     @Override
     protected GraftingPoint proposeGraftingPoint(Node x) {
@@ -320,12 +283,11 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         this.exploreRegions(oldRegion, threshold);
         if (!isFullExploration) {
             this.numLocalExplorations++;
-            this.numLocalRegions += this.numRegions;
+            this.numLocalRegions += this.regions.size();
         }
-        double logTotalWeight = this.normaliseRegionWeights();
+        double logTotalWeight = this.regions.normaliseWeights();
 
-        int newRegionNr = this.sampleRegion();
-        Region newRegion = this.getRegion(newRegionNr);
+        Region newRegion = this.regions.sample();
         double newParentHeight = newRegion.lowerHeight() + Randomizer.nextDouble() * (newRegion.upperHeight() - newRegion.lowerHeight());
 
         // the reverse move has to draw the same threshold from the new attachment point
@@ -382,6 +344,9 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
      * either the same run spanning the whole branch or disjoint. Hence, each branch is walked
      * at most once from each end, and only the junctions at the ends of the branches need a
      * stack. The regions are written into the region buffers.
+     * <p>
+     * Tips whose bottom region was added are pushed onto the stack as well, which then
+     * continues through their shortcuts.
      */
     private void exploreRegions(Region start, int threshold) {
         this.startExploration(threshold);
@@ -394,6 +359,11 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
             this.numJunctions--;
             Node junction = this.junctionNodes[this.numJunctions];
             int numDifferences = this.junctionNumDifferences[this.numJunctions];
+
+            if (junction.isLeaf()) {
+                this.takeShortcuts(junction);
+                continue;
+            }
 
             List<Node> children = junction.getChildrenMutable();
             for (int i = 0; i < children.size(); i++) {
@@ -409,13 +379,19 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     /** Resets the region buffers and the junction stack, and starts a new stamp for the walked runs. */
     private void startExploration(int threshold) {
         this.threshold = threshold;
-        this.numRegions = 0;
+        this.regions.clear();
         this.numJunctions = 0;
+        this.hasSubtreeBaseDifferences = false;
 
         // the stamps only need resetting once the counter runs out
         if (this.explorationStamp == Integer.MAX_VALUE) {
             Arrays.fill(this.topRunStamps, 0);
             Arrays.fill(this.bottomRunStamps, 0);
+            if (this.tipNeighbours != null) {
+                Arrays.fill(this.classStamps, 0);
+                Arrays.fill(this.shortcutStamps, 0);
+                Arrays.fill(this.knownDifferenceStamps, 0);
+            }
             this.explorationStamp = 0;
         }
         this.explorationStamp++;
@@ -442,6 +418,9 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
 
         int index = this.getBranchMutations(node).size();
         if (numDifferences <= this.threshold && this.addRegion(node, index, numDifferences)) {
+            if (node.isLeaf()) {
+                this.pushJunction(node, numDifferences);
+            }
             this.walkUp(node, index, numDifferences);
         }
     }
@@ -463,8 +442,8 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
 
         this.bottomRunStamps[node.getNr()] = this.explorationStamp;
 
-        // junctions not older than X only lead to regions below X
-        if (node.getHeight() > this.x.getHeight()) {
+        // junctions not older than X only lead to regions below X, but tips may lead to shortcuts
+        if (node.isLeaf() || node.getHeight() > this.x.getHeight()) {
             this.pushJunction(node, numDifferences);
         }
     }
@@ -500,23 +479,10 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
             return false;
         }
 
-        if (this.numRegions == this.regionNodes.length) {
-            int capacity = 2 * this.numRegions;
-            this.regionNodes = Arrays.copyOf(this.regionNodes, capacity);
-            this.regionIndices = Arrays.copyOf(this.regionIndices, capacity);
-            this.regionNumDifferences = Arrays.copyOf(this.regionNumDifferences, capacity);
-            this.regionLowerHeights = Arrays.copyOf(this.regionLowerHeights, capacity);
-            this.regionUpperHeights = Arrays.copyOf(this.regionUpperHeights, capacity);
-            this.regionWeights = Arrays.copyOf(this.regionWeights, capacity);
-        }
-
-        int regionNr = this.numRegions++;
-        this.regionNodes[regionNr] = node;
-        this.regionIndices[regionNr] = index;
-        this.regionNumDifferences[regionNr] = numDifferences;
-        this.regionLowerHeights[regionNr] = lowerHeight;
-        this.regionUpperHeights[regionNr] = upperHeight;
-        this.regionWeights[regionNr] = this.computeLogWeight(lowerHeight, upperHeight, numDifferences);
+        this.regions.add(
+                new Region(node, index, lowerHeight, upperHeight, numDifferences),
+                this.computeLogWeight(lowerHeight, upperHeight, numDifferences)
+        );
         return true;
     }
 
@@ -530,14 +496,170 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         this.junctionNodes[this.numJunctions] = node;
         this.junctionNumDifferences[this.numJunctions] = numDifferences;
         this.numJunctions++;
+
+        // the counts of the shortcuts start from the nearest node with a known number
+        if (this.tipNeighbours != null) {
+            this.recordNumDifferences(node, numDifferences);
+        }
     }
 
-    private Region getRegion(int regionNr) {
-        return new Region(
-                this.regionNodes[regionNr], this.regionIndices[regionNr],
-                this.regionLowerHeights[regionNr], this.regionUpperHeights[regionNr],
-                this.regionNumDifferences[regionNr]
-        );
+    private void recordNumDifferences(Node node, int numDifferences) {
+        this.knownDifferenceStamps[node.getNr()] = this.explorationStamp;
+        this.knownNumDifferences[node.getNr()] = numDifferences;
+    }
+
+    /**
+     * Walks the runs at the bottom of the branches above the tips with close data to the
+     * given tip, whose bottom region was added. A shortcut stands for a path that first
+     * reverts the sites where one tip differs from X and then introduces the sites where the
+     * other one does, whose regions never have more differences than the larger number of
+     * either end. Hence, it connects both bottom regions exactly if both are within the
+     * threshold. A full exploration reaches every region anyway.
+     * <p>
+     * Whether a neighbour is entered only depends on the neighbour, so every tip is checked
+     * at most once per exploration, however many of its neighbours are reached.
+     */
+    private void takeShortcuts(Node tip) {
+        if (this.tipNeighbours == null || this.threshold == Integer.MAX_VALUE) {
+            return;
+        }
+
+        // all tips of a class have the same neighbours, so the first of them that is reached takes them all
+        int classNr = this.tipNeighbours.getClassNr(tip);
+        if (this.classStamps[classNr] == this.explorationStamp) {
+            return;
+        }
+        this.classStamps[classNr] = this.explorationStamp;
+
+        this.enterClassFromBottom(classNr);
+        for (int neighbourClassNr : this.tipNeighbours.getNeighbourClasses(classNr)) {
+            this.enterClassFromBottom(neighbourClassNr);
+        }
+    }
+
+    private void enterClassFromBottom(int classNr) {
+        for (int nr : this.tipNeighbours.getMembers(classNr)) {
+            if (this.shortcutStamps[nr] == this.explorationStamp) {
+                continue;
+            }
+            this.shortcutStamps[nr] = this.explorationStamp;
+
+            Node neighbour = this.tree.getNode(nr);
+            if (neighbour == this.x || this.bottomRunStamps[nr] == this.explorationStamp) {
+                continue;
+            }
+
+            // tips inside X have no bottom region older than X, as the branches above them end below X
+            int index = this.getBranchMutations(neighbour).size();
+            if (this.getUpperHeight(neighbour, index) <= this.getLowerHeight(neighbour, index)) {
+                continue;
+            }
+
+            // the data of the neighbour bound its number of differences from below, which spares counting most neighbours beyond the threshold
+            if (this.countDefiniteDifferences(neighbour) > this.threshold) {
+                continue;
+            }
+
+            this.numShortcutTips++;
+            this.enterFromBottom(neighbour, this.countTipDifferences(neighbour));
+        }
+    }
+
+    /**
+     * Counts the differences between the sequence of the given tip and X at the sites where
+     * the data of the tip is a single state, which fixes the state of the tip there. This
+     * is a lower bound of the differences of the region at the bottom of the branch above
+     * the tip, which may also differ where the data of the tip is missing or ambiguous.
+     */
+    private int countDefiniteDifferences(Node tip) {
+        if (!this.hasSubtreeBaseDifferences) {
+            this.collectSubtreeBaseDifferences();
+        }
+
+        int[] definiteSites = this.tipNeighbours.getDefiniteSites(tip);
+        int[] definiteStates = this.tipNeighbours.getDefiniteStates(tip);
+
+        int numDifferences = 0;
+        for (int i = 0; i < definiteSites.length; i++) {
+            numDifferences += this.isDifferentState(definiteSites[i], definiteStates[i]) ? 1 : 0;
+        }
+
+        // at the other sites where X differs from the base, a definite tip has the base state
+        BitSet tipMissingSites = this.missingSites.getSiteSet(tip);
+        BitSet tipAmbiguousSites = this.missingSites.getAmbiguousSiteSet(tip);
+        for (int i = 0; i < this.numSubtreeBaseDifferences; i++) {
+            int site = this.subtreeBaseDifferenceSites[i];
+            if (!tipMissingSites.get(site) && !tipAmbiguousSites.get(site) && Arrays.binarySearch(definiteSites, site) < 0) {
+                numDifferences++;
+            }
+        }
+        return numDifferences;
+    }
+
+    /**
+     * Collects the sites where the base state counts as a difference to X. X can only differ
+     * from the base where its sequence differs from the reference sequence or the base does.
+     */
+    private void collectSubtreeBaseDifferences() {
+        int[] baseSequence = this.tipNeighbours.getBaseSequence();
+        this.numSubtreeBaseDifferences = 0;
+
+        for (int slot = 0; slot < this.subtreeSequenceChanges.getSize(); slot++) {
+            int site = this.subtreeSequenceChanges.getSite(slot);
+            if (this.isDifferentState(site, baseSequence[site])) {
+                this.subtreeBaseDifferenceSites[this.numSubtreeBaseDifferences++] = site;
+            }
+        }
+        for (int site : this.tipNeighbours.getBaseChangeSites()) {
+            if (!this.subtreeSequenceChanges.containsSite(site) && this.isDifferentState(site, baseSequence[site])) {
+                this.subtreeBaseDifferenceSites[this.numSubtreeBaseDifferences++] = site;
+            }
+        }
+        this.hasSubtreeBaseDifferences = true;
+    }
+
+    /**
+     * Counts the differences between the sequence of the given tip and X in the same way as
+     * the walks, so that it matches the number of the region at the bottom of the branch
+     * above the tip. It walks up from the tip to the nearest node whose number is known in
+     * this exploration, or to the top of the root branch, where the sequence is the
+     * reference sequence, and adds the changes of the crossed mutations. The numbers of
+     * the nodes on the way become known as well, so later counts stop there.
+     */
+    private int countTipDifferences(Node tip) {
+        int numPathNodes = 0;
+        int differenceChange = 0;
+        Node node = tip;
+        while (node != null && this.knownDifferenceStamps[node.getNr()] != this.explorationStamp) {
+            this.pathNodes[numPathNodes] = node;
+            this.pathDifferenceChanges[numPathNodes] = differenceChange;
+            numPathNodes++;
+
+            for (Mutation mutation : this.getBranchMutations(node)) {
+                differenceChange += this.computeDifferenceChange(mutation);
+            }
+            node = node.isRoot() ? null : this.getPrunedParent(this.x, node);
+        }
+
+        int numDifferences = differenceChange + (node == null ? this.countReferenceDifferences() : this.knownNumDifferences[node.getNr()]);
+        for (int i = 0; i < numPathNodes; i++) {
+            this.recordNumDifferences(this.pathNodes[i], numDifferences - this.pathDifferenceChanges[i]);
+        }
+        return numDifferences;
+    }
+
+    /**
+     * Counts the differences between the reference sequence and X. X only differs from it
+     * where its sequence changes, as its states at the resampled ambiguous sites are
+     * compatible with its data.
+     */
+    private int countReferenceDifferences() {
+        int numDifferences = 0;
+        for (int slot = 0; slot < this.subtreeSequenceChanges.getSize(); slot++) {
+            int site = this.subtreeSequenceChanges.getSite(slot);
+            numDifferences += this.isDifferentState(site, this.referenceSequence[site]) ? 1 : 0;
+        }
+        return numDifferences;
     }
 
     /**
@@ -597,15 +719,18 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
      */
     private int computeDifferenceChange(Mutation mutation) {
         int site = mutation.site();
+        return (this.isDifferentState(site, mutation.newState()) ? 1 : 0) - (this.isDifferentState(site, mutation.oldState()) ? 1 : 0);
+    }
+
+    /** Checks whether the given state counts as a difference to X at the given site. */
+    private boolean isDifferentState(int site, int state) {
         if (this.subtreeMissingSiteSet.get(site)) {
-            return 0;
+            return false;
         }
         if (this.subtreeAmbiguousSiteSet.get(site)) {
-            return (this.isCompatibleState(site, mutation.newState()) ? 0 : 1) - (this.isCompatibleState(site, mutation.oldState()) ? 0 : 1);
+            return !this.isCompatibleState(site, state);
         }
-
-        int subtreeState = this.getSubtreeState(site);
-        return (mutation.newState() != subtreeState ? 1 : 0) - (mutation.oldState() != subtreeState ? 1 : 0);
+        return state != this.getSubtreeState(site);
     }
 
     /** Checks whether the given state is compatible with the data of X at the given resampled ambiguous site. */
@@ -621,49 +746,6 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     }
 
     /* Grafting Density */
-
-    /**
-     * Turns the log weights in the region buffers into weights relative to the largest one
-     * and returns the log of their total.
-     */
-    private double normaliseRegionWeights() {
-        double max = Double.NEGATIVE_INFINITY;
-        for (int i = 0; i < this.numRegions; i++) {
-            max = Math.max(max, this.regionWeights[i]);
-        }
-
-        double sum = 0.0;
-        for (int i = 0; i < this.numRegions; i++) {
-            this.regionWeights[i] = Math.exp(this.regionWeights[i] - max);
-            sum += this.regionWeights[i];
-        }
-        return max + Math.log(sum);
-    }
-
-    /** Samples a region with probability proportional to its weight. */
-    private int sampleRegion() {
-        double totalWeight = 0.0;
-        for (int i = 0; i < this.numRegions; i++) {
-            totalWeight += this.regionWeights[i];
-        }
-
-        double threshold = Randomizer.nextDouble() * totalWeight;
-        double cumulativeWeight = 0.0;
-        for (int i = 0; i < this.numRegions; i++) {
-            cumulativeWeight += this.regionWeights[i];
-            if (threshold < cumulativeWeight) {
-                return i;
-            }
-        }
-
-        // only reached through rounding, so return the last region with positive weight
-        for (int i = this.numRegions - 1; i > 0; i--) {
-            if (this.regionWeights[i] > 0.0) {
-                return i;
-            }
-        }
-        return 0;
-    }
 
     /** Computes the log weight of a region: its length times the grafting density at its midpoint. */
     private double computeLogWeight(double lowerHeight, double upperHeight, int numDifferences) {
@@ -701,8 +783,7 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         double newParentHeight = this.proposedGraftingPoint.newParentHeight();
 
         if (newSibling == oldSibling) {
-            this.proposedNumNodes = 0;
-            this.proposedPathLength = Math.abs(newParentHeight - this.oldParentHeight);
+            this.proposedMove = new ProposedMove(0, Math.abs(newParentHeight - this.oldParentHeight));
         } else {
             int steps = 0;
             for (Node node = oldSibling; node != null; node = this.getPrunedParent(this.x, node)) {
@@ -723,14 +804,16 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
 
             // M is crossed by the paths from both siblings unless it is one of them
             boolean isMrcaSibling = mrca == oldSibling || mrca == newSibling;
-            this.proposedNumNodes = numOldSteps + numNewSteps - (isMrcaSibling ? 0 : 1);
-            this.proposedPathLength = Math.abs(mrca.getHeight() - this.oldParentHeight) + Math.abs(mrca.getHeight() - newParentHeight);
+            this.proposedMove = new ProposedMove(
+                    numOldSteps + numNewSteps - (isMrcaSibling ? 0 : 1),
+                    Math.abs(mrca.getHeight() - this.oldParentHeight) + Math.abs(mrca.getHeight() - newParentHeight)
+            );
         }
 
         this.numMeasuredProposals++;
-        this.totalProposedNumNodes += this.proposedNumNodes;
-        this.totalProposedPathLength += this.proposedPathLength;
-        if (this.proposedNumNodes == 0) {
+        this.totalProposedNumNodes += this.proposedMove.numNodes();
+        this.totalProposedPathLength += this.proposedMove.pathLength();
+        if (this.proposedMove.numNodes() == 0) {
             this.numSameBranchProposals++;
         }
     }
@@ -744,47 +827,22 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         }
 
         this.numMeasuredAccepts++;
-        this.totalAcceptedNumNodes += this.proposedNumNodes;
-        this.totalAcceptedPathLength += this.proposedPathLength;
+        this.totalAcceptedNumNodes += this.proposedMove.numNodes();
+        this.totalAcceptedPathLength += this.proposedMove.pathLength();
 
-        if (this.isMoveDistanceSelection()) {
-            this.recordMove(this.getSelectionDistance());
-        }
+        this.subtreeSelector.acceptMove(this.pickedSubtreeRoot, this.proposedMove);
+        this.pickedSubtreeRoot = null;
+        this.proposedGraftingPoint = null;
     }
 
-    /** Records the rejected proposal as a move of distance zero, if rejected proposals count. */
+    /** Lets the subtree selection learn from the rejected proposal. */
     @Override
     public void reject(int reason) {
         super.reject(reason);
-        if (this.pickedSubtreeRoot != null && this.countRejectedMoves && this.isMoveDistanceSelection()) {
-            this.recordMove(0.0);
+        if (this.pickedSubtreeRoot != null) {
+            this.subtreeSelector.rejectMove(this.pickedSubtreeRoot);
+            this.pickedSubtreeRoot = null;
         }
-    }
-
-    private boolean isMoveDistanceSelection() {
-        return this.subtreeSelection != SubtreeSelection.UNIFORM && this.subtreeSelection != SubtreeSelection.BRANCH_LENGTH;
-    }
-
-    /** Returns the distance of the proposed move in the measure of the subtree selection. */
-    private double getSelectionDistance() {
-        return switch (this.subtreeSelection) {
-            case MOVED_NUM_NODES -> this.proposedNumNodes;
-            case MOVED_PATH_LENGTH -> this.proposedPathLength;
-            case MOVED_SQUARED_PATH_LENGTH -> this.proposedPathLength * this.proposedPathLength;
-            case UNIFORM, BRANCH_LENGTH -> throw new IllegalStateException("No move distance for " + this.subtreeSelection + ".");
-        };
-    }
-
-    /** Adds a move of the given distance to the running mean of the picked subtree root, once per proposal. */
-    private void recordMove(double distance) {
-        int nr = this.pickedSubtreeRoot.getNr();
-        this.numMoves[nr]++;
-        this.totalMoveDistances[nr] += distance;
-        this.numAllMoves++;
-        this.totalAllMoveDistance += distance;
-
-        this.pickedSubtreeRoot = null;
-        this.proposedGraftingPoint = null;
     }
 
     /* Diagnostics */
@@ -792,43 +850,21 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     /**
      * Returns the diagnostics of the proposals so far by name: the mean number of candidate
      * regions of the local explorations, the mean distances of the proposed and the accepted
-     * moves, the fraction of proposals that stay on the joined branch, and how evenly the
-     * subtrees are picked. The effective number of subtrees is (Σc)² / Σc² over the pick
-     * counts c, or over the selection weights in the current state, and equals the number of
-     * candidates if all are picked equally often.
+     * moves, the fraction of proposals that stay on the joined branch, and the diagnostics
+     * of the subtree selection.
      */
     public Map<String, Double> getDiagnostics() {
         Map<String, Double> diagnostics = new LinkedHashMap<>();
         diagnostics.put("mdspr_local_regions", this.getMeanNumLocalRegions());
+        diagnostics.put("mdspr_shortcut_tips", this.numLocalExplorations == 0 ? Double.NaN : (double) this.numShortcutTips / this.numLocalExplorations);
         diagnostics.put("mdspr_mean_proposed_nodes", (double) this.totalProposedNumNodes / this.numMeasuredProposals);
         diagnostics.put("mdspr_mean_proposed_path_length", this.totalProposedPathLength / this.numMeasuredProposals);
         diagnostics.put("mdspr_same_branch_fraction", (double) this.numSameBranchProposals / this.numMeasuredProposals);
         diagnostics.put("mdspr_mean_accepted_nodes", (double) this.totalAcceptedNumNodes / this.numMeasuredAccepts);
         diagnostics.put("mdspr_mean_accepted_path_length", this.totalAcceptedPathLength / this.numMeasuredAccepts);
 
-        double totalPicks = 0.0;
-        double totalSquaredPicks = 0.0;
-        double tipPicks = 0.0;
-        for (Node node : this.tree.getNodesAsArray()) {
-            double picks = this.numPicks[node.getNr()];
-            totalPicks += picks;
-            totalSquaredPicks += picks * picks;
-            if (node.isLeaf()) {
-                tipPicks += picks;
-            }
-        }
-        diagnostics.put("mdspr_effective_picked_subtrees", totalPicks * totalPicks / totalSquaredPicks);
-        diagnostics.put("mdspr_tip_pick_fraction", tipPicks / totalPicks);
-
-        double totalWeight = this.computeSelectionWeights();
-        double totalSquaredWeight = 0.0;
-        int numCandidates = 0;
-        for (double weight : this.selectionWeights) {
-            totalSquaredWeight += weight * weight;
-            numCandidates += weight > 0.0 ? 1 : 0;
-        }
-        diagnostics.put("mdspr_effective_weighted_subtrees", totalWeight * totalWeight / totalSquaredWeight);
-        diagnostics.put("mdspr_num_candidates", (double) numCandidates);
+        this.subtreeSelector.addDiagnostics(diagnostics);
+        diagnostics.put("mdspr_sister_act_samples", (double) this.subtreeSelector.getNumSamples());
         return diagnostics;
     }
 

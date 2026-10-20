@@ -304,6 +304,64 @@ public class SubtreePruneRegraftPosteriorTest {
     }
 
     /**
+     * Runs mdSPR with local explorations only that also take the shortcuts between tips with
+     * close data, together with branch reform. The data of the tips differ at one to three
+     * sites, so both distances connect some but not all pairs of tips. The rooted
+     * topologies follow the same posterior as with the other subtree moves, also where the
+     * data of the tips are partially ambiguous.
+     */
+    @Test
+    public void testShortcutMdSprTopologiesMatchPosterior() {
+        for (String[] sequences : List.of(SEQUENCES, AMBIGUOUS_SEQUENCES)) {
+            for (int shortcutDistance : new int[]{1, 2}) {
+                Randomizer.setSeed(19);
+                this.assertShortcutMdSprMatchesPosterior(this.createSetup(new JukesCantor(), 1.0, sequences), shortcutDistance);
+            }
+        }
+    }
+
+    private void assertShortcutMdSprMatchesPosterior(Setup setup, int shortcutDistance) {
+        MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+        mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                "fullExplorationProbability", 0.0, "windowProbability", 0.5, "shortcutDistance", shortcutDistance);
+
+        BranchReformOperator branchReformOperator = new BranchReformOperator();
+        branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
+
+        Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
+        Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, branchReformOperator));
+        this.assertFrequencies(expectedFrequencies, topologyCounts);
+        assertTrue(mdSprOperator.getDiagnostics().get("mdspr_shortcut_tips") > 0.0);
+    }
+
+    /**
+     * Runs mdSPR with the SISTER_ACT selection, whose weights change every few proposals, together
+     * with branch reform. It only picks tips, with a power and a floor that make the picks very
+     * uneven. The rooted topologies follow the same posterior as with the uniform choice, and
+     * the weights get estimated from many samples.
+     */
+    @Test
+    public void testSisterActTopologiesMatchPosterior() {
+        for (String[] sequences : List.of(SEQUENCES, AMBIGUOUS_SEQUENCES)) {
+            Randomizer.setSeed(23);
+            Setup setup = this.createSetup(new JukesCantor(), 1.0, sequences);
+
+            MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+            mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                    "subtreeSelection", MutationDirectedSprOperator.SubtreeSelection.SISTER_ACT, "sisterActPower", 3.0, "sisterActFloor", 0.2,
+                    "sisterActInterval", 3, "sisterActWarmup", 5, "fullExplorationProbability", 0.5, "windowProbability", 0.5);
+
+            BranchReformOperator branchReformOperator = new BranchReformOperator();
+            branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
+
+            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
+            Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, branchReformOperator));
+            this.assertFrequencies(expectedFrequencies, topologyCounts);
+            assertTrue(mdSprOperator.getDiagnostics().get("mdspr_sister_act_samples") > 1000.0);
+        }
+    }
+
+    /**
      * Runs mdSPR with every strategy of picking the subtrees, together with branch reform.
      * The rooted topologies follow the same posterior as with the uniform choice. The
      * move-distance strategies run both with and without counting the rejected proposals.
