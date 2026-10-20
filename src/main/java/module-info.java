@@ -3,6 +3,7 @@ import emat.alignment.FitchFilteredAlignment;
 import emat.benchmark.TimedMCMC;
 import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.BranchReformOperator;
+import emat.operators.IdenticalTipPermutationOperator;
 import emat.operators.IntervalScaleOperator;
 import emat.operators.MutationDirectedSprOperator;
 import emat.operators.MutationTimeOperator;
@@ -57,6 +58,7 @@ open module my.beast.example {
             WilsonBaldingOperator,
             IntervalScaleOperator,
             MutationDirectedSprOperator,
+            IdenticalTipPermutationOperator,
             BranchReformOperator,
             ParameterFollowingOperator,
             ParameterFollowing,

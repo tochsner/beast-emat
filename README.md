@@ -38,6 +38,7 @@ All operators live in `emat.operators` and keep the mutations on the tree consis
 | `SubtreeSlideOperator`         | Slides the parent of a subtree up or down the tree.                                                         |
 | `WilsonBaldingOperator`        | Regrafts a subtree onto a uniformly chosen branch at a uniform height.                                      |
 | `MutationDirectedSprOperator`  | Regrafts a subtree preferably where the sequences are similar, using the mutations as a parsimony map.      |
+| `IdenticalTipPermutationOperator` | Permutes tips with identical data, uniformly among the permutations allowed by the heights and mutations. |
 
 **Mutation and history moves**
 
