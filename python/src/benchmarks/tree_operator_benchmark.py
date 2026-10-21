@@ -81,7 +81,10 @@ DATASETS = {
 DATASET = DATASETS["hcv"]
 
 # the output directory per experiment, relative to the benchmark directory
-OUTPUT_NAMES = {"operators": "{dataset}", "window": "{dataset}_window", "burnin": "{dataset}_burnin"}
+OUTPUT_NAMES = {
+    "operators": "{dataset}", "window": "{dataset}_window", "burnin": "{dataset}_burnin", "sampler": "{dataset}_sampler",
+    "shortcut": "{dataset}_shortcut", "sister_act": "{dataset}_sister_act",
+}
 OUTPUT_PATH = TESTS_PATH / "operator_benchmark" / "hcv"
 
 # the operators that change the tree, which are left out one at a time
@@ -117,6 +120,8 @@ class Configuration:
     experiment: str
     removed_operators: list[str] = field(default_factory=list)
     operator_attributes: dict[str, dict[str, str]] = field(default_factory=dict)
+    # operators to add as copies of an existing one, as (id of the template, id of the copy, attributes to set on the copy)
+    added_operators: list[tuple[str, str, dict[str, str]]] = field(default_factory=list)
     labels: dict = field(default_factory=dict)
 
 
@@ -188,7 +193,52 @@ def get_burnin_configurations() -> list[Configuration]:
     return [Configuration("burnin", "burnin")]
 
 
-CONFIGURATIONS = {"operators": get_configurations, "window": get_window_configurations, "burnin": get_burnin_configurations}
+def get_sampler_configurations() -> list[Configuration]:
+    """Returns mdSPR with the Jukes-Cantor, the exact and the hybrid sampler of the history on the branch above the pruned subtree."""
+    return [
+        Configuration(
+            f"sampler_{sampler.lower()}", "history_sampler",
+            operator_attributes={DATASET.spr_operator_id: {"historySampler": sampler}},
+            labels={"historySampler": sampler},
+        )
+        for sampler in ["JUKES_CANTOR", "EXACT", "HYBRID"]
+    ]
+
+
+def get_shortcut_configurations() -> list[Configuration]:
+    """Returns mdSPR without shortcuts between tips, and with shortcuts between tips whose data differ at up to one or two sites."""
+    return [
+        Configuration(
+            f"shortcut_d{shortcut_distance}".replace("-", "m"), "shortcut",
+            operator_attributes={DATASET.spr_operator_id: {"shortcutDistance": str(shortcut_distance)}},
+            labels={"shortcutDistance": shortcut_distance},
+        )
+        for shortcut_distance in [-1, 1, 2]
+    ]
+
+
+def get_sister_act_configurations() -> list[Configuration]:
+    """Returns the unchanged base analysis, and the base analysis with a second, lighter mdSPR that picks tips by SISTER_ACT and explores the whole tree in half of its proposals."""
+    return [
+        Configuration("baseline", "sister_act", labels={"sisterAct": False}),
+        Configuration(
+            "sister_act", "sister_act",
+            added_operators=[(DATASET.spr_operator_id, f"SisterActSprOperator.{DATASET.partition}", {
+                "subtreeSelection": "SISTER_ACT",
+                "fullExplorationProbability": "0.5",
+                "weight": "20.0",
+                "scaleWeightByLogNumTips": "false",
+            })],
+            labels={"sisterAct": True},
+        ),
+    ]
+
+
+CONFIGURATIONS = {
+    "operators": get_configurations, "window": get_window_configurations, "burnin": get_burnin_configurations,
+    "sampler": get_sampler_configurations, "shortcut": get_shortcut_configurations,
+    "sister_act": get_sister_act_configurations,
+}
 
 
 # XML generation
@@ -285,11 +335,24 @@ def build_xml(
 
     operators = {operator.get("id"): operator for operator in run.findall("operator")}
 
+    # slice operators do not support single proposals, which the timed chain makes
+    for operator_id, operator in list(operators.items()):
+        if operator.get("spec", "").startswith("slice."):
+            run.remove(operator)
+            del operators[operator_id]
+
     for operator_id in configuration.removed_operators:
         run.remove(operators[operator_id])
     for operator_id, attributes in configuration.operator_attributes.items():
         for key, value in attributes.items():
             operators[operator_id].set(key, value)
+
+    for template_id, operator_id, attributes in configuration.added_operators:
+        operator = copy.deepcopy(operators[template_id])
+        operator.set("id", operator_id)
+        for key, value in attributes.items():
+            operator.set(key, value)
+        run.insert(list(run).index(operators[template_id]) + 1, operator)
 
     for logger in run.findall("logger"):
         if logger.get("id") == "tracelog":
@@ -459,6 +522,7 @@ def analyse_run(configuration: Configuration, seed: int, output_path: Path) -> d
         "ess_per_million_steps": {key: value / num_steps * 1e6 for key, value in ess.items()},
         "topology_changes_per_second": timings_df["topology_changes"].sum() / (totals["total_ns"] / 1e9),
         "mdspr_local_regions": totals.get("mdspr_local_regions"),
+        "mdspr_shortcut_tips": totals.get("mdspr_shortcut_tips"),
         "operators": operators,
     }
 
@@ -487,6 +551,8 @@ def analyse(args: argparse.Namespace) -> None:
             "step_us": result["step_us"],
             **{f"{key}/h": value for key, value in result["ess_per_hour"].items()},
             "topology_changes/s": result["topology_changes_per_second"],
+            "local_regions": result["mdspr_local_regions"],
+            "shortcut_tips": result["mdspr_shortcut_tips"],
         })
     summary_df = pd.DataFrame(rows).groupby("configuration", sort=False).mean()
     print(summary_df.round(1).to_string())
