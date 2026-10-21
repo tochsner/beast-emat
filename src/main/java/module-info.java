@@ -11,6 +11,8 @@ import emat.operators.InnerNodeDisplacementOperator;
 import emat.operators.BatchNodeDisplacementOperator;
 import emat.operators.SiteHistoryGibbsOperator;
 import emat.operators.SiteRegionGibbsOperator;
+import emat.operators.MissingTipGibbsOperator;
+import emat.operators.MissingCladeGibbsOperator;
 import emat.operators.RootScaleOperator;
 import emat.operators.ParameterFollowingOperator;
 import emat.helper.ExcessMutationLogger;
@@ -50,6 +52,8 @@ open module my.beast.example {
             BatchNodeDisplacementOperator,
             SiteHistoryGibbsOperator,
             SiteRegionGibbsOperator,
+            MissingTipGibbsOperator,
+            MissingCladeGibbsOperator,
             RootScaleOperator,
             IntervalScaleOperator,
             MutationDirectedSprOperator,

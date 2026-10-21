@@ -3,7 +3,7 @@ package emat.helper;
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.datatype.DataType;
 import beast.base.evolution.tree.Node;
-import beast.base.evolution.tree.Tree;
+import beast.base.evolution.tree.TreeInterface;
 import emat.state.Mutations;
 
 import java.util.Arrays;
@@ -27,7 +27,7 @@ public final class MissingSites {
     private final BitSet[] ambiguousSiteSetOfNode;
     private final int[][] compatibleStatesOfNode;
 
-    public MissingSites(Mutations mutations, Tree tree) {
+    public MissingSites(Mutations mutations, TreeInterface tree) {
         Alignment alignment = mutations.getAlignment();
         DataType dataType = alignment.getDataType();
         int numStates = alignment.getMaxStateCount();
