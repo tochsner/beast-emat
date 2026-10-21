@@ -18,8 +18,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-@Description("Displaces the heights of a batch of internal nodes, each within the range that keeps the topology and " +
-    "the times of all mutations on its adjacent branches. Every node draws its new height from the conditional of " +
+@Description("Displaces the heights of a batch of internal nodes one after the other, each within the range that keeps " +
+    "the topology and the times of all mutations on its adjacent branches. Every node draws its new height from the conditional of " +
     "the genetic prior times a learned quadratic approximation of the tree prior, so only the error of that approximation " +
     "enters the acceptance probability.")
 public class BatchNodeDisplacementOperator extends TreeOperator {
@@ -40,7 +40,7 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     final public Input<List<StateNode>> treePriorParametersInput = new Input<>("treePriorParameter", "real scalar or vector parameters of the tree prior, which the approximation of the tree prior may depend on", new ArrayList<>());
     final public Input<Integer> treePriorWarmUpInput = new Input<>("treePriorWarmUp", "the number of proposals after which the approximation of the tree prior is fitted for the first time", 500);
     final public Input<Boolean> scaleWeightByLogNumTipsInput = new Input<>("scaleWeightByLogNumTips", "whether to scale the weight by the natural logarithm of the number of tips n, so that the operator is selected with weight * ln(n). Otherwise, the weight is used as given", false);
-    final public Input<TreePriorSurrogate> treePriorInput = new Input<>("treePrior", "a shared approximation of the tree prior, which this operator teaches and other operators may draw from. If it is given, the other tree prior inputs are ignored");
+    final public Input<TreePriorSurrogate> treePriorInput =new Input<>("treePrior", "a shared approximation of the tree prior, which this operator teaches and other operators may draw from. If it is given, the other tree prior inputs are ignored");
 
     private Tree tree;
     private Mutations mutations;
@@ -57,15 +57,9 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     // the numbers of the internal nodes, in the order they were visited for the last batch
     private int[] internalNodeNrs;
 
-    // the nodes of the last batch with the lowest and the highest height they can take, which do not change while
-    // the batch is displaced as the heights and the mutation times that bound them belong to nodes outside the batch
+    // the nodes of the last batch, in the order they were displaced in
     private Node[] batchNodes;
-    private double[] batchMinHeights;
-    private double[] batchMaxHeights;
     private int batchCount;
-
-    // for every node number, whether the node is in the batch that is being selected
-    private boolean[] isInBatch;
 
     // for every site, the stamp of the last branch on which a mutation at the site was seen
     private int[] siteStamps;
@@ -101,9 +95,6 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         }
 
         this.batchNodes = new Node[this.internalNodeNrs.length];
-        this.batchMinHeights = new double[this.internalNodeNrs.length];
-        this.batchMaxHeights = new double[this.internalNodeNrs.length];
-        this.isInBatch = new boolean[this.tree.getNodeCount()];
         this.siteStamps = new int[this.mutations.getReferenceSequence().length];
 
         this.setCoercableParameterValue(this.batchSizeInput.get());
@@ -155,24 +146,32 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
 
         double logHastingsRatio = 0.0;
         for (int i = 0; i < this.batchCount; i++) {
-            logHastingsRatio += this.displace(this.batchNodes[i], this.batchMinHeights[i], this.batchMaxHeights[i]);
+            Node node = this.batchNodes[i];
+
+            // the range of a node depends on the nodes that were displaced before it
+            double minHeight = this.computeMinHeight(node);
+            double maxHeight = this.computeMaxHeight(node);
+            if (maxHeight <= minHeight) {
+                continue;
+            }
+
+            logHastingsRatio += this.displace(node, minHeight, maxHeight);
         }
 
         return logHastingsRatio;
     }
 
     /**
-     * Selects a set of internal nodes to be changed, and the range of heights of every one of them. The set does
-     * not contain the root. No parent or child of a node in the set is in the set as well. No node without room
-     * to move between its neighbours and the mutations around it is in the set. The choice only depends on the
-     * topology, on the mutations and on the heights of nodes outside the set, so it is symmetric and has no effect
-     * on the Hastings ratio.
+     * Selects a random set of non-root internal nodes in random order, without looking at heights or mutations.
+     * Displacing them in this order and then in the opposite order are equally likely, and the node at each step
+     * sees the same neighbour heights in both directions: the nodes before it at their new heights, and the nodes
+     * after it at their old heights. Hence its range and its rate are the same in both directions, and a node
+     * without room is skipped in both. The normalisations cancel, so the selection has no effect on the Hastings
+     * ratio.
      */
     private void selectBatch() {
         int targetSize = Math.toIntExact(Math.round(this.batchSize));
         this.batchCount = 0;
-
-        // visit the internal nodes in random order until the batch is full, skipping the ones that cannot join it
 
         int numInternalNodes = this.internalNodeNrs.length;
         for (int i = 0; i < numInternalNodes && this.batchCount < targetSize; i++) {
@@ -183,31 +182,9 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
             this.internalNodeNrs[i] = nodeNr;
 
             Node node = this.tree.getNode(nodeNr);
-            if (node.isRoot()) {
-                continue;
+            if (!node.isRoot()) {
+                this.batchNodes[this.batchCount++] = node;
             }
-
-            Node left = node.getLeft();
-            Node right = node.getRight();
-            if (this.isInBatch[node.getParent().getNr()] || this.isInBatch[left.getNr()] || this.isInBatch[right.getNr()]) {
-                continue;
-            }
-
-            double minHeight = this.computeMinHeight(node);
-            double maxHeight = this.computeMaxHeight(node);
-            if (maxHeight <= minHeight) {
-                continue;
-            }
-
-            this.batchNodes[this.batchCount] = node;
-            this.batchMinHeights[this.batchCount] = minHeight;
-            this.batchMaxHeights[this.batchCount] = maxHeight;
-            this.batchCount++;
-            this.isInBatch[nodeNr] = true;
-        }
-
-        for (int i = 0; i < this.batchCount; i++) {
-            this.isInBatch[this.batchNodes[i].getNr()] = false;
         }
     }
 
