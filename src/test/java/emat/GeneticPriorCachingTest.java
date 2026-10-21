@@ -18,8 +18,6 @@ import emat.operators.IntervalScaleOperator;
 import emat.operators.MutationDirectedSprOperator;
 import emat.operators.MutationTimeOperator;
 import emat.operators.SiteHistoryGibbsOperator;
-import emat.operators.SubtreeSlideOperator;
-import emat.operators.WilsonBaldingOperator;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
 import org.junit.jupiter.api.Test;
@@ -92,20 +90,6 @@ public class GeneticPriorCachingTest {
 
         // set up the operators
 
-        WilsonBaldingOperator wilsonBaldingOperator = new WilsonBaldingOperator();
-        wilsonBaldingOperator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "geneticPrior", geneticPrior);
-
-        SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
-        subtreeSlideOperator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "geneticPrior", geneticPrior, "size", 0.2);
-
-        WilsonBaldingOperator neighbourhoodWilsonBaldingOperator = new WilsonBaldingOperator();
-        neighbourhoodWilsonBaldingOperator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "geneticPrior", geneticPrior,
-                "resampleNeighbourhood", true);
-
-        SubtreeSlideOperator neighbourhoodSubtreeSlideOperator = new SubtreeSlideOperator();
-        neighbourhoodSubtreeSlideOperator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "geneticPrior", geneticPrior,
-                "size", 0.2, "resampleNeighbourhood", true);
-
         MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
         mdSprOperator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "geneticPrior", geneticPrior);
 
@@ -119,7 +103,6 @@ public class GeneticPriorCachingTest {
         gibbsOperator.initByName("weight", 1.0, "mutations", mutations, "geneticPrior", geneticPrior);
 
         List<Operator> operators = List.of(
-                wilsonBaldingOperator, subtreeSlideOperator, neighbourhoodWilsonBaldingOperator, neighbourhoodSubtreeSlideOperator,
                 mdSprOperator, mutationTimeOperator, intervalScaleOperator, gibbsOperator
         );
 

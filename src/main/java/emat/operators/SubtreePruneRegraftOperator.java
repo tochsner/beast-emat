@@ -212,7 +212,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     /**
      * Proposes the new attachment point of the subtree below X in the pruned tree, i.e. with
      * X and its parent P removed and P's two branches joined. Returns null if there is no
-     * valid proposal. Candidates are the subtree slide, Wilson–Balding and mdSPR proposals of
+     * valid proposal. Candidates are the mdSPR proposals of
      * docs/mcmc-moves.md §8.
      */
     protected abstract GraftingPoint proposeGraftingPoint(Node x);

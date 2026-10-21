@@ -31,12 +31,9 @@ All operators live in `emat.operators` and keep the mutations on the tree consis
 |--------------------------------|-------------------------------------------------------------------------------------------------------------|
 | `InnerNodeDisplacementOperator`| Moves an internal node within the range allowed by the mutations on its adjacent branches.                 |
 | `BatchNodeDisplacementOperator`| Displaces a batch of internal nodes at once, using a learned approximation of the tree prior.               |
-| `InnerNodeResampleOperator`    | Moves an internal node between its older child and parent and resamples the three adjacent histories.      |
 | `RootScaleOperator`            | Scales the shorter root branch, which moves the root height.                                                |
 | `IntervalScaleOperator`        | Scales all intervals between nodes and their older children, keeping the tree valid for serial samples.    |
 | `SubtreePruneRegraftOperator`  | Abstract base of the subtree moves below; resamples the history on the affected branches.                  |
-| `SubtreeSlideOperator`         | Slides the parent of a subtree up or down the tree.                                                         |
-| `WilsonBaldingOperator`        | Regrafts a subtree onto a uniformly chosen branch at a uniform height.                                      |
 | `MutationDirectedSprOperator`  | Regrafts a subtree preferably where the sequences are similar, using the mutations as a parsimony map.      |
 | `CarrierGuidedSprOperator`     | Prunes a subtree with a homoplastic mutation and regrafts it preferably below another mutation to its state. |
 | `IdenticalTipPermutationOperator` | Permutes tips with identical data, uniformly among the permutations allowed by the heights and mutations. |

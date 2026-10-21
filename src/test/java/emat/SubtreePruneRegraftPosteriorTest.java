@@ -23,8 +23,6 @@ import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.BranchReformOperator;
 import emat.operators.MutationDirectedSprOperator;
 import emat.operators.SubtreePruneRegraftOperator;
-import emat.operators.SubtreeSlideOperator;
-import emat.operators.WilsonBaldingOperator;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
 import emat.stochasticmapping.StochasticMapping;
@@ -61,48 +59,11 @@ public class SubtreePruneRegraftPosteriorTest {
     private double[][] halfStepTransitionProbabilities;
 
     /**
-     * Runs Wilson–Balding and subtree slide with neighbourhood resampling, with the
-     * Jukes-Cantor and with the hybrid history sampler, against the genetic prior under
-     * Jukes-Cantor on four tips at height 0, two of them with missing
-     * data. Neither operator changes the root height or the root sequence, so the rooted
-     * topologies follow the Felsenstein likelihood given the root sequence, integrated over
-     * the heights of the two internal nodes below the root.
-     */
-    @Test
-    public void testNeighbourhoodTopologiesMatchPosterior() {
-        for (SubtreePruneRegraftOperator.HistorySampler historySampler : List.of(
-                SubtreePruneRegraftOperator.HistorySampler.JUKES_CANTOR, SubtreePruneRegraftOperator.HistorySampler.HYBRID)) {
-            Randomizer.setSeed(7);
-            Setup setup = this.createSetup();
-
-            WilsonBaldingOperator wilsonBaldingOperator = new WilsonBaldingOperator();
-            wilsonBaldingOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
-                    "geneticPrior", setup.geneticPrior, "resampleNeighbourhood", true, "historySampler", historySampler);
-
-            SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
-            subtreeSlideOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
-                    "geneticPrior", setup.geneticPrior, "size", 0.3, "optimise", false, "resampleNeighbourhood", true, "historySampler", historySampler);
-
-            // the root sequence stays fixed, so the posterior is conditioned on it
-
-            int[] rootSequence = new int[SEQUENCES[0].length()];
-            for (int site = 0; site < rootSequence.length; site++) {
-                rootSequence[site] = MutationPaths.getState(setup.mutations, setup.tree.getRoot(), site);
-            }
-
-            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, rootSequence);
-            Map<String, Integer> topologyCounts = this.runChain(setup, List.of(wilsonBaldingOperator, subtreeSlideOperator));
-            this.assertFrequencies(expectedFrequencies, topologyCounts);
-        }
-    }
-
-    /**
      * Runs mdSPR with neighbourhood resampling, whose reverse grafting density is computed on
-     * the pruned tree after the move, together with subtree slide with neighbourhood
-     * resampling. Neither changes the root sequence, so the rooted topologies follow the same
-     * posterior as in testNeighbourhoodTopologiesMatchPosterior. Both local explorations with
-     * a window and full explorations are checked, with the Jukes-Cantor and with the hybrid
-     * history sampler.
+     * the pruned tree after the move. It does not change the root sequence, so the rooted
+     * topologies follow the Felsenstein likelihood given the root sequence. Both local
+     * explorations with a window and full explorations are checked, with the Jukes-Cantor and
+     * with the hybrid history sampler.
      */
     @Test
     public void testMdSprNeighbourhoodTopologiesMatchPosterior() {
@@ -117,24 +78,20 @@ public class SubtreePruneRegraftPosteriorTest {
                         "resampleNeighbourhood", true, "historySampler", historySampler,
                         "windowProbability", 0.5, "fullExplorationProbability", fullExplorationProbability);
 
-                SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
-                subtreeSlideOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
-                        "geneticPrior", setup.geneticPrior, "size", 0.3, "optimise", false, "resampleNeighbourhood", true, "historySampler", historySampler);
-
                 int[] rootSequence = new int[SEQUENCES[0].length()];
                 for (int site = 0; site < rootSequence.length; site++) {
                     rootSequence[site] = MutationPaths.getState(setup.mutations, setup.tree.getRoot(), site);
                 }
 
                 Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, rootSequence);
-                Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, subtreeSlideOperator));
+                Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator));
                 this.assertFrequencies(expectedFrequencies, topologyCounts);
             }
         }
     }
 
     /**
-     * Runs Wilson–Balding, subtree slide and mdSPR, which resample only the branch above the
+     * Runs mdSPR, which resample only the branch above the
      * pruned subtree and the missing states of a pruned tip, together with branch reform,
      * which also changes the root sequence. The rooted topologies then follow the
      * Felsenstein likelihood with uniform root frequencies, integrated over the heights of
@@ -145,13 +102,6 @@ public class SubtreePruneRegraftPosteriorTest {
         Randomizer.setSeed(11);
         Setup setup = this.createSetup();
 
-        WilsonBaldingOperator wilsonBaldingOperator = new WilsonBaldingOperator();
-        wilsonBaldingOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
-
-        SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
-        subtreeSlideOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
-                "geneticPrior", setup.geneticPrior, "size", 0.3, "optimise", false);
-
         MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
         mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
 
@@ -160,13 +110,13 @@ public class SubtreePruneRegraftPosteriorTest {
 
         Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
         Map<String, Integer> topologyCounts = this.runChain(
-                setup, List.of(wilsonBaldingOperator, subtreeSlideOperator, mdSprOperator, branchReformOperator)
+                setup, List.of(mdSprOperator, branchReformOperator)
         );
         this.assertFrequencies(expectedFrequencies, topologyCounts);
     }
 
     /**
-     * Runs Wilson–Balding, subtree slide and mdSPR, which resample the states of a pruned
+     * Runs mdSPR, which resample the states of a pruned
      * tip among the compatible ones where its data is partially ambiguous, together with
      * branch reform. The rooted topologies follow the Felsenstein likelihood whose tip
      * partials are one at every compatible state.
@@ -175,13 +125,6 @@ public class SubtreePruneRegraftPosteriorTest {
     public void testAmbiguousTipsMatchPosterior() {
         Randomizer.setSeed(13);
         Setup setup = this.createSetup(new JukesCantor(), 1.0, AMBIGUOUS_SEQUENCES);
-
-        WilsonBaldingOperator wilsonBaldingOperator = new WilsonBaldingOperator();
-        wilsonBaldingOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
-
-        SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
-        subtreeSlideOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
-                "geneticPrior", setup.geneticPrior, "size", 0.3, "optimise", false);
 
         MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
         mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
@@ -192,13 +135,13 @@ public class SubtreePruneRegraftPosteriorTest {
 
         Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
         Map<String, Integer> topologyCounts = this.runChain(
-                setup, List.of(wilsonBaldingOperator, subtreeSlideOperator, mdSprOperator, branchReformOperator)
+                setup, List.of(mdSprOperator, branchReformOperator)
         );
         this.assertFrequencies(expectedFrequencies, topologyCounts);
     }
 
     /**
-     * Runs Wilson–Balding, subtree slide and mdSPR under HKY with unequal frequencies and a
+     * Runs mdSPR under HKY with unequal frequencies and a
      * clock rate other than one, where the Jukes-Cantor proposals differ from the model and
      * the hybrid histories have to scale the rate matrix correctly. This is checked with
      * neighbourhood resampling under the Jukes-Cantor and the hybrid history sampler, and
@@ -222,14 +165,6 @@ public class SubtreePruneRegraftPosteriorTest {
             hky.initByName("kappa", new RealScalarParam<>(4.0, PositiveReal.INSTANCE), "frequencies", frequencies);
             Setup setup = this.createSetup(hky, 0.7);
 
-            WilsonBaldingOperator wilsonBaldingOperator = new WilsonBaldingOperator();
-            wilsonBaldingOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
-                    "resampleNeighbourhood", testCase.resampleNeighbourhood(), "historySampler", testCase.historySampler());
-
-            SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
-            subtreeSlideOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
-                    "size", 0.3, "optimise", false, "resampleNeighbourhood", testCase.resampleNeighbourhood(), "historySampler", testCase.historySampler());
-
             MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
             mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
                     "resampleNeighbourhood", testCase.resampleNeighbourhood(), "historySampler", testCase.historySampler(),
@@ -241,13 +176,13 @@ public class SubtreePruneRegraftPosteriorTest {
             }
 
             Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, rootSequence);
-            Map<String, Integer> topologyCounts = this.runChain(setup, List.of(wilsonBaldingOperator, subtreeSlideOperator, mdSprOperator));
+            Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator));
             this.assertFrequencies(expectedFrequencies, topologyCounts);
         }
     }
 
     /**
-     * Runs Wilson–Balding, subtree slide and mdSPR with the exact and with the hybrid history
+     * Runs mdSPR with the exact and with the hybrid history
      * sampler, together with branch reform. The rooted topologies follow the same posterior
      * as with the Jukes-Cantor history sampler.
      */
@@ -258,14 +193,6 @@ public class SubtreePruneRegraftPosteriorTest {
             Randomizer.setSeed(17);
             Setup setup = this.createSetup();
 
-            WilsonBaldingOperator wilsonBaldingOperator = new WilsonBaldingOperator();
-            wilsonBaldingOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
-                    "historySampler", historySampler);
-
-            SubtreeSlideOperator subtreeSlideOperator = new SubtreeSlideOperator();
-            subtreeSlideOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations,
-                    "geneticPrior", setup.geneticPrior, "size", 0.3, "optimise", false, "historySampler", historySampler);
-
             MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
             mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
                     "historySampler", historySampler);
@@ -275,7 +202,7 @@ public class SubtreePruneRegraftPosteriorTest {
 
             Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
             Map<String, Integer> topologyCounts = this.runChain(
-                    setup, List.of(wilsonBaldingOperator, subtreeSlideOperator, mdSprOperator, branchReformOperator)
+                    setup, List.of(mdSprOperator, branchReformOperator)
             );
             this.assertFrequencies(expectedFrequencies, topologyCounts);
         }
