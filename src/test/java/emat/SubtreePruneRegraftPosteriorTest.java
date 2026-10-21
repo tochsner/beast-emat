@@ -362,6 +362,34 @@ public class SubtreePruneRegraftPosteriorTest {
     }
 
     /**
+     * Runs mdSPR with the CARRIER_GROUP selection, which learns its weights from a few early
+     * samples and then freezes them, together with branch reform. The floor leaves most picks
+     * to the carrier groups. The rooted topologies follow the same posterior as with the
+     * uniform choice, and some groups that switch get a weight.
+     */
+    @Test
+    public void testCarrierGroupTopologiesMatchPosterior() {
+        for (String[] sequences : List.of(SEQUENCES, AMBIGUOUS_SEQUENCES)) {
+            Randomizer.setSeed(29);
+            Setup setup = this.createSetup(new JukesCantor(), 1.0, sequences);
+
+            MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+            mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                    "subtreeSelection", MutationDirectedSprOperator.SubtreeSelection.CARRIER_GROUP, "carrierGroupFloor", 0.2,
+                    "carrierGroupInterval", 3, "carrierGroupBurnin", 5, "carrierGroupLearningSamples", 2000,
+                    "fullExplorationProbability", 0.5, "windowProbability", 0.5);
+
+            BranchReformOperator branchReformOperator = new BranchReformOperator();
+            branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
+
+            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
+            Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, branchReformOperator));
+            this.assertFrequencies(expectedFrequencies, topologyCounts);
+            assertTrue(mdSprOperator.getDiagnostics().get("mdspr_carrier_groups") > 0.0);
+        }
+    }
+
+    /**
      * Runs mdSPR with every strategy of picking the subtrees, together with branch reform.
      * The rooted topologies follow the same posterior as with the uniform choice. The
      * move-distance strategies run both with and without counting the rejected proposals.

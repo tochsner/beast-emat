@@ -147,6 +147,29 @@ public class SiteHistoryGibbsOperatorTest {
     }
 
     /**
+     * With the missing strategy, a site is weighted by the pseudo count plus the missing weight
+     * times the fraction of tips with missing or ambiguous data, so a site where three of four
+     * tips are unresolved is picked (1 + 20 * 0.75) = 16 times as often as a constant site.
+     */
+    @Test
+    public void testMissingSelectionFavoursUnresolvedSites() {
+        TestSetup setup = new TestSetup(
+                List.of(new Sequence("A", "AAA"), new Sequence("B", "ANA"), new Sequence("C", "A-A"), new Sequence("D", "ARA")),
+                "((A:1.0,B:1.0):1.0,(C:1.0,D:1.0):1.0);",
+                new JukesCantor(), SiteHistoryGibbsOperator.Sampler.EXACT, SiteHistoryGibbsOperator.SiteSelection.MISSING
+        );
+
+        double totalProbability = 0.0;
+        for (int site = 0; site < 3; site++) {
+            totalProbability += setup.operator.getSiteProbability(site);
+        }
+        assertEquals(1.0, totalProbability, 1e-12);
+
+        assertEquals(setup.operator.getSiteProbability(0), setup.operator.getSiteProbability(2), 1e-12);
+        assertEquals(16.0, setup.operator.getSiteProbability(1) / setup.operator.getSiteProbability(0), 1e-9);
+    }
+
+    /**
      * On a larger tree with ambiguous and missing characters, checks after every move that
      * replaying the mutations from the reference reproduces a state compatible with every
      * tip. Invalid mutation lists are also caught by the sanity checks in Mutations.

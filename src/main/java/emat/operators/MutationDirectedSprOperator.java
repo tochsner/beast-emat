@@ -8,6 +8,7 @@ import emat.helper.MutationPaths;
 import emat.helper.SiteChanges;
 import emat.helper.TipNeighbours;
 import emat.operators.mdspr.BranchLengthSubtreeSelector;
+import emat.operators.mdspr.CarrierGroupSubtreeSelector;
 import emat.operators.mdspr.MoveDistanceSubtreeSelector;
 import emat.operators.mdspr.ProposedMove;
 import emat.operators.mdspr.Region;
@@ -31,7 +32,7 @@ import java.util.Map;
 public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
 
     public enum SubtreeSelection {
-        UNIFORM, BRANCH_LENGTH, MOVED_NUM_NODES, MOVED_PATH_LENGTH, MOVED_SQUARED_PATH_LENGTH, SISTER_ACT
+        UNIFORM, BRANCH_LENGTH, MOVED_NUM_NODES, MOVED_PATH_LENGTH, MOVED_SQUARED_PATH_LENGTH, SISTER_ACT, CARRIER_GROUP
     }
 
     final public Input<Double> annealingInput = new Input<>("annealing", "the power f to which the grafting density is raised, which makes the proposals less eager", 0.8);
@@ -43,7 +44,9 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
             "BRANCH_LENGTH proportional to the length of the branch above it, and MOVED_NUM_NODES, MOVED_PATH_LENGTH and MOVED_SQUARED_PATH_LENGTH " +
             "proportional to the running mean distance of its accepted moves, measured as the number of nodes, the length or the squared length " +
             "of the path between the old and the new attachment point. SISTER_ACT only picks tips, in proportion to a power of the autocorrelation time of the size of their sister clade, " +
-            "which is estimated from the history of the chain, so that tips that rarely change their sister are picked more often", SubtreeSelection.UNIFORM, SubtreeSelection.values());
+            "which is estimated from the history of the chain, so that tips that rarely change their sister are picked more often. " +
+            "CARRIER_GROUP picks the groups of tips that switch between sitting apart from and sitting with the other carriers of a state at a homoplastic site, " +
+            "which are learned from the history of the chain, mixed with picks in proportion to the branch length", SubtreeSelection.UNIFORM, SubtreeSelection.values());
     final public Input<Double> moveDistancePseudocountInput = new Input<>("moveDistancePseudocount", "the number of pseudo-moves with the mean distance of all recorded moves " +
             "that the running mean distance of every subtree starts with", 10.0);
     final public Input<Boolean> countRejectedMovesInput = new Input<>("countRejectedMoves", "whether the running mean distance of a subtree also counts its rejected proposals " +
@@ -53,6 +56,16 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     final public Input<Double> sisterActFloorInput = new Input<>("sisterActFloor", "the share of the SISTER_ACT picks that is spread uniformly over all tips, so that every tip keeps being picked", 0.1);
     final public Input<Integer> sisterActIntervalInput = new Input<>("sisterActInterval", "the number of proposals between two samples of the sister clade sizes of all tips for SISTER_ACT", 100);
     final public Input<Integer> sisterActWarmupInput = new Input<>("sisterActWarmup", "the number of samples of the sister clade sizes that SISTER_ACT discards before it starts estimating, while all tips are picked equally often", 1000);
+    final public Input<Double> carrierGroupPowerInput = new Input<>("carrierGroupPower", "the power to which the estimated autocorrelation time of a carrier group is raised for CARRIER_GROUP. " +
+            "With 0, all groups that switch are picked equally often", 1.0);
+    final public Input<Double> carrierGroupFloorInput = new Input<>("carrierGroupFloor", "the share of the CARRIER_GROUP picks in proportion to the branch length, so that every subtree keeps being picked. " +
+            "With 0, only carrier groups are picked, and the proposal is rejected while none can be picked, including before the weights are frozen", 0.8);
+    final public Input<Double> carrierGroupMinFrequencyInput = new Input<>("carrierGroupMinFrequency", "the smallest share of the samples in which a carrier group must sit apart, " +
+            "and with the other carriers, to be picked by CARRIER_GROUP", 0.01);
+    final public Input<Integer> carrierGroupIntervalInput = new Input<>("carrierGroupInterval", "the number of proposals between two samples of the carrier groups for CARRIER_GROUP", 100);
+    final public Input<Integer> carrierGroupBurninInput = new Input<>("carrierGroupBurnin", "the number of samples of the carrier groups that CARRIER_GROUP discards before it starts learning", 1000);
+    final public Input<Integer> carrierGroupLearningSamplesInput = new Input<>("carrierGroupLearningSamples", "the number of samples of the carrier groups that CARRIER_GROUP learns its weights from before it freezes them, " +
+            "while all subtrees are picked in proportion to the branch length", 2000);
 
     final public Input<Integer> shortcutDistanceInput = new Input<>("shortcutDistance", "the largest number of sites at which the data of two tips may differ for the neighbourhood " +
             "to also connect the regions at the bottom of their branches, as if a path ran between them on which the differences to the subtree never exceed the larger number of either end. " +
@@ -198,6 +211,10 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
             case SISTER_ACT -> new SisterActSubtreeSelector(
                     this.tree, this.sisterActPowerInput.get(), this.sisterActFloorInput.get(),
                     this.sisterActIntervalInput.get(), this.sisterActWarmupInput.get()
+            );
+            case CARRIER_GROUP -> new CarrierGroupSubtreeSelector(
+                    this.tree, this.mutations, this.carrierGroupPowerInput.get(), this.carrierGroupFloorInput.get(), this.carrierGroupMinFrequencyInput.get(),
+                    this.carrierGroupIntervalInput.get(), this.carrierGroupBurninInput.get(), this.carrierGroupLearningSamplesInput.get()
             );
         };
     }

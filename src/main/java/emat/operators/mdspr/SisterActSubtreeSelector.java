@@ -34,11 +34,6 @@ public class SisterActSubtreeSelector extends SubtreeSelector {
     private final double[] stepSquareSums;
     private final double[] lastLogSizes;
 
-    // the number of tips below every node, and the buffers of the iterative traversal that fills them
-    private final int[] leafCounts;
-    private final int[] traversalOrder;
-    private final Node[] traversalStack;
-
     /**
      * @param power    the power to which the estimated autocorrelation time is raised. With 0, all tips are picked equally often; larger values concentrate the picks on the slowest tips
      * @param floor    the share of the picks that is spread uniformly over all tips, so that every tip keeps being picked
@@ -72,9 +67,6 @@ public class SisterActSubtreeSelector extends SubtreeSelector {
         this.squareSums = new double[numNodes];
         this.stepSquareSums = new double[numNodes];
         this.lastLogSizes = new double[numNodes];
-        this.leafCounts = new int[numNodes];
-        this.traversalOrder = new int[numNodes];
-        this.traversalStack = new Node[numNodes];
     }
 
     @Override
@@ -106,12 +98,12 @@ public class SisterActSubtreeSelector extends SubtreeSelector {
 
     /** Adds the log size of the sister clade of every tip to its running sums. */
     private void sampleSisterSizes() {
-        this.computeLeafCounts();
+        int[] leafCounts = this.computeLeafCounts();
 
         int numTips = this.tree.getLeafNodeCount();
         for (int nr = 0; nr < numTips; nr++) {
             Node tip = this.tree.getNode(nr);
-            double logSize = Math.log(this.leafCounts[this.getSister(tip).getNr()]);
+            double logSize = Math.log(leafCounts[this.getSister(tip).getNr()]);
 
             if (this.numEstimateSamples > 0) {
                 double step = logSize - this.lastLogSizes[nr];
@@ -122,29 +114,6 @@ public class SisterActSubtreeSelector extends SubtreeSelector {
             this.lastLogSizes[nr] = logSize;
         }
         this.numEstimateSamples++;
-    }
-
-    /** Counts the tips below every node, visiting the nodes in preorder and summing in the reverse order, so that deep trees need no recursion. */
-    private void computeLeafCounts() {
-        int numVisited = 0;
-        int stackSize = 0;
-        this.traversalStack[stackSize++] = this.tree.getRoot();
-        while (stackSize > 0) {
-            Node node = this.traversalStack[--stackSize];
-            this.traversalOrder[numVisited++] = node.getNr();
-            for (Node child : node.getChildrenMutable()) {
-                this.traversalStack[stackSize++] = child;
-            }
-        }
-
-        for (int i = numVisited - 1; i >= 0; i--) {
-            Node node = this.tree.getNode(this.traversalOrder[i]);
-            int count = node.isLeaf() ? 1 : 0;
-            for (Node child : node.getChildrenMutable()) {
-                count += this.leafCounts[child.getNr()];
-            }
-            this.leafCounts[node.getNr()] = count;
-        }
     }
 
     private Node getSister(Node tip) {

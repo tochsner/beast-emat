@@ -12,7 +12,7 @@ import java.util.Map;
  * weight and may learn from the outcome of the proposals. A weight may only change between
  * proposals, in {@link #prepare()} and in the callbacks, so that the forward and the backward
  * pick probability of a proposal use the same weights, apart from the effect of the move on
- * which nodes can be picked and on their branch lengths.
+ * the tree, such as which nodes can be picked, their branch lengths and the clades below them.
  */
 public abstract class SubtreeSelector {
 
@@ -24,10 +24,18 @@ public abstract class SubtreeSelector {
     // how often each node was picked
     private final int[] numPicks;
 
+    // the number of tips below every node, and the buffers of the iterative traversal that fills them
+    private final int[] leafCounts;
+    private final int[] traversalOrder;
+    private final Node[] traversalStack;
+
     protected SubtreeSelector(Tree tree) {
         this.tree = tree;
         this.weights = new double[tree.getNodeCount()];
         this.numPicks = new int[tree.getNodeCount()];
+        this.leafCounts = new int[tree.getNodeCount()];
+        this.traversalOrder = new int[tree.getNodeCount()];
+        this.traversalStack = new Node[tree.getNodeCount()];
     }
 
     /** Updates what the weights depend on. It is called once before every pick. */
@@ -116,6 +124,8 @@ public abstract class SubtreeSelector {
 
     /** Fills the selection weights of all nodes for the current state and returns their total. */
     private double computeWeights() {
+        this.updateWeights();
+
         double totalWeight = 0.0;
         for (Node node : this.tree.getNodesAsArray()) {
             double weight = node.isRoot() || node.getParent().isRoot() ? 0.0 : this.computeWeight(node);
@@ -123,5 +133,37 @@ public abstract class SubtreeSelector {
             totalWeight += weight;
         }
         return totalWeight;
+    }
+
+    /** Updates what the weights of the nodes depend on in the current state. It is called before the weights of all nodes are computed. */
+    protected void updateWeights() {
+    }
+
+    /**
+     * Counts the tips below every node of the current tree, visiting the nodes in preorder
+     * and summing in the reverse order, so that deep trees need no recursion. Returns the
+     * counts by node number, in a buffer that the next call overwrites.
+     */
+    protected int[] computeLeafCounts() {
+        int numVisited = 0;
+        int stackSize = 0;
+        this.traversalStack[stackSize++] = this.tree.getRoot();
+        while (stackSize > 0) {
+            Node node = this.traversalStack[--stackSize];
+            this.traversalOrder[numVisited++] = node.getNr();
+            for (Node child : node.getChildrenMutable()) {
+                this.traversalStack[stackSize++] = child;
+            }
+        }
+
+        for (int i = numVisited - 1; i >= 0; i--) {
+            Node node = this.tree.getNode(this.traversalOrder[i]);
+            int count = node.isLeaf() ? 1 : 0;
+            for (Node child : node.getChildrenMutable()) {
+                count += this.leafCounts[child.getNr()];
+            }
+            this.leafCounts[node.getNr()] = count;
+        }
+        return this.leafCounts;
     }
 }
