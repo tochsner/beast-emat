@@ -154,11 +154,6 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     public void initAndValidate() {
         super.initAndValidate();
 
-        // the grafting density of the reverse move is computed on the pruned tree of the current state, which must keep its mutations
-        if (this.resampleNeighbourhood) {
-            throw new IllegalArgumentException("mdSPR does not support resampleNeighbourhood, as it changes the mutations of the pruned tree.");
-        }
-
         this.annealing = this.annealingInput.get();
         this.fullExplorationProbability = this.fullExplorationProbabilityInput.get();
         this.windowProbability = this.windowProbabilityInput.get();

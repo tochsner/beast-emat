@@ -22,7 +22,6 @@ import emat.helper.MutationPaths;
 import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.BranchReformOperator;
 import emat.operators.MutationDirectedSprOperator;
-import emat.operators.SubtreePruneRegraftOperator;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
 import emat.stochasticmapping.StochasticMapping;
@@ -57,38 +56,6 @@ public class SubtreePruneRegraftPosteriorTest {
 
     // the transition probabilities of the posterior computation per number of half grid steps, stored row by row
     private double[][] halfStepTransitionProbabilities;
-
-    /**
-     * Runs mdSPR with neighbourhood resampling, whose reverse grafting density is computed on
-     * the pruned tree after the move. It does not change the root sequence, so the rooted
-     * topologies follow the Felsenstein likelihood given the root sequence. Both local
-     * explorations with a window and full explorations are checked, with the Jukes-Cantor and
-     * with the hybrid history sampler.
-     */
-    @Test
-    public void testMdSprNeighbourhoodTopologiesMatchPosterior() {
-        for (SubtreePruneRegraftOperator.HistorySampler historySampler : List.of(
-                SubtreePruneRegraftOperator.HistorySampler.JUKES_CANTOR, SubtreePruneRegraftOperator.HistorySampler.HYBRID)) {
-            for (double fullExplorationProbability : new double[]{0.1, 1.0}) {
-                Randomizer.setSeed(13);
-                Setup setup = this.createSetup();
-
-                MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
-                mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
-                        "resampleNeighbourhood", true, "historySampler", historySampler,
-                        "windowProbability", 0.5, "fullExplorationProbability", fullExplorationProbability);
-
-                int[] rootSequence = new int[SEQUENCES[0].length()];
-                for (int site = 0; site < rootSequence.length; site++) {
-                    rootSequence[site] = MutationPaths.getState(setup.mutations, setup.tree.getRoot(), site);
-                }
-
-                Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, rootSequence);
-                Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator));
-                this.assertFrequencies(expectedFrequencies, topologyCounts);
-            }
-        }
-    }
 
     /**
      * Runs mdSPR, which resample only the branch above the
@@ -141,71 +108,32 @@ public class SubtreePruneRegraftPosteriorTest {
     }
 
     /**
-     * Runs mdSPR under HKY with unequal frequencies and a
-     * clock rate other than one, where the Jukes-Cantor proposals differ from the model and
-     * the hybrid histories have to scale the rate matrix correctly. This is checked with
-     * neighbourhood resampling under the Jukes-Cantor and the hybrid history sampler, and
-     * with the hybrid history sampler resampling only the branch above the pruned subtree.
-     * None of the moves changes the root sequence, so the posterior is conditioned on it.
+     * Runs mdSPR under HKY with unequal frequencies and a clock rate other than one, where the
+     * Jukes-Cantor proposals differ from the model. The move does not change the root
+     * sequence, so the posterior is conditioned on it.
      */
     @Test
     public void testHkyTopologiesMatchPosterior() {
-        record Case(SubtreePruneRegraftOperator.HistorySampler historySampler, boolean resampleNeighbourhood) {
+        Randomizer.setSeed(23);
+
+        Frequencies frequencies = new Frequencies();
+        frequencies.initByName("frequencies", new SimplexParam(new double[]{0.1, 0.2, 0.3, 0.4}));
+        HKY hky = new HKY();
+        hky.initByName("kappa", new RealScalarParam<>(4.0, PositiveReal.INSTANCE), "frequencies", frequencies);
+        Setup setup = this.createSetup(hky, 0.7);
+
+        MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+        mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                "windowProbability", 0.5, "fullExplorationProbability", 0.1);
+
+        int[] rootSequence = new int[SEQUENCES[0].length()];
+        for (int site = 0; site < rootSequence.length; site++) {
+            rootSequence[site] = MutationPaths.getState(setup.mutations, setup.tree.getRoot(), site);
         }
 
-        for (Case testCase : List.of(
-                new Case(SubtreePruneRegraftOperator.HistorySampler.JUKES_CANTOR, true),
-                new Case(SubtreePruneRegraftOperator.HistorySampler.HYBRID, true),
-                new Case(SubtreePruneRegraftOperator.HistorySampler.HYBRID, false))) {
-            Randomizer.setSeed(23);
-
-            Frequencies frequencies = new Frequencies();
-            frequencies.initByName("frequencies", new SimplexParam(new double[]{0.1, 0.2, 0.3, 0.4}));
-            HKY hky = new HKY();
-            hky.initByName("kappa", new RealScalarParam<>(4.0, PositiveReal.INSTANCE), "frequencies", frequencies);
-            Setup setup = this.createSetup(hky, 0.7);
-
-            MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
-            mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
-                    "resampleNeighbourhood", testCase.resampleNeighbourhood(), "historySampler", testCase.historySampler(),
-                    "windowProbability", 0.5, "fullExplorationProbability", 0.1);
-
-            int[] rootSequence = new int[SEQUENCES[0].length()];
-            for (int site = 0; site < rootSequence.length; site++) {
-                rootSequence[site] = MutationPaths.getState(setup.mutations, setup.tree.getRoot(), site);
-            }
-
-            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, rootSequence);
-            Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator));
-            this.assertFrequencies(expectedFrequencies, topologyCounts);
-        }
-    }
-
-    /**
-     * Runs mdSPR with the exact and with the hybrid history
-     * sampler, together with branch reform. The rooted topologies follow the same posterior
-     * as with the Jukes-Cantor history sampler.
-     */
-    @Test
-    public void testExactAndHybridHistorySamplersTopologiesMatchPosterior() {
-        for (SubtreePruneRegraftOperator.HistorySampler historySampler : List.of(
-                SubtreePruneRegraftOperator.HistorySampler.EXACT, SubtreePruneRegraftOperator.HistorySampler.HYBRID)) {
-            Randomizer.setSeed(17);
-            Setup setup = this.createSetup();
-
-            MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
-            mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
-                    "historySampler", historySampler);
-
-            BranchReformOperator branchReformOperator = new BranchReformOperator();
-            branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
-
-            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
-            Map<String, Integer> topologyCounts = this.runChain(
-                    setup, List.of(mdSprOperator, branchReformOperator)
-            );
-            this.assertFrequencies(expectedFrequencies, topologyCounts);
-        }
+        Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, rootSequence);
+        Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator));
+        this.assertFrequencies(expectedFrequencies, topologyCounts);
     }
 
     /**

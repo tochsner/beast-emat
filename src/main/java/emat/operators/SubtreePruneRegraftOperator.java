@@ -6,16 +6,12 @@ import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import emat.helper.BranchMutations;
-import emat.stochasticmapping.ExactBranchHistories;
-import emat.stochasticmapping.HybridBranchHistories;
 import emat.stochasticmapping.JukesCantorStochasticMapping;
 import emat.state.Mutation;
 import emat.helper.MissingSites;
 import emat.helper.MutationPaths;
 import emat.helper.NodeStateLookup;
 import emat.helper.SiteChanges;
-import emat.helper.SiteStates;
-import emat.helper.StarHistories;
 import emat.state.Mutations;
 import emat.prior.GeneticPrior;
 
@@ -26,33 +22,17 @@ import java.util.Map;
 import java.util.function.IntUnaryOperator;
 
 @Description("Prunes a subtree and regrafts it elsewhere without changing the root (docs/mcmc-moves.md §3). " +
-        "By default, only the history on the branch above the pruned subtree is resampled, by approximate " +
-        "Jukes-Cantor stochastic mapping (docs/mcmc-moves.md §3.4) or, optionally, exactly under the model of the " +
-        "genetic prior. Optionally, the histories on all branches " +
-        "around the old and the new attachment point are resampled (docs/mcmc-moves.md §3.5). If the pruned " +
-        "subtree is a tip, its states at the sites where its data is missing are resampled as well, so that " +
-        "they follow its placement, and by default also among the compatible states where its data is partially ambiguous. Missations are not supported. Subclasses choose the pruned subtree and the " +
-        "grafting point.")
+        "Only the history on the branch above the pruned subtree is resampled, by approximate Jukes-Cantor " +
+        "stochastic mapping (docs/mcmc-moves.md §3.4). If the pruned subtree is a tip, its states at the sites " +
+        "where its data is missing are resampled as well, so that they follow its placement, and by default also " +
+        "among the compatible states where its data is partially ambiguous. Missations are not supported. " +
+        "Subclasses choose the pruned subtree and the grafting point.")
 public abstract class SubtreePruneRegraftOperator extends TreeOperator {
-
-    public enum HistorySampler {
-        JUKES_CANTOR, EXACT, HYBRID
-    }
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "the mutations to operate on", Input.Validate.REQUIRED);
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model", Input.Validate.REQUIRED);
-    final public Input<Boolean> resampleNeighbourhoodInput = new Input<>("resampleNeighbourhood", "whether to resample the histories on all branches around the old and the new attachment point instead of only on the branch above the pruned subtree", false);
-    final public Input<HistorySampler> historySamplerInput = new Input<>("historySampler", "how the history on the branch above the pruned subtree is resampled: JUKES_CANTOR under an approximating Jukes-Cantor model, " +
-            "EXACT from its conditional distribution under the model of the genetic prior, site by site, " +
-            "HYBRID by choosing the sites with mutations under Jukes-Cantor and then sampling their histories exactly. EXACT and HYBRID are not supported together with resampleNeighbourhood", HistorySampler.JUKES_CANTOR, HistorySampler.values());
     final public Input<Boolean> resampleAmbiguousSitesInput = new Input<>("resampleAmbiguousSites", "whether a pruned tip also resamples its states among the compatible states at the sites where its data is partially ambiguous, " +
-            "so that they follow its placement. Otherwise, these states stay fixed. Only the history on the branch above the pruned subtree supports it, so it has no effect with resampleNeighbourhood", true);
-
-    // the columns of the star states: the outer ends G, S and X of a star around P, and its centre P
-    static final int TOP = StarHistories.TOP;
-    static final int SIBLING = StarHistories.FIRST;
-    static final int SUBTREE = StarHistories.SECOND;
-    static final int CENTRE = StarHistories.CENTRE;
+            "so that they follow its placement. Otherwise, these states stay fixed", true);
 
     private static final int[] NO_SITES = new int[0];
     private static final BitSet NO_SITE_SET = new BitSet();
@@ -61,21 +41,13 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     GeneticPrior geneticPrior;
     Tree tree;
     JukesCantorStochasticMapping stochasticMapping;
-    ExactBranchHistories exactBranchHistories;
-    HybridBranchHistories hybridBranchHistories;
-    StarHistories starHistories;
     BranchMutations branchMutations;
-    boolean resampleNeighbourhood;
 
     // reusable site maps for the changes along the paths of the current proposal and the resulting differing sites
     SiteChanges subtreeChanges;
     SiteChanges newParentChanges;
     SiteChanges differingSites;
     SiteChanges combinedChanges;
-
-    // reusable states of the stars around the old and the new attachment point at the sites where not all of their states agree
-    SiteStates oldStarStates;
-    SiteStates newStarStates;
 
     // reusable lookup of the states at X for the sites whose end states agree
     NodeStateLookup subtreeStates;
@@ -117,30 +89,16 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         int numSites = this.mutations.getReferenceSequence().length;
         this.stochasticMapping = new JukesCantorStochasticMapping(this.mutations.getAlignment().getMaxStateCount(), numSites);
         this.branchMutations = new BranchMutations(numSites);
-        this.resampleNeighbourhood = this.resampleNeighbourhoodInput.get();
-        HistorySampler historySampler = this.historySamplerInput.get();
-        if (historySampler != HistorySampler.JUKES_CANTOR && this.resampleNeighbourhood) {
-            throw new IllegalArgumentException("The " + historySampler + " history sampler does not support resampleNeighbourhood.");
-        }
-        int numStates = this.mutations.getAlignment().getMaxStateCount();
-        if (historySampler == HistorySampler.EXACT) {
-            this.exactBranchHistories = new ExactBranchHistories(numStates, numSites);
-        } else if (historySampler == HistorySampler.HYBRID) {
-            this.hybridBranchHistories = new HybridBranchHistories(numStates, numSites);
-        }
 
         this.subtreeChanges = new SiteChanges(numSites);
         this.newParentChanges = new SiteChanges(numSites);
         this.differingSites = new SiteChanges(numSites);
         this.combinedChanges = new SiteChanges(numSites);
-        this.starHistories = new StarHistories(this.stochasticMapping, numSites);
-        this.oldStarStates = new SiteStates(numSites, StarHistories.NUM_COLUMNS);
-        this.newStarStates = new SiteStates(numSites, StarHistories.NUM_COLUMNS);
         this.subtreeStates = new NodeStateLookup(this.mutations, numSites);
         this.parentStates = new NodeStateLookup(this.mutations, numSites);
 
         this.missingSites = new MissingSites(this.mutations, this.tree);
-        this.resampleAmbiguousSites = this.resampleAmbiguousSitesInput.get() && !this.resampleNeighbourhood;
+        this.resampleAmbiguousSites = this.resampleAmbiguousSitesInput.get();
     }
 
     /**
@@ -172,12 +130,10 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
             return Double.NEGATIVE_INFINITY;
         }
 
-        // resample the local histories, then regraft and apply them
+        // resample the history above the subtree, then regraft and apply the new histories
 
         Map<Node, List<Mutation>> newBranchMutations = new LinkedHashMap<>();
-        double logMutationHastingsRatio = this.resampleNeighbourhood
-                ? this.proposeNeighbourhoodHistories(x, graftingPoint, newBranchMutations)
-                : this.proposeSubtreeHistory(x, graftingPoint, newBranchMutations);
+        double logMutationHastingsRatio = this.proposeSubtreeHistory(x, graftingPoint, newBranchMutations);
 
         this.regraft(x, graftingPoint.newSibling(), graftingPoint.newParentHeight());
 
@@ -239,8 +195,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     /* Grafting and Resampling */
 
     /**
-     * Proposes the histories for a regraft that resamples only the
-     * history on the new P'–X branch. The mutations of the old P branch are merged into the
+     * Proposes the histories for a regraft that resamples only the history on the new P'–X branch. The mutations of the old P branch are merged into the
      * branch of the old sibling S, the branch above S' is split at t_P', and everything else
      * is kept. At the missing sites of X, the states at X are first sampled from the states
      * at P' under Jukes-Cantor, and likewise among the compatible states at the partially
@@ -299,16 +254,9 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         // sample the history on the new P'–X branch while the tree still holds the old sequences, where every agreeing site is in the state of P'
 
-        List<Mutation> newSubtreeMutations;
-        if (this.exactBranchHistories != null) {
-            newSubtreeMutations = this.sampleExactBranchHistory(x, newParentHeight, newParentStates);
-        } else if (this.hybridBranchHistories != null) {
-            newSubtreeMutations = this.sampleHybridBranchHistory(x, newParentHeight, newParentStates);
-        } else {
-            newSubtreeMutations = this.stochasticMapping.sampleBranchHistory(
-                    x.getNr(), newParentHeight, x.getHeight(), this.jukesCantorRate, this.differingSites, newParentStates
-            );
-        }
+        List<Mutation> newSubtreeMutations = this.stochasticMapping.sampleBranchHistory(
+                x.getNr(), newParentHeight, x.getHeight(), this.jukesCantorRate, this.differingSites, newParentStates
+        );
 
         // rearrange the mutations: join G–P–S into G–S, then split G'–S' into G'–P'–S'
 
@@ -338,148 +286,12 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
                 oldExpectedJumps, this.subtreeAmbiguousSites, this.subtreeCompatibleStates, this.parentStates.resetFor(parent), this.subtreeStates
         );
 
-        if (this.hybridBranchHistories != null) {
-            double rateScale = this.computeExactRateScale(x);
-            logForwardDensity += this.hybridBranchHistories.computeLogBranchHistoryDensity(
-                    newSubtreeMutations, newParentHeight, x.getHeight(), rateScale, this.jukesCantorRate, this.differingSites.getSize()
-            );
-            logBackwardDensity += this.hybridBranchHistories.computeLogBranchHistoryDensity(
-                    oldSubtreeMutations, oldParentHeight, x.getHeight(), rateScale, this.jukesCantorRate, oldNumDifferingSites
-            );
-        } else if (this.exactBranchHistories == null) {
-            logForwardDensity += this.computeLogBranchHistoryDensity(x, newParentHeight, newSubtreeMutations, this.differingSites.getSize());
-            logBackwardDensity += this.computeLogBranchHistoryDensity(x, oldParentHeight, oldSubtreeMutations, oldNumDifferingSites);
-        } else {
-            double rateScale = this.computeExactRateScale(x);
-            logForwardDensity += this.exactBranchHistories.computeLogBranchHistoryDensity(
-                    newSubtreeMutations, newParentHeight, x.getHeight(), rateScale, newParentStates
-            );
-            logBackwardDensity += this.exactBranchHistories.computeLogBranchHistoryDensity(
-                    oldSubtreeMutations, oldParentHeight, x.getHeight(), rateScale, this.parentStates.resetFor(parent)
-            );
-        }
-
-        return logBackwardDensity - logForwardDensity;
-    }
-
-    /**
-     * Proposes the histories for a regraft that resamples the histories
-     * on all branches around the old and the new attachment point (docs/mcmc-moves.md §3.5). These are the branches above P,
-     * S, X and S', which form the star G–P, P–S, P–X and the branch G'–S' before the move,
-     * and the joined branch G–S and the star G'–P', P'–S', P'–X after it. The sequences at
-     * the outer ends G, S, X, G' and S' stay fixed, except at the missing sites of X. The
-     * new histories are proposed under Jukes-Cantor: first the states at P' given the outer
-     * ends of its star, then the states of X at its missing sites given P', then the history
-     * on every branch given its end states. The reverse move proposes the old
-     * histories in the same way, and the genetic prior corrects for the approximate model.
-     * The new mutations are put into the given map in the order in which they must be
-     * applied after the regraft. Returns the log of α_mut(n → o) / α_mut(o → n).
-     */
-    private double proposeNeighbourhoodHistories(Node x, GraftingPoint graftingPoint, Map<Node, List<Mutation>> newBranchMutations) {
-        Node parent = x.getParent();
-        Node sibling = this.getOtherChild(parent, x);
-        Node grandparent = parent.getParent();
-
-        Node newSibling = graftingPoint.newSibling();
-        Node newGrandparent = this.getPrunedParent(x, newSibling);
-        boolean isHeightShift = newSibling == sibling;
-        double newParentHeight = graftingPoint.newParentHeight();
-        double oldParentHeight = parent.getHeight();
-
-        // the fictitious Jukes-Cantor rate of a branch is its branch rate times λ(R) / L, which the move keeps as the branches keep the rates of the nodes below them
-
-        double ratePerSite = this.geneticPrior.getTotalMutationRate(this.tree.getRoot()) / this.mutations.getReferenceSequence().length;
-        double parentRate = this.geneticPrior.branchRateModel.getRateForBranch(parent) * ratePerSite;
-        double siblingRate = this.geneticPrior.branchRateModel.getRateForBranch(sibling) * ratePerSite;
-        double newSiblingRate = this.geneticPrior.branchRateModel.getRateForBranch(newSibling) * ratePerSite;
-        double subtreeRate = this.jukesCantorRate;
-
-        List<Mutation> oldParentMutations = this.mutations.getMutations(parent);
-        List<Mutation> oldSiblingMutations = this.mutations.getMutations(sibling);
-        List<Mutation> oldSubtreeMutations = this.mutations.getMutations(x);
-        List<Mutation> oldNewSiblingMutations = this.mutations.getMutations(newSibling);
-
-        // find the states at the outer ends of both stars, and at the centre P of the old star
-
-        this.starHistories.collectOuterStates(this.mutations::getMutations, grandparent, sibling, x, this.oldStarStates);
-        this.starHistories.collectCentreStates(oldParentMutations, this.oldStarStates);
-        this.starHistories.collectOuterStates(this.mutations::getMutations, newGrandparent, newSibling, x, this.newStarStates);
-
-        // sample the new histories while the tree still holds the sequences at the outer ends, which the move keeps
-
-        this.subtreeStates.resetFor(x);
-
-        double[] newExpectedJumps = {
-                parentRate * (newGrandparent.getHeight() - newParentHeight),
-                newSiblingRate * (newParentHeight - newSibling.getHeight()),
-                subtreeRate * (newParentHeight - x.getHeight())
-        };
-        double logForwardDensity = this.stochasticMapping.sampleStarStates(
-                newExpectedJumps, this.newStarStates, this.subtreeStates, this.subtreeMissingSites, this.subtreeMissingSiteSet, SUBTREE
+        logForwardDensity += this.stochasticMapping.computeLogBranchHistoryDensity(
+                newSubtreeMutations, newParentHeight, x.getHeight(), this.jukesCantorRate, this.differingSites.getSize()
         );
-
-        List<Mutation> newParentMutations = this.starHistories.sampleBranchHistory(
-                parent, newGrandparent.getHeight(), newParentHeight, parentRate, this.newStarStates, TOP, CENTRE, this.subtreeStates
+        logBackwardDensity += this.stochasticMapping.computeLogBranchHistoryDensity(
+                oldSubtreeMutations, oldParentHeight, x.getHeight(), this.jukesCantorRate, oldNumDifferingSites
         );
-        List<Mutation> newSiblingMutations = this.starHistories.sampleBranchHistory(
-                newSibling, newParentHeight, newSibling.getHeight(), newSiblingRate, this.newStarStates, CENTRE, SIBLING, this.subtreeStates
-        );
-        List<Mutation> newSubtreeMutations = this.starHistories.sampleBranchHistory(
-                x, newParentHeight, x.getHeight(), subtreeRate, this.newStarStates, CENTRE, SUBTREE, this.subtreeStates
-        );
-
-        logForwardDensity += this.starHistories.computeLogBranchHistoryDensity(
-                newParentMutations, newGrandparent.getHeight(), newParentHeight, parentRate, this.newStarStates, TOP, CENTRE
-        );
-        logForwardDensity += this.starHistories.computeLogBranchHistoryDensity(
-                newSiblingMutations, newParentHeight, newSibling.getHeight(), newSiblingRate, this.newStarStates, CENTRE, SIBLING
-        );
-        logForwardDensity += this.starHistories.computeLogBranchHistoryDensity(
-                newSubtreeMutations, newParentHeight, x.getHeight(), subtreeRate, this.newStarStates, CENTRE, SUBTREE
-        );
-
-        // the old star around P, which the reverse move resamples
-
-        double[] oldExpectedJumps = {
-                parentRate * (grandparent.getHeight() - oldParentHeight),
-                siblingRate * (oldParentHeight - sibling.getHeight()),
-                subtreeRate * (oldParentHeight - x.getHeight())
-        };
-        double logBackwardDensity = this.stochasticMapping.computeLogStarStatesDensity(
-                oldExpectedJumps, this.oldStarStates, this.subtreeMissingSites.length, this.subtreeMissingSiteSet, SUBTREE
-        );
-
-        logBackwardDensity += this.starHistories.computeLogBranchHistoryDensity(
-                oldParentMutations, grandparent.getHeight(), oldParentHeight, parentRate, this.oldStarStates, TOP, CENTRE
-        );
-        logBackwardDensity += this.starHistories.computeLogBranchHistoryDensity(
-                oldSiblingMutations, oldParentHeight, sibling.getHeight(), siblingRate, this.oldStarStates, CENTRE, SIBLING
-        );
-        logBackwardDensity += this.starHistories.computeLogBranchHistoryDensity(
-                oldSubtreeMutations, oldParentHeight, x.getHeight(), subtreeRate, this.oldStarStates, CENTRE, SUBTREE
-        );
-
-        // unless P only shifts, the move also joins G–S, and the reverse move joins G'–S'
-
-        List<Mutation> joinedMutations = null;
-        if (!isHeightShift) {
-            joinedMutations = this.starHistories.sampleBranchHistory(
-                    sibling, grandparent.getHeight(), sibling.getHeight(), siblingRate, this.oldStarStates, TOP, SIBLING, this.subtreeStates
-            );
-            logForwardDensity += this.starHistories.computeLogBranchHistoryDensity(
-                    joinedMutations, grandparent.getHeight(), sibling.getHeight(), siblingRate, this.oldStarStates, TOP, SIBLING
-            );
-            logBackwardDensity += this.starHistories.computeLogBranchHistoryDensity(
-                    oldNewSiblingMutations, newGrandparent.getHeight(), newSibling.getHeight(), newSiblingRate, this.newStarStates, TOP, SIBLING
-            );
-        }
-
-        newBranchMutations.put(parent, newParentMutations);
-        newBranchMutations.put(newSibling, newSiblingMutations);
-        newBranchMutations.put(x, newSubtreeMutations);
-        if (!isHeightShift) {
-            newBranchMutations.put(sibling, joinedMutations);
-        }
 
         return logBackwardDensity - logForwardDensity;
     }
@@ -525,48 +337,6 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
             }
         }
         return numDifferingMissingSites;
-    }
-
-    /**
-     * Samples the history on the new P'-X branch exactly under the model of the genetic prior,
-     * given the differing sites and, at every other site, the state at P'.
-     */
-    private List<Mutation> sampleExactBranchHistory(Node x, double newParentHeight, IntUnaryOperator newParentStates) {
-        Node root = this.tree.getRoot();
-        this.exactBranchHistories.setModel(this.geneticPrior.computeRateMatrix(), this.geneticPrior.substitutionModel.getEigenDecomposition(root));
-
-        return this.exactBranchHistories.sampleBranchHistory(
-                x.getNr(), newParentHeight, x.getHeight(), this.computeExactRateScale(x), this.differingSites, newParentStates
-        );
-    }
-
-    /**
-     * Samples the history on the new P'-X branch with the sites chosen under Jukes-Cantor with
-     * the rate μ̃ and their histories drawn exactly under the model of the genetic prior.
-     */
-    private List<Mutation> sampleHybridBranchHistory(Node x, double newParentHeight, IntUnaryOperator newParentStates) {
-        Node root = this.tree.getRoot();
-        this.hybridBranchHistories.setModel(this.geneticPrior.computeRateMatrix(), this.geneticPrior.substitutionModel.getEigenDecomposition(root));
-
-        return this.hybridBranchHistories.sampleBranchHistory(
-                x.getNr(), newParentHeight, x.getHeight(), this.computeExactRateScale(x), this.jukesCantorRate, this.differingSites, newParentStates
-        );
-    }
-
-    /** Returns the scale s of the rate matrix Q on the branch above X: its branch rate times the site rate. The move keeps both. */
-    private double computeExactRateScale(Node x) {
-        return this.geneticPrior.branchRateModel.getRateForBranch(x) * this.geneticPrior.siteModel.getRateForCategory(0, this.tree.getRoot());
-    }
-
-    /**
-     * Computes the log probability α_mut that the Jukes-Cantor mapping with the rate μ̃
-     * proposes the given history on the branch above X that starts at the given height,
-     * given the number of sites whose states differ between its ends.
-     */
-    protected double computeLogBranchHistoryDensity(Node x, double startHeight, List<Mutation> branchMutations, int numDifferingSites) {
-        return this.stochasticMapping.computeLogBranchHistoryDensity(
-                branchMutations, startHeight, x.getHeight(), this.jukesCantorRate, numDifferingSites
-        );
     }
 
     /* Tree Rearrangement */
