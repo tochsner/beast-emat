@@ -1,4 +1,4 @@
-package emat.operators.topology;
+package emat.operators.topology.mdspr;
 
 import beast.base.util.Randomizer;
 import org.junit.jupiter.api.Test;
@@ -30,7 +30,7 @@ public class TipNeighboursTest {
             int[][][] classes = this.createClasses(baseSequence, 150, ambiguityProbability);
             for (int maxDistance = 0; maxDistance <= 3; maxDistance++) {
                 int[][] expected = this.compareAllPairs(classes, baseSequence, maxDistance);
-                int[][] actual = MutationDirectedSprOperator.TipNeighbours.findNeighbourClasses(classes[0], classes[1], baseSequence, NUM_STATES, maxDistance);
+                int[][] actual = TipNeighbours.findNeighbourClasses(classes[0], classes[1], baseSequence, NUM_STATES, maxDistance);
                 assertArrayEquals(expected, actual, "ambiguity " + ambiguityProbability + ", distance " + maxDistance);
             }
         }

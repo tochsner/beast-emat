@@ -38,9 +38,9 @@ import java.util.List;
  */
 public class GlobalSplineTreePriorApproximation implements LearnedTreePrior {
 
-    // the defaults for the least number of observations the fit looks back on and the least between two fits
-    public static final int DEFAULT_MIN_WINDOW = 1000;
-    public static final int DEFAULT_MIN_REFIT_INTERVAL = 5_000;
+    // the least number of observations the fit looks back on and the least between two fits
+    private static final int MIN_WINDOW = 1000;
+    private static final int MIN_REFIT_INTERVAL = 5_000;
 
     // the window is the most recent part of all observations of this fraction, the interval between fits that of all
     private static final double WINDOW_FRACTION = 0.5;
@@ -57,7 +57,6 @@ public class GlobalSplineTreePriorApproximation implements LearnedTreePrior {
     private final int warmUp;
     private final double ridgePenalty;
     private final int minWindow;
-    private final int minRefitInterval;
     private final int maxStoredObservations;
 
     // per knot, the features are the constant and the parameters
@@ -116,15 +115,6 @@ public class GlobalSplineTreePriorApproximation implements LearnedTreePrior {
      * @param ridgePenalty  the ridge penalty per observation, in scaled units
      */
     public GlobalSplineTreePriorApproximation(int numKnots, int numParameters, int warmUp, double ridgePenalty) {
-        this(numKnots, numParameters, warmUp, ridgePenalty, DEFAULT_MIN_WINDOW, DEFAULT_MIN_REFIT_INTERVAL);
-    }
-
-    /**
-     * @param minWindow        the least number of most recent observations that the knots, the scales and the
-     *                         weights are derived from, which is at least the warm-up
-     * @param minRefitInterval the least number of observations between two fits after the first
-     */
-    public GlobalSplineTreePriorApproximation(int numKnots, int numParameters, int warmUp, double ridgePenalty, int minWindow, int minRefitInterval) {
         if (numKnots < 2) {
             throw new IllegalArgumentException("There must be at least two knots.");
         }
@@ -133,8 +123,7 @@ public class GlobalSplineTreePriorApproximation implements LearnedTreePrior {
         this.numParameters = numParameters;
         this.warmUp = Math.max(warmUp, 1);
         this.ridgePenalty = ridgePenalty;
-        this.minWindow = Math.max(minWindow, this.warmUp);
-        this.minRefitInterval = Math.max(minRefitInterval, 1);
+        this.minWindow = Math.max(MIN_WINDOW, this.warmUp);
         this.maxStoredObservations = Math.max(MAX_STORED_OBSERVATIONS, this.minWindow);
 
         this.numFeatures = 1 + this.numParameters;
@@ -430,7 +419,7 @@ public class GlobalSplineTreePriorApproximation implements LearnedTreePrior {
         }
         this.restrictToWindow();
 
-        long refitInterval = Math.max(this.minRefitInterval, (long) (REFIT_FRACTION * this.numObservations));
+        long refitInterval = Math.max(MIN_REFIT_INTERVAL, (long) (REFIT_FRACTION * this.numObservations));
         boolean isFirstFitDue = !this.isFitted && this.recentObservations.size() >= this.warmUp;
         if (isFirstFitDue || (this.isFitted && this.numObservationsSinceFit >= refitInterval)) {
             this.fit();
@@ -462,8 +451,7 @@ public class GlobalSplineTreePriorApproximation implements LearnedTreePrior {
         }
     }
 
-    @Override
-    public void discardObservation() {
+    private void discardObservation() {
         this.currentNodes.clear();
         this.currentParameters = null;
     }

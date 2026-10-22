@@ -2,15 +2,9 @@ package emat.operators.nodetimes;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
-import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
-import beast.base.evolution.tree.Tree;
 import beast.base.inference.Scalable;
-import beast.base.inference.operator.kernel.KernelDistribution;
-import emat.state.Mutation;
-import emat.state.Mutations;
 
-import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,31 +12,17 @@ import java.util.List;
         "and maps every mutation linearly within its branch. Unlike scaling all heights, this keeps the tree " +
         "and its mutations valid even for tips sampled through time " +
         "(https://www.biorxiv.org/content/10.1101/2025.06.18.660471v1).")
-public class IntervalScaleOperator extends TreeOperator {
+public class IntervalScaleOperator extends ScaleTunedOperator {
 
-    final public Input<Mutations> mutationsInput = new Input<>("mutations", "the mutations to operate on", Input.Validate.REQUIRED);
-    final public Input<KernelDistribution> kernelDistributionInput = new Input<>("kernelDistribution", "provides sample distribution for proposals",
-            KernelDistribution.newDefaultKernelDistribution());
     final public Input<Double> scaleUpperLimit = new Input<>("upper", "upper limit of the scale factor", 1.0 - 1e-8);
     final public Input<Double> scaleLowerLimit = new Input<>("lower", "lower limit of the scale factor", 1e-8);
     final public Input<Double> scaleFactorInput = new Input<>("scaleFactor", "scaling factor: range from 0 to 1. Close to zero is very large jumps, close to 1.0 is very small jumps.", 0.1);
-    final public Input<Boolean> optimiseInput = new Input<>("optimise", "whether to tune the scale factor towards the target acceptance probability", true);
     final public Input<List<Scalable>> downInput = new Input<>("down", "parameters to scale inversely to the tree length", new ArrayList<>());
     final public Input<List<Scalable>> upInput = new Input<>("up", "parameters to scale with the tree length", new ArrayList<>());
 
-    Mutations mutations;
-    Tree tree;
-    KernelDistribution kernelDistribution;
-
-    double scaleFactor;
-    double upper;
-    double lower;
-
     @Override
     public void initAndValidate() {
-        this.mutations = this.mutationsInput.get();
-        this.tree = this.treeInput.get();
-        this.kernelDistribution = this.kernelDistributionInput.get();
+        super.initAndValidate();
 
         this.scaleFactor = this.scaleFactorInput.get();
         this.upper = this.scaleUpperLimit.get();
@@ -67,40 +47,15 @@ public class IntervalScaleOperator extends TreeOperator {
             oldHeights[node.getNr()] = node.getHeight();
         }
 
-        double lengthBefore = this.computeTreeLength();
+        double lengthBefore = NodeTimes.computeTreeLength(this.tree);
         int numScaledNodes = this.scaleIntervals(this.tree.getRoot(), scaler);
-        double lengthAfter = this.computeTreeLength();
+        double lengthAfter = NodeTimes.computeTreeLength(this.tree);
 
         double logHastingsRatio = numScaledNodes * Math.log(scaler);
 
         // move the mutations of every non-root branch along with its ends
 
-        for (Node node : nodes) {
-            List<Mutation> branchMutations = this.mutations.getMutations(node);
-            if (node.isRoot() || branchMutations.isEmpty()) {
-                // the times of the root mutations are meaningless
-                continue;
-            }
-
-            double oldStartHeight = oldHeights[node.getParent().getNr()];
-            double oldEndHeight = oldHeights[node.getNr()];
-            double newStartHeight = node.getParent().getHeight();
-            double newEndHeight = node.getHeight();
-            double lengthRatio = (newStartHeight - newEndHeight) / (oldStartHeight - oldEndHeight);
-
-            List<Mutation> newBranchMutations = new ArrayList<>();
-            for (Mutation mutation : branchMutations) {
-                newBranchMutations.add(new Mutation(
-                        mutation.nodeNr(),
-                        this.mapHeight(mutation.time(), oldStartHeight, oldEndHeight, newStartHeight, newEndHeight),
-                        this.mapHeight(mutation.timeOfPreviousMutation(), oldStartHeight, oldEndHeight, newStartHeight, newEndHeight),
-                        mutation.site(), mutation.oldState(), mutation.newState()
-                ));
-            }
-
-            this.mutations.applyMutations(node, newBranchMutations, this);
-            logHastingsRatio += branchMutations.size() * Math.log(lengthRatio);
-        }
+        logHastingsRatio += BranchTimeMapper.mapMutations(this.mutations, nodes, oldHeights, this);
 
         // scale the other parameters with the tree length
 
@@ -137,67 +92,6 @@ public class IntervalScaleOperator extends TreeOperator {
         node.setHeight(minHeight + oldInterval * scaler);
 
         return numScaledNodes;
-    }
-
-    /**
-     * Maps a height on a branch linearly from its old to its new ends. The ends map exactly
-     * onto the new ends, which keeps the times of previous mutations at the branch start
-     * consistent, and rounding cannot push a height off the branch.
-     */
-    private double mapHeight(double height, double oldStartHeight, double oldEndHeight, double newStartHeight, double newEndHeight) {
-        if (height == oldStartHeight) {
-            return newStartHeight;
-        }
-
-        double fraction = (height - oldEndHeight) / (oldStartHeight - oldEndHeight);
-        double newHeight = newEndHeight + fraction * (newStartHeight - newEndHeight);
-        return Math.min(Math.max(newHeight, newEndHeight), newStartHeight);
-    }
-
-    private double computeTreeLength() {
-        double length = 0.0;
-        for (Node node : this.tree.getNodesAsArray()) {
-            length += node.getLength();
-        }
-        return length;
-    }
-
-    /* Tuning */
-
-    @Override
-    public void optimize(double logAlpha) {
-        if (this.optimiseInput.get()) {
-            double delta = this.calcDelta(logAlpha) + Math.log(this.getCoercableParameterValue());
-            this.setCoercableParameterValue(Math.exp(delta));
-        }
-    }
-
-    @Override
-    public double getTargetAcceptanceProbability() {
-        return 0.3;
-    }
-
-    @Override
-    public double getCoercableParameterValue() {
-        return this.scaleFactor;
-    }
-
-    @Override
-    public void setCoercableParameterValue(double value) {
-        this.scaleFactor = Math.max(Math.min(value, this.upper), this.lower);
-    }
-
-    @Override
-    public String getPerformanceSuggestion() {
-        double acceptanceProbability = this.m_nNrAccepted / (this.m_nNrAccepted + this.m_nNrRejected + 0.0);
-        double ratio = acceptanceProbability / this.getTargetAcceptanceProbability();
-        ratio = Math.max(Math.min(ratio, 2.0), 0.5);
-
-        DecimalFormat formatter = new DecimalFormat("#.###");
-        if (acceptanceProbability < 0.10 || acceptanceProbability > 0.40) {
-            return "Try setting scale factor to about " + formatter.format(this.getCoercableParameterValue() * ratio);
-        }
-        return "";
     }
 
 }

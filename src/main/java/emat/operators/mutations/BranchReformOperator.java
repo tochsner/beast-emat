@@ -10,6 +10,7 @@ import emat.stochasticmapping.JukesCantorStochasticMapping;
 import emat.helper.MutationPaths;
 import emat.helper.NodeStateLookup;
 import emat.helper.SiteChanges;
+import emat.operators.topology.BranchMutations;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
@@ -17,7 +18,6 @@ import emat.state.Mutations;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -38,6 +38,7 @@ public class BranchReformOperator extends Operator {
     GeneticPrior geneticPrior;
     TreeInterface tree;
     JukesCantorStochasticMapping stochasticMapping;
+    BranchMutations mutationLinker;
 
     // reusable site maps for the changes from the root down to both root children and the resulting differing sites
     SiteChanges subtreeChanges;
@@ -58,6 +59,7 @@ public class BranchReformOperator extends Operator {
 
         int numSites = this.mutations.getReferenceSequence().length;
         this.stochasticMapping = new JukesCantorStochasticMapping(this.mutations.getAlignment().getMaxStateCount(), numSites);
+        this.mutationLinker = new BranchMutations(numSites);
 
         this.subtreeChanges = new SiteChanges(numSites);
         this.siblingChanges = new SiteChanges(numSites);
@@ -142,9 +144,6 @@ public class BranchReformOperator extends Operator {
      */
     private double reformBranch(Node node) {
         List<Mutation> branchMutations = this.mutations.getMutations(node);
-        if (branchMutations.isEmpty()) {
-            return Double.NEGATIVE_INFINITY;
-        }
 
         // evolution runs forwards in time from the parent to the node
 
@@ -183,7 +182,7 @@ public class BranchReformOperator extends Operator {
             ));
         }
 
-        this.mutations.applyMutations(node, this.linkMutations(newBranchMutations, branchStartHeight), this);
+        this.mutations.applyMutations(node, this.mutationLinker.linkMutations(newBranchMutations, branchStartHeight), this);
 
         return 0.0;
     }
@@ -203,10 +202,6 @@ public class BranchReformOperator extends Operator {
      */
     private double reformRootBranches(Node x) {
         Node root = x.getParent();
-        if (root.getChildCount() != 2) {
-            return Double.NEGATIVE_INFINITY;
-        }
-
         Node sibling = root.getLeft() == x ? root.getRight() : root.getLeft();
 
         double rootHeight = root.getHeight();
@@ -257,9 +252,8 @@ public class BranchReformOperator extends Operator {
             ));
         }
 
-
-        this.mutations.applyMutations(x, this.linkMutations(newSubtreeMutations, rootHeight), this);
-        this.mutations.applyMutations(sibling, this.linkMutations(newSiblingMutations, rootHeight), this);
+        this.mutations.applyMutations(x, this.mutationLinker.linkMutations(newSubtreeMutations, rootHeight), this);
+        this.mutations.applyMutations(sibling, this.mutationLinker.linkMutations(newSiblingMutations, rootHeight), this);
         this.updateRootSequence(root, newRootStates);
 
         // the path has the same length and differing sites in both directions
@@ -327,33 +321,6 @@ public class BranchReformOperator extends Operator {
         }
 
         this.mutations.applyMutations(root, rootMutations, this);
-    }
-
-    /* Helpers */
-
-    /**
-     * Returns a copy of the given mutations of one branch, sorted by descending height,
-     * where every mutation follows the previous mutation at its site, or the branch start
-     * if there is none.
-     */
-    private List<Mutation> linkMutations(List<Mutation> branchMutations, double branchStartHeight) {
-        List<Mutation> sortedMutations = new ArrayList<>(branchMutations);
-        sortedMutations.sort(Comparator.comparingDouble(Mutation::time).reversed());
-
-        Map<Integer, Double> lastTimeOfSite = new LinkedHashMap<>();
-        List<Mutation> linkedMutations = new ArrayList<>(sortedMutations.size());
-
-        for (Mutation mutation : sortedMutations) {
-            double timeOfPreviousMutation = lastTimeOfSite.getOrDefault(mutation.site(), branchStartHeight);
-            lastTimeOfSite.put(mutation.site(), mutation.time());
-
-            linkedMutations.add(new Mutation(
-                    mutation.nodeNr(), mutation.time(), timeOfPreviousMutation,
-                    mutation.site(), mutation.oldState(), mutation.newState()
-            ));
-        }
-
-        return linkedMutations;
     }
 
 }

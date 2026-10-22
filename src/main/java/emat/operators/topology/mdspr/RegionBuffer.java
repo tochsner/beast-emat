@@ -2,7 +2,6 @@ package emat.operators.topology.mdspr;
 
 import beast.base.evolution.tree.Node;
 import beast.base.util.Randomizer;
-import emat.operators.topology.MutationDirectedSprOperator.Region;
 
 import java.util.Arrays;
 

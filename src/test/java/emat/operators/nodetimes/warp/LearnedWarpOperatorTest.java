@@ -8,6 +8,7 @@ import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeParser;
 import beast.base.inference.CompoundDistribution;
 import beast.base.inference.StateNode;
+import beast.base.internal.json.JSONObject;
 import beast.base.spec.domain.PositiveReal;
 import beast.base.spec.evolution.branchratemodel.Base;
 import beast.base.spec.evolution.branchratemodel.StrictClockModel;
@@ -17,6 +18,8 @@ import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.state.Mutations;
 import org.junit.jupiter.api.Test;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -194,6 +197,23 @@ public class LearnedWarpOperatorTest {
             heights[node.getNr()] = node.getHeight();
         }
         return heights;
+    }
+
+    /** The effective sample size of the tree length is written to the state file with the tuning information and read back from it. */
+    @Test
+    public void testEffectiveSampleSizeSurvivesStateFile() throws Exception {
+        this.setUp();
+        StringWriter written = new StringWriter();
+        this.operator.storeToFile(new PrintWriter(written));
+        assertEquals(0.0, new JSONObject(written.toString()).getDouble("treeLengthEss"));
+
+        JSONObject restored = new JSONObject(written.toString());
+        restored.put("treeLengthEss", 42.5);
+        this.operator.restoreFromFile(restored);
+
+        StringWriter rewritten = new StringWriter();
+        this.operator.storeToFile(new PrintWriter(rewritten));
+        assertEquals(42.5, new JSONObject(rewritten.toString()).getDouble("treeLengthEss"));
     }
 
     /** A proposal is rejected until the rate has been fitted. */

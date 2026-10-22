@@ -4,11 +4,12 @@ import emat.state.Mutation;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 
 /**
- * Joins and splits the mutation lists of branches when a node is removed from or inserted
- * into a branch, keeping the times of previous mutations consistent. The per-site lookups
+ * Joins, splits and relinks the mutation lists of branches when a node is removed from, inserted
+ * into or moved along a branch, keeping the times of previous mutations consistent. The per-site lookups
  * use arrays over all sites that are reused between calls, so an instance must not be
  * shared between threads.
  */
@@ -114,6 +115,59 @@ public final class BranchMutations {
         }
 
         return new Split(upperMutations, lowerMutations);
+    }
+
+    /**
+     * Moves the start of a branch to the given height. The mutation times stay, but the first mutation at
+     * each site starts at the new branch start. The other mutations are kept as they are.
+     */
+    public List<Mutation> moveBranchStart(List<Mutation> branchMutations, double branchStartHeight) {
+        int stamp = this.getNextStamp();
+
+        Mutation[] newBranchMutations = new Mutation[branchMutations.size()];
+        for (int i = 0; i < newBranchMutations.length; i++) {
+            Mutation mutation = branchMutations.get(i);
+
+            if (this.lowerStampOfSite[mutation.site()] == stamp) {
+                newBranchMutations[i] = mutation;
+            } else {
+                this.lowerStampOfSite[mutation.site()] = stamp;
+                newBranchMutations[i] = new Mutation(
+                        mutation.nodeNr(), mutation.time(), branchStartHeight,
+                        mutation.site(), mutation.oldState(), mutation.newState()
+                );
+            }
+        }
+
+        // an immutable list is not copied again when the mutations of the branch are set
+        return List.of(newBranchMutations);
+    }
+
+    /**
+     * Returns a copy of the given mutations of one branch, sorted by descending height,
+     * where every mutation follows the previous mutation at its site, or the branch start
+     * if there is none.
+     */
+    public List<Mutation> linkMutations(List<Mutation> branchMutations, double branchStartHeight) {
+        int stamp = this.getNextStamp();
+
+        List<Mutation> sortedMutations = new ArrayList<>(branchMutations);
+        sortedMutations.sort(Comparator.comparingDouble(Mutation::time).reversed());
+
+        List<Mutation> linkedMutations = new ArrayList<>(sortedMutations.size());
+        for (Mutation mutation : sortedMutations) {
+            int site = mutation.site();
+            double timeOfPreviousMutation = this.upperStampOfSite[site] == stamp ? this.lastUpperTimeOfSite[site] : branchStartHeight;
+            this.upperStampOfSite[site] = stamp;
+            this.lastUpperTimeOfSite[site] = mutation.time();
+
+            linkedMutations.add(new Mutation(
+                    mutation.nodeNr(), mutation.time(), timeOfPreviousMutation,
+                    site, mutation.oldState(), mutation.newState()
+            ));
+        }
+
+        return linkedMutations;
     }
 
     /** Returns a stamp that no entry holds yet, resetting all entries once the stamps run out. */

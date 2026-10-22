@@ -78,9 +78,6 @@ public interface LearnedTreePrior {
      */
     void finishObservation(double target);
 
-    /** Drops the current observation. */
-    void discardObservation();
-
     boolean isFitted();
 
     long getNumObservations();

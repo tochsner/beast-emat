@@ -8,15 +8,20 @@ import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
+import beast.base.internal.json.JSONException;
+import beast.base.internal.json.JSONObject;
 import beast.base.spec.evolution.branchratemodel.Base;
 import beast.base.spec.evolution.branchratemodel.RandomLocalClockModel;
 import beast.base.spec.evolution.branchratemodel.UCRelaxedClockModel;
 import beast.base.inference.Distribution;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import emat.helper.ThinnedEssTracker;
-import emat.state.Mutation;
+import emat.operators.nodetimes.BranchTimeMapper;
+import emat.operators.nodetimes.NodeTimes;
 import emat.state.Mutations;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -45,6 +50,9 @@ public class LearnedWarpOperator extends TreeOperator {
     final public Input<Double> minEssInput = new Input<>("minEss", "the effective sample size of the tree length, recorded at the observations, that must be exceeded before the rate is fitted for the first time, so that the fit does not learn from the burn-in", 20.0);
     final public Input<Integer> essThinningInput = new Input<>("essThinning", "the number of observations between two values of the trace of the tree length whose effective sample size is compared with minEss, which also delays the first check until there are 100 such values", 12);
     final public Input<Integer> maxObservationsInput = new Input<>("maxObservations", "the number of most recent observations that are kept", 1000);
+
+    // the key under which the effective sample size of the tree length is kept in the state file
+    private static final String ESS_KEY = "treeLengthEss";
 
     // the adapters have no use for the node, as the parameters of the tree prior do not belong to one
     private static final int NO_NODE = -1;
@@ -191,7 +199,7 @@ public class LearnedWarpOperator extends TreeOperator {
             }
             logHastingsRatio += Math.log(lengthBefore / lengthAfter);
         }
-        logHastingsRatio += this.moveMutations(nodes);
+        logHastingsRatio += BranchTimeMapper.mapMutations(this.mutations, nodes, this.oldHeights, this);
 
         if (this.meanRate != null) {
             this.meanRate.set(newMeanRate);
@@ -268,58 +276,6 @@ public class LearnedWarpOperator extends TreeOperator {
     }
 
     /**
-     * Maps the mutations of every non-root branch linearly from the old to the new heights of its ends and returns
-     * the sum over the mutations of the log ratio of the new to the old branch length.
-     */
-    private double moveMutations(Node[] nodes) {
-        double logJacobian = 0.0;
-
-        for (Node node : nodes) {
-            List<Mutation> branchMutations = this.mutations.getMutations(node);
-            if (node.isRoot() || branchMutations.isEmpty()) {
-                // the times of the root mutations are meaningless
-                continue;
-            }
-
-            double oldStartHeight = this.oldHeights[node.getParent().getNr()];
-            double oldEndHeight = this.oldHeights[node.getNr()];
-            double newStartHeight = node.getParent().getHeight();
-            double newEndHeight = node.getHeight();
-            double lengthRatio = (newStartHeight - newEndHeight) / (oldStartHeight - oldEndHeight);
-
-            List<Mutation> newBranchMutations = new ArrayList<>();
-            for (Mutation mutation : branchMutations) {
-                newBranchMutations.add(new Mutation(
-                        mutation.nodeNr(),
-                        this.mapHeight(mutation.time(), oldStartHeight, oldEndHeight, newStartHeight, newEndHeight),
-                        this.mapHeight(mutation.timeOfPreviousMutation(), oldStartHeight, oldEndHeight, newStartHeight, newEndHeight),
-                        mutation.site(), mutation.oldState(), mutation.newState()
-                ));
-            }
-
-            this.mutations.applyMutations(node, newBranchMutations, this);
-            logJacobian += branchMutations.size() * Math.log(lengthRatio);
-        }
-
-        return logJacobian;
-    }
-
-    /**
-     * Maps a height on a branch linearly from its old to its new ends. The ends map exactly
-     * onto the new ends, which keeps the times of previous mutations at the branch start
-     * consistent, and rounding cannot push a height off the branch.
-     */
-    private double mapHeight(double height, double oldStartHeight, double oldEndHeight, double newStartHeight, double newEndHeight) {
-        if (height == oldStartHeight) {
-            return newStartHeight;
-        }
-
-        double fraction = (height - oldEndHeight) / (oldStartHeight - oldEndHeight);
-        double newHeight = newEndHeight + fraction * (newStartHeight - newEndHeight);
-        return Math.min(Math.max(newHeight, newEndHeight), newStartHeight);
-    }
-
-    /**
      * Returns the rates of the branches above the nodes by node number, which are the same before and after the move as
      * they do not depend on the heights. Only their ratios matter, so it does not matter that the clock model may
      * not have caught up with the mean rate yet. The rates are all one if there is no mean rate to map.
@@ -361,7 +317,7 @@ public class LearnedWarpOperator extends TreeOperator {
         }
 
         this.observe(this.treePriorInput.get().getCurrentLogP());
-        this.treeLengthTracker.record(this.computeTreeLength());
+        this.treeLengthTracker.record(NodeTimes.computeTreeLength(this.tree));
         this.reportReachedEss();
         if (this.hazardRate.getNumObserved() >= this.nextFitSize && this.treeLengthTracker.hasReached(this.minEssInput.get())) {
             boolean hasFitted = this.hazardRate.fit();
@@ -373,14 +329,6 @@ public class LearnedWarpOperator extends TreeOperator {
             long numObserved = this.hazardRate.getNumObserved();
             this.nextFitSize = hasFitted ? 2 * numObserved : numObserved + this.minObservationsInput.get();
         }
-    }
-
-    private double computeTreeLength() {
-        double length = 0.0;
-        for (Node node : this.tree.getNodesAsArray()) {
-            length += node.getLength();
-        }
-        return length;
     }
 
     /** Announces once that the tree length has reached the effective sample size that the first fit waits for. */
@@ -495,6 +443,33 @@ public class LearnedWarpOperator extends TreeOperator {
             stateNodes.addAll(adapter.listStateNodes());
         }
         return stateNodes;
+    }
+
+    /* State File */
+
+    /** Stores the effective sample size of the tree length with the tuning information, so that a resumed run does not wait for it again. */
+    @Override
+    public void storeToFile(PrintWriter out) {
+        StringWriter tuning = new StringWriter();
+        super.storeToFile(new PrintWriter(tuning));
+
+        // the tuning information is a single JSON object, which gets one more entry
+        String json = tuning.toString();
+        out.print(json.substring(0, json.lastIndexOf('}')) + ",\"" + ESS_KEY + "\":" + this.treeLengthTracker.getEss() + "}");
+    }
+
+    @Override
+    public void restoreFromFile(JSONObject o) {
+        super.restoreFromFile(o);
+
+        try {
+            if (o.has(ESS_KEY)) {
+                this.treeLengthTracker.restoreEss(o.getDouble(ESS_KEY));
+            }
+        } catch (JSONException exception) {
+            // the effective sample size is learned again from the chain
+            exception.printStackTrace();
+        }
     }
 
     /* Tuning */

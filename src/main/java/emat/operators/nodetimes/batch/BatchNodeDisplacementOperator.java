@@ -11,14 +11,13 @@ import beast.base.spec.type.IntVector;
 import beast.base.spec.type.RealScalar;
 import beast.base.spec.type.RealVector;
 import beast.base.util.Randomizer;
-import emat.operators.nodetimes.batch.LearnedTreePrior;
-import emat.operators.nodetimes.batch.TruncatedDensitySampler;
+import emat.operators.nodetimes.NodeTimes;
+import emat.operators.topology.BranchMutations;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 @Description("Displaces the heights of a batch of internal nodes one after the other, each within the range that keeps " +
@@ -60,9 +59,7 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     private Node[] batchNodes;
     private int batchCount;
 
-    // for every site, the stamp of the last branch on which a mutation at the site was seen
-    private int[] siteStamps;
-    private int siteStamp;
+    private BranchMutations branchMutations;
 
     // the approximation of the tree prior, or null to draw from the genetic prior only
     private LearnedTreePrior treePriorApproximation;
@@ -93,7 +90,7 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         }
 
         this.batchNodes = new Node[this.internalNodeNrs.length];
-        this.siteStamps = new int[this.mutations.getReferenceSequence().length];
+        this.branchMutations = new BranchMutations(this.mutations.getReferenceSequence().length);
 
         this.setCoercableParameterValue(this.batchSizeInput.get());
         this.weightFactor = this.scaleWeightByLogNumTipsInput.get() ? Math.log(this.tree.getLeafNodeCount()) : 1.0;
@@ -152,8 +149,8 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
             Node node = this.batchNodes[i];
 
             // the range of a node depends on the nodes that were displaced before it
-            double minHeight = this.computeMinHeight(node);
-            double maxHeight = this.computeMaxHeight(node);
+            double minHeight = NodeTimes.computeMinHeight(this.mutations, node);
+            double maxHeight = NodeTimes.computeMaxHeight(this.mutations, node);
             if (maxHeight <= minHeight) {
                 continue;
             }
@@ -231,7 +228,7 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     private double displace(Node node, double minHeight, double maxHeight) {
         double midpoint = (minHeight + maxHeight) / 2.0;
 
-        double geneticDecayRate = this.computeDecayRate(node);
+        double geneticDecayRate = NodeTimes.computeDecayRate(this.geneticPrior, node);
         double oldHeight = node.getHeight();
         double newHeight;
         double approximateChange = 0.0;
@@ -252,7 +249,10 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         // let the branches below start at the new height
 
         for (Node child : node.getChildren()) {
-            this.moveBranchStart(child, newHeight);
+            List<Mutation> childMutations = this.mutations.getMutations(child);
+            if (!childMutations.isEmpty()) {
+                this.mutations.applyMutations(child, this.branchMutations.moveBranchStart(childMutations, newHeight), this);
+            }
         }
 
         // remember the move for the fit of the approximation
@@ -263,94 +263,6 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         }
 
         return logHastingsRatio;
-    }
-
-    /**
-     * Returns the lowest height the given node can take: above each child and above every mutation on the
-     * branches below it. The mutations are sorted by descending height, so the first one of each branch is the
-     * highest.
-     */
-    private double computeMinHeight(Node node) {
-        double minHeight = Double.NEGATIVE_INFINITY;
-
-        for (Node child : node.getChildren()) {
-            minHeight = Math.max(minHeight, child.getHeight());
-
-            List<Mutation> childMutations = this.mutations.getMutations(child);
-            if (!childMutations.isEmpty()) {
-                minHeight = Math.max(minHeight, childMutations.getFirst().time());
-            }
-        }
-
-        return minHeight;
-    }
-
-    /**
-     * Returns the highest height the given non-root node can take: below its parent and below every mutation on
-     * the branch above it. The mutations are sorted by descending height, so the last one is the lowest.
-     */
-    private double computeMaxHeight(Node node) {
-        double maxHeight = node.getParent().getHeight();
-
-        List<Mutation> branchMutations = this.mutations.getMutations(node);
-        if (!branchMutations.isEmpty()) {
-            maxHeight = Math.min(maxHeight, branchMutations.getLast().time());
-        }
-
-        return maxHeight;
-    }
-
-    /**
-     * Returns the rate k of the genetic prior as a function of the height h of the given non-root node,
-     * G ∝ exp(-k h). The sequence at the node, with total mutation rate λ, spans the end of the branch above it
-     * and the start of each branch below it. Raising the node by dh shortens the former by dh and lengthens each
-     * of the latter by dh, so k = λ (Σ_c r_c - r) with the branch rates r_c of the children and r of the node.
-     */
-    private double computeDecayRate(Node node) {
-        double childBranchRates = 0.0;
-        for (Node child : node.getChildren()) {
-            childBranchRates += this.geneticPrior.branchRateModel.getRateForBranch(child);
-        }
-
-        double branchRate = this.geneticPrior.branchRateModel.getRateForBranch(node);
-        return this.geneticPrior.getTotalMutationRate(node) * (childBranchRates - branchRate);
-    }
-
-    /**
-     * Moves the start of the branch above the given node to the given height. The mutation times stay, but the
-     * first mutation at each site starts at the new branch start. The other mutations are kept as they are.
-     */
-    private void moveBranchStart(Node node, double branchStartHeight) {
-        List<Mutation> branchMutations = this.mutations.getMutations(node);
-        int numMutations = branchMutations.size();
-        if (numMutations == 0) {
-            return;
-        }
-
-        // a site is marked as seen on this branch by the current stamp, which saves clearing the marks
-        if (this.siteStamp == Integer.MAX_VALUE) {
-            Arrays.fill(this.siteStamps, 0);
-            this.siteStamp = 0;
-        }
-        this.siteStamp++;
-
-        Mutation[] newBranchMutations = new Mutation[numMutations];
-        for (int i = 0; i < numMutations; i++) {
-            Mutation mutation = branchMutations.get(i);
-
-            if (this.siteStamps[mutation.site()] == this.siteStamp) {
-                newBranchMutations[i] = mutation;
-            } else {
-                this.siteStamps[mutation.site()] = this.siteStamp;
-                newBranchMutations[i] = new Mutation(
-                        mutation.nodeNr(), mutation.time(), branchStartHeight,
-                        mutation.site(), mutation.oldState(), mutation.newState()
-                );
-            }
-        }
-
-        // an immutable list is not copied again when the mutations of the branch are set
-        this.mutations.applyMutations(node, List.of(newBranchMutations), this);
     }
 
     /* Tuning */
