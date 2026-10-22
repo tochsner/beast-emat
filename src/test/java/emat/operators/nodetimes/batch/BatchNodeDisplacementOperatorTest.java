@@ -10,6 +10,7 @@ import beast.base.spec.evolution.sitemodel.SiteModel;
 import beast.base.spec.evolution.substitutionmodel.JukesCantor;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.util.Randomizer;
+import emat.adapters.MutationCountAdapter;
 import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.mutations.SiteHistoryGibbsOperator;
 import emat.prior.GeneticPrior;
@@ -21,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BatchNodeDisplacementOperatorTest {
@@ -158,6 +160,37 @@ public class BatchNodeDisplacementOperatorTest {
         assertEquals(this.getTruncatedExponentialMean(6.0, 0.5, 1.5), sumHeights / numSamples, 0.005);
         assertTrue(numEarlyAccepted < 190);
         assertEquals(numSamples, numLateAccepted);
+    }
+
+    /** The values of the adapters are handed to the approximation of the tree prior, which fits past its warm-up. */
+    @Test
+    public void testAcceptsAdaptersOfTreePriorParameters() {
+        Randomizer.setSeed(1);
+
+        Alignment alignment = new Alignment();
+        alignment.initByName("sequence", List.of(
+                new Sequence("A", "GAA"), new Sequence("B", "GAC"), new Sequence("C", "CCC")
+        ), "dataType", "nucleotide");
+
+        TreeParser tree = new TreeParser();
+        tree.initByName("newick", "((A:1.0,B:1.0):1.0,C:2.0);", "IsLabelledNewick", true, "adjustTipHeights", false);
+
+        Mutations mutations = new Mutations();
+        mutations.initByName("tree", tree, "alignment", alignment);
+        mutations.initialiseMutations(this.createThreeTipHistory(tree));
+
+        MutationCountAdapter adapter = new MutationCountAdapter();
+        adapter.initByName("mutations", mutations);
+
+        BatchNodeDisplacementOperator operator = new BatchNodeDisplacementOperator();
+        operator.initByName("weight", 1.0, "tree", tree, "mutations", mutations,
+                "geneticPrior", this.createGeneticPrior(alignment, tree, mutations), "adapter", adapter,
+                "batchSize", 1, "optimise", false, "treePriorWarmUp", 50, "treePriorKnots", 6);
+
+        for (int i = 0; i < 500; i++) {
+            assertFalse(Double.isNaN(operator.proposal()));
+            operator.optimize(0.0);
+        }
     }
 
     /**

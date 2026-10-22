@@ -2,36 +2,39 @@ package emat.operators.nodetimes.warp;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
+import adapters.Adapter;
+import adaptiveoperators.CenteredMultivariateNormalSampler;
 import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
+import beast.base.spec.evolution.branchratemodel.Base;
+import beast.base.spec.evolution.branchratemodel.RandomLocalClockModel;
+import beast.base.spec.evolution.branchratemodel.UCRelaxedClockModel;
 import beast.base.inference.Distribution;
 import beast.base.spec.inference.parameter.RealScalarParam;
-import beast.base.util.Randomizer;
+import emat.helper.ThinnedEssTracker;
 import emat.state.Mutation;
 import emat.state.Mutations;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
-@Description("Proposes a joint move of the two parameters of the tree prior, the heights of all internal nodes and the " +
-        "clock rate. The parameters take a correlated Gaussian step, and every node keeps the interval to its older child in " +
-        "time change, which the operator learns from the chain. It fits the rate at which " +
-        "the tree prior produces branching events, as a function of the height and of the two parameters, to the log density " +
+@Description("Proposes a joint move of the parameters of the tree prior, the heights of all internal nodes and the " +
+        "clock rate. The mutable values of the parameters take a Gaussian step whose covariance is learned from the chain, and every node keeps the interval to its older child in " +
+        "time change, which the operator learns from the chain too. It fits the rate at which " +
+        "the tree prior produces branching events, as a function of the height and of the parameters, to the log density " +
         "that the tree prior gave the trees of the chain. The hazard says how the number of units at risk depends on the " +
         "number of lineages, and AUTO chooses between the two by the residual of their fits at the first fit. " +
-        "The clock rate then follows from keeping the product of the clock rate and the tree length. Proposals are rejected until the first fit.")
+        "The mean rate of the clock model then follows from keeping the product of the mean rate and the tree length, weighted by " +
+        "the relative rates of the branches. Proposals are rejected until the first fit.")
 public class LearnedWarpOperator extends TreeOperator {
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "the mutations to move along with the tree", Input.Validate.REQUIRED);
-    final public Input<StateNode> popSizeInput = new Input<>("popSize", "the population size at height zero of the exponential growth coalescent", Input.Validate.REQUIRED);
-    final public Input<StateNode> growthRateInput = new Input<>("growthRate", "the growth rate of the exponential growth coalescent, with the population size exp(-rate * height) * popSize", Input.Validate.REQUIRED);
-    final public Input<StateNode> clockRateInput = new Input<>("clockRate", "the clock rate, which is set so that its product with the tree length stays the same", Input.Validate.REQUIRED);
-    final public Input<Double> sdLogPopSizeInput = new Input<>("sdLogPopSize", "the standard deviation of the step in the logarithm of the population size, before scaling", Input.Validate.REQUIRED);
-    final public Input<Double> sdGrowthRateInput = new Input<>("sdGrowthRate", "the standard deviation of the step in the growth rate, before scaling", Input.Validate.REQUIRED);
-    final public Input<Double> correlationInput = new Input<>("correlation", "the correlation between the two steps", Input.Validate.REQUIRED);
-    final public Input<Double> scaleFactorInput = new Input<>("scaleFactor", "the factor by which both standard deviations are scaled, which is tuned if optimise is set", 1.0);
+    final public Input<List<Adapter>> adaptersInput = new Input<>("adapter", "adapters of the parameters of the tree prior, which give the real representation the operator works on: the mutable values are moved, and the immutable values only inform the learned rate", new ArrayList<>());
+    final public Input<Base> branchRateModelInput = new Input<>("branchRateModel", "the clock model, whose mean rate is set so that its product with the tree length, weighted by the relative rates of the branches, stays the same. The relative rates of the branches must not depend on the heights of the nodes, so that a normalised relaxed clock is not supported. Without a clock model or without a mean rate the rate is not changed");
+    final public Input<Double> scaleFactorInput = new Input<>("scaleFactor", "the factor by which the learned standard deviations of the step are scaled, which is tuned if optimise is set, and which defaults to 2.38 / sqrt(d) for d mutable values");
     final public Input<Boolean> optimiseInput = new Input<>("optimise", "whether to tune the scale factor towards the target acceptance probability", true);
 
     final public Input<Distribution> treePriorInput = new Input<>("treePrior", "the tree prior, whose log density is what the rate is fitted to", Input.Validate.REQUIRED);
@@ -39,15 +42,21 @@ public class LearnedWarpOperator extends TreeOperator {
     final public Input<Integer> numKnotsInput = new Input<>("numKnots", "the number of knots above height zero, between which the logarithm of the rate is linear in the height", 20);
     final public Input<Integer> observeEveryInput = new Input<>("observeEvery", "the number of proposals between two observations of the state", 5);
     final public Input<Integer> minObservationsInput = new Input<>("minObservations", "the number of observations at which the rate is fitted for the first time, after which the fit is repeated whenever the number of observations doubles", 400);
+    final public Input<Double> minEssInput = new Input<>("minEss", "the effective sample size of the tree length, recorded at the observations, that must be exceeded before the rate is fitted for the first time, so that the fit does not learn from the burn-in", 20.0);
+    final public Input<Integer> essThinningInput = new Input<>("essThinning", "the number of observations between two values of the trace of the tree length whose effective sample size is compared with minEss, which also delays the first check until there are 100 such values", 12);
     final public Input<Integer> maxObservationsInput = new Input<>("maxObservations", "the number of most recent observations that are kept", 1000);
 
-    // the number of parameters the rate depends on: the logarithm of the population size and the growth rate
-    private static final int NUM_PARAMETERS = 2;
+    // the adapters have no use for the node, as the parameters of the tree prior do not belong to one
+    private static final int NO_NODE = -1;
 
     private LearnedHazardRate hazardRate;
     private long numProposals;
     private long nextFitSize;
     private boolean hasReportedHazard;
+    private boolean hasReportedEss;
+
+    // the trace of the tree length at the observations, which tells whether the chain has left its starting state
+    private ThinnedEssTracker treeLengthTracker;
 
     // the two most recent time changes, by the parameters they were built for
     private final double[][] cachedParameters = new double[2][];
@@ -56,33 +65,70 @@ public class LearnedWarpOperator extends TreeOperator {
 
     private Mutations mutations;
     private Tree tree;
-    private RealScalarParam<?> popSize;
-    private RealScalarParam<?> growthRate;
-    private RealScalarParam<?> clockRate;
+    private List<Adapter> adapters;
+    private int numMutable;
+    private int numImmutable;
+
+    // the mean rate of the clock model that is mapped along with the tree, or null if the rate is fixed
+    private Base branchRateModel;
+    private RealScalarParam<?> meanRate;
+
+    // the learned distribution of the values that are moved, from which the zero-mean steps are drawn
+    private CenteredMultivariateNormalSampler stepSampler;
 
     private double scaleFactor;
 
     // the heights of all nodes before the move, by node number
     private double[] oldHeights;
 
-    // the parameters of the coalescent before and after the move
-    private double oldPopSize;
-    private double oldGrowthRate;
-    private double newPopSize;
-    private double newGrowthRate;
+    // the mutable and immutable values of the parameters before and after the move, which the rate depends on
+    private double[] oldFeatures;
+    private double[] newFeatures;
 
     @Override
     public void initAndValidate() {
         this.tree = this.treeInput.get();
         this.mutations = this.mutationsInput.get();
-        this.popSize = this.getScalarParameter(this.popSizeInput.get());
-        this.growthRate = this.getScalarParameter(this.growthRateInput.get());
-        this.clockRate = this.getScalarParameter(this.clockRateInput.get());
-        this.scaleFactor = this.scaleFactorInput.get();
+        this.adapters = this.adaptersInput.get();
+        this.initialiseClock();
         this.oldHeights = new double[this.tree.getNodeCount()];
 
-        this.hazardRate = new LearnedHazardRate(this.hazardInput.get(), this.numKnotsInput.get(), NUM_PARAMETERS, this.maxObservationsInput.get());
+        for (Adapter adapter : this.adapters) {
+            this.numMutable += adapter.getNumMutable();
+            this.numImmutable += adapter.getNumImmutable();
+        }
+        if (this.numMutable == 0) {
+            throw new IllegalArgumentException("At least one adapter must have mutable values.");
+        }
+
+        Double scaleFactor = this.scaleFactorInput.get();
+        this.scaleFactor = scaleFactor != null ? scaleFactor : 2.38 / Math.sqrt(this.numMutable);
+        this.stepSampler = new CenteredMultivariateNormalSampler(this.numMutable);
+
+        this.hazardRate = new LearnedHazardRate(this.hazardInput.get(), this.numKnotsInput.get(), this.numMutable + this.numImmutable, this.maxObservationsInput.get());
         this.nextFitSize = this.minObservationsInput.get();
+        this.treeLengthTracker = new ThinnedEssTracker(this.essThinningInput.get());
+    }
+
+    /** Finds the mean rate to map, and rejects clock models whose relative branch rates change with the heights. */
+    private void initialiseClock() {
+        this.branchRateModel = this.branchRateModelInput.get();
+        if (this.branchRateModel == null || this.branchRateModel.meanRateInput.get() == null) {
+            return;
+        }
+
+        if (this.branchRateModel instanceof UCRelaxedClockModel relaxed && relaxed.normalizeInput.get()) {
+            throw new IllegalArgumentException("The relative rates of a normalised relaxed clock depend on the heights, so set normalize to false.");
+        }
+        if (this.branchRateModel instanceof RandomLocalClockModel local && local.scalingInput.get()) {
+            throw new IllegalArgumentException("The relative rates of a scaled random local clock depend on the heights, so set scaling to false.");
+        }
+
+        if (this.branchRateModel.meanRateInput.get() instanceof StateNode mean) {
+            this.meanRate = this.getScalarParameter(mean);
+        } else {
+            throw new IllegalArgumentException("The mean rate of the clock model must be a real scalar parameter.");
+        }
     }
 
     private RealScalarParam<?> getScalarParameter(StateNode parameter) {
@@ -94,61 +140,62 @@ public class LearnedWarpOperator extends TreeOperator {
 
     @Override
     public double proposal() {
-        double firstNormal = Randomizer.nextGaussian();
-        double secondNormal = Randomizer.nextGaussian();
-        double correlation = this.correlationInput.get();
-
-        double logPopSizeShift = this.scaleFactor * this.sdLogPopSizeInput.get() * firstNormal;
-        double growthRateShift = this.scaleFactor * this.sdGrowthRateInput.get()
-                * (correlation * firstNormal + Math.sqrt(1.0 - correlation * correlation) * secondNormal);
-
+        this.stepSampler.record(new double[0], this.readMutable());
         this.observeState();
-        return this.warp(logPopSizeShift, growthRateShift);
+
+        double[] step = this.stepSampler.sampleConditionally(new double[0], this.scaleFactor);
+        return this.warp(step);
     }
 
     /**
-     * Shifts the logarithm of the population size and the growth rate by the given amounts, and maps the tree and
-     * the clock rate accordingly. Returns the log Hastings ratio, which is the log Jacobian of the map from the old
-     * to the new heights, the clock rate and the population size on the natural scale, plus one term for every
-     * mutation. A step with the opposite shifts undoes the move and has the negated Hastings ratio.
+     * Adds the given step to the mutable values of the parameters, and maps the tree and the clock rate accordingly.
+     * Returns the log Hastings ratio, which is the log Jacobian of the map from the old to the new heights and the
+     * clock rate, plus one term for every mutation, plus the change of the log Jacobian corrections of the adapters,
+     * which turn the symmetric step in the real representation into a step on the parameters. A step with the
+     * opposite shifts undoes the move and has the negated Hastings ratio.
      */
-    public double warp(double logPopSizeShift, double growthRateShift) {
+    public double warp(double[] step) {
         if (!this.hazardRate.isFitted()) {
             return Double.NEGATIVE_INFINITY;
         }
 
-        this.oldPopSize = this.popSize.get();
-        this.oldGrowthRate = this.growthRate.get();
-        this.newPopSize = this.oldPopSize * Math.exp(logPopSizeShift);
-        this.newGrowthRate = this.oldGrowthRate + growthRateShift;
-        if (!this.popSize.isValid(this.newPopSize) || !this.growthRate.isValid(this.newGrowthRate)) {
+        double[] oldMutable = this.readMutable();
+        this.oldFeatures = this.readFeatures();
+        double logCorrectionBefore = this.computeLogJacobianCorrection();
+
+        if (!this.writeMutable(oldMutable, step)) {
             return Double.NEGATIVE_INFINITY;
         }
+        this.newFeatures = this.readFeatures();
+        double logCorrectionAfter = this.computeLogJacobianCorrection();
 
         Node[] nodes = this.tree.getNodesAsArray();
         for (Node node : nodes) {
             this.oldHeights[node.getNr()] = node.getHeight();
         }
 
-        double lengthBefore = this.computeTreeLength();
+        double[] branchRates = this.readBranchRates(nodes);
+        double lengthBefore = this.computeWeightedLength(nodes, branchRates);
         double logJacobian = this.warpHeights(this.tree.getRoot());
         if (!Double.isFinite(logJacobian)) {
             return Double.NEGATIVE_INFINITY;
         }
-        double lengthAfter = this.computeTreeLength();
+        double lengthAfter = this.computeWeightedLength(nodes, branchRates);
 
-        double newClockRate = this.clockRate.get() * lengthBefore / lengthAfter;
-        if (!this.clockRate.isValid(newClockRate)) {
-            return Double.NEGATIVE_INFINITY;
+        double logHastingsRatio = logJacobian + logCorrectionBefore - logCorrectionAfter;
+        double newMeanRate = Double.NaN;
+        if (this.meanRate != null) {
+            newMeanRate = this.meanRate.get() * lengthBefore / lengthAfter;
+            if (!this.meanRate.isValid(newMeanRate)) {
+                return Double.NEGATIVE_INFINITY;
+            }
+            logHastingsRatio += Math.log(lengthBefore / lengthAfter);
         }
-
-        // the step is symmetric in the logarithm of the population size, which adds the shift on the natural scale
-        double logHastingsRatio = logJacobian + Math.log(lengthBefore / lengthAfter) + logPopSizeShift;
         logHastingsRatio += this.moveMutations(nodes);
 
-        this.popSize.set(this.newPopSize);
-        this.growthRate.set(this.newGrowthRate);
-        this.clockRate.set(newClockRate);
+        if (this.meanRate != null) {
+            this.meanRate.set(newMeanRate);
+        }
 
         return logHastingsRatio;
     }
@@ -170,10 +217,10 @@ public class LearnedWarpOperator extends TreeOperator {
         double oldChildHeight = Math.max(this.oldHeights[node.getLeft().getNr()], this.oldHeights[node.getRight().getNr()]);
         double newChildHeight = Math.max(node.getLeft().getHeight(), node.getRight().getHeight());
 
-        double newCoalescentTime = this.computeCoalescentTime(newChildHeight, this.newPopSize, this.newGrowthRate)
-                + this.computeCoalescentTime(oldHeight, this.oldPopSize, this.oldGrowthRate)
-                - this.computeCoalescentTime(oldChildHeight, this.oldPopSize, this.oldGrowthRate);
-        double newHeight = this.computeHeight(newCoalescentTime, this.newPopSize, this.newGrowthRate);
+        double newCoalescentTime = this.computeCoalescentTime(newChildHeight, this.newFeatures)
+                + this.computeCoalescentTime(oldHeight, this.oldFeatures)
+                - this.computeCoalescentTime(oldChildHeight, this.oldFeatures);
+        double newHeight = this.computeHeight(newCoalescentTime, this.newFeatures);
         if (!(newHeight > newChildHeight)) {
             return Double.NaN;
         }
@@ -181,37 +228,35 @@ public class LearnedWarpOperator extends TreeOperator {
         node.setHeight(newHeight);
 
         return logJacobian
-                + this.computeLogInversePopSize(oldHeight, this.oldPopSize, this.oldGrowthRate)
-                - this.computeLogInversePopSize(newHeight, this.newPopSize, this.newGrowthRate);
+                + this.computeLogRate(oldHeight, this.oldFeatures)
+                - this.computeLogRate(newHeight, this.newFeatures);
     }
 
-    private double computeCoalescentTime(double height, double popSize, double growthRate) {
-        return this.getTimeChange(popSize, growthRate).computeTime(height);
+    private double computeCoalescentTime(double height, double[] features) {
+        return this.getTimeChange(features).computeTime(height);
     }
 
-    private double computeHeight(double coalescentTime, double popSize, double growthRate) {
-        return this.getTimeChange(popSize, growthRate).computeHeight(coalescentTime);
+    private double computeHeight(double coalescentTime, double[] features) {
+        return this.getTimeChange(features).computeHeight(coalescentTime);
     }
 
-    private double computeLogInversePopSize(double height, double popSize, double growthRate) {
-        return this.getTimeChange(popSize, growthRate).computeLogRate(height);
+    private double computeLogRate(double height, double[] features) {
+        return this.getTimeChange(features).computeLogRate(height);
     }
 
     /**
-     * Returns the time change for the given parameters from one of the two most recent, as a move uses the old and the
-     * new parameters alternately. A time change that is not valid yields NaN heights, which reject the move.
+     * Returns the time change for the given values of the parameters from one of the two most recent, as a move uses the old and the
+     * new values alternately. A time change that is not valid yields NaN heights, which reject the move.
      */
-    private HazardTimeChange getTimeChange(double popSize, double growthRate) {
+    private HazardTimeChange getTimeChange(double[] features) {
         for (int slot = 0; slot < this.cachedTimeChanges.length; slot++) {
-            double[] parameters = this.cachedParameters[slot];
-            if (parameters != null && parameters[0] == popSize && parameters[1] == growthRate) {
+            if (Arrays.equals(this.cachedParameters[slot], features)) {
                 return this.cachedTimeChanges[slot];
             }
         }
 
-        double[] parameters = {popSize, growthRate};
-        HazardTimeChange timeChange = this.hazardRate.createTimeChange(new double[]{Math.log(popSize), growthRate});
-        this.cachedParameters[this.nextSlot] = parameters;
+        HazardTimeChange timeChange = this.hazardRate.createTimeChange(features);
+        this.cachedParameters[this.nextSlot] = features.clone();
         this.cachedTimeChanges[this.nextSlot] = timeChange;
         this.nextSlot = 1 - this.nextSlot;
         return timeChange;
@@ -274,10 +319,24 @@ public class LearnedWarpOperator extends TreeOperator {
         return Math.min(Math.max(newHeight, newEndHeight), newStartHeight);
     }
 
-    private double computeTreeLength() {
+    /**
+     * Returns the rates of the branches above the nodes by node number, which are the same before and after the move as
+     * they do not depend on the heights. Only their ratios matter, so it does not matter that the clock model may
+     * not have caught up with the mean rate yet. The rates are all one if there is no mean rate to map.
+     */
+    private double[] readBranchRates(Node[] nodes) {
+        double[] rates = new double[nodes.length];
+        for (Node node : nodes) {
+            rates[node.getNr()] = this.meanRate == null || node.isRoot() ? 1.0 : this.branchRateModel.getRateForBranch(node);
+        }
+        return rates;
+    }
+
+    /** Returns the sum over the branches of the length of the branch times its rate. */
+    private double computeWeightedLength(Node[] nodes, double[] branchRates) {
         double length = 0.0;
-        for (Node node : this.tree.getNodesAsArray()) {
-            length += node.getLength();
+        for (Node node : nodes) {
+            length += branchRates[node.getNr()] * node.getLength();
         }
         return length;
     }
@@ -291,7 +350,8 @@ public class LearnedWarpOperator extends TreeOperator {
 
     /**
      * Records the state of every few proposals with the log density of the tree prior, and fits the rate when enough
-     * observations are there for the first time or have doubled since the last fit. The fit only changes between
+     * observations are there for the first time or have doubled since the last fit, and the tree length has reached the
+     * minimum effective sample size. The fit only changes between
      * proposals, so a proposal and its reverse use the same rate.
      */
     private void observeState() {
@@ -301,12 +361,42 @@ public class LearnedWarpOperator extends TreeOperator {
         }
 
         this.observe(this.treePriorInput.get().getCurrentLogP());
-        if (this.hazardRate.getNumObserved() >= this.nextFitSize) {
-            this.hazardRate.fit();
+        this.treeLengthTracker.record(this.computeTreeLength());
+        this.reportReachedEss();
+        if (this.hazardRate.getNumObserved() >= this.nextFitSize && this.treeLengthTracker.hasReached(this.minEssInput.get())) {
+            boolean hasFitted = this.hazardRate.fit();
+            this.reportFit(hasFitted);
             this.reportChosenHazard();
             this.clearTimeChanges();
-            this.nextFitSize = 2 * this.hazardRate.getNumObserved();
+
+            // a failed fit is tried again after as many observations as the first fit waited for
+            long numObserved = this.hazardRate.getNumObserved();
+            this.nextFitSize = hasFitted ? 2 * numObserved : numObserved + this.minObservationsInput.get();
         }
+    }
+
+    private double computeTreeLength() {
+        double length = 0.0;
+        for (Node node : this.tree.getNodesAsArray()) {
+            length += node.getLength();
+        }
+        return length;
+    }
+
+    /** Announces once that the tree length has reached the effective sample size that the first fit waits for. */
+    private void reportReachedEss() {
+        if (!this.hasReportedEss && this.treeLengthTracker.hasReached(this.minEssInput.get())) {
+            this.hasReportedEss = true;
+            System.out.printf("%s: tree length reached an ESS of %.1f after %d proposals%n",
+                    this.getID(), this.treeLengthTracker.getEss(), this.numProposals);
+        }
+    }
+
+    /** Announces the outcome of a fit, as a failed fit leaves the previous rate in place without any other sign. */
+    private void reportFit(boolean hasFitted) {
+        System.out.printf("%s: fit after %d observations %s, residual %.3g%s%n",
+                this.getID(), this.hazardRate.getNumObserved(), hasFitted ? "succeeded" : "failed", this.hazardRate.getRmsResidual(),
+                hasFitted ? "" : " (" + this.hazardRate.getFailureReason() + ")");
     }
 
     /** Announces the hazard that AUTO chose, with the residuals it chose by, once. */
@@ -327,15 +417,84 @@ public class LearnedWarpOperator extends TreeOperator {
             (node.isLeaf() ? tipHeights : internalHeights).add(node.getHeight());
         }
 
-        this.hazardRate.addObservation(this.toArray(tipHeights), this.toArray(internalHeights), this.readParameters(), logDensity);
+        this.hazardRate.addObservation(this.toArray(tipHeights), this.toArray(internalHeights), this.readFeatures(), logDensity);
     }
 
     private double[] toArray(List<Double> values) {
         return values.stream().mapToDouble(Double::doubleValue).toArray();
     }
 
-    private double[] readParameters() {
-        return new double[]{Math.log(((RealScalarParam<?>) this.popSizeInput.get()).get()), ((RealScalarParam<?>) this.growthRateInput.get()).get()};
+    /* Parameters */
+
+    /** Returns the mutable values followed by the immutable values of the adapters, which the learned rate depends on. */
+    private double[] readFeatures() {
+        double[] features = new double[this.numMutable + this.numImmutable];
+        System.arraycopy(this.readMutable(), 0, features, 0, this.numMutable);
+
+        int index = this.numMutable;
+        for (Adapter adapter : this.adapters) {
+            double[] immutable = adapter.getImmutable(NO_NODE);
+            System.arraycopy(immutable, 0, features, index, immutable.length);
+            index += immutable.length;
+        }
+        return features;
+    }
+
+    private double[] readMutable() {
+        double[] mutable = new double[this.numMutable];
+
+        int index = 0;
+        for (Adapter adapter : this.adapters) {
+            double[] values = adapter.getMutable(NO_NODE);
+            System.arraycopy(values, 0, mutable, index, values.length);
+            index += values.length;
+        }
+        return mutable;
+    }
+
+    /** Sets the mutable values to the old values plus the step, and returns whether an adapter took them all. */
+    private boolean writeMutable(double[] oldMutable, double[] step) {
+        int index = 0;
+        for (Adapter adapter : this.adapters) {
+            int numValues = adapter.getNumMutable();
+            if (numValues == 0) {
+                continue;
+            }
+
+            double[] values = new double[numValues];
+            for (int i = 0; i < numValues; i++) {
+                values[i] = oldMutable[index + i] + step[index + i];
+            }
+
+            try {
+                adapter.update(values, NO_NODE);
+            } catch (RuntimeException exception) {
+                // the adapter cannot represent the values, as for a transform that leaves its domain
+                return false;
+            }
+            index += numValues;
+        }
+        return true;
+    }
+
+    private double computeLogJacobianCorrection() {
+        double logCorrection = 0.0;
+        for (Adapter adapter : this.adapters) {
+            logCorrection += adapter.getLogJacobianCorrection(NO_NODE);
+        }
+        return logCorrection;
+    }
+
+    @Override
+    public List<StateNode> listStateNodes() {
+        List<StateNode> stateNodes = new ArrayList<>(super.listStateNodes());
+        if (this.meanRate != null) {
+            stateNodes.add(this.meanRate);
+        }
+        for (Adapter adapter : this.adapters) {
+            stateNodes.addAll(adapter.listStateNodes());
+        }
+        return stateNodes;
     }
 
     /* Tuning */

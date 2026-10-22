@@ -1,5 +1,6 @@
 package emat.operators.nodetimes.batch;
 
+import adapters.Adapter;
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.operator.TreeOperator;
@@ -33,8 +34,12 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     final public Input<Boolean> learnTreePriorInput = new Input<>("learnTreePrior", "whether to learn an approximation of the tree prior of its own, instead of drawing from the genetic prior only", true);
     final public Input<Integer> treePriorKnotsInput = new Input<>("treePriorKnots", "the number of knots along the height between which the slope of the approximation of the tree prior is interpolated", 20);
     final public Input<List<StateNode>> treePriorParametersInput = new Input<>("treePriorParameter", "real scalar, real vector or integer vector parameters of the tree prior, which the approximation of the tree prior may depend on", new ArrayList<>());
+    final public Input<List<Adapter>> adaptersInput = new Input<>("adapter", "adapters of further parameters of the tree prior, whose mutable and immutable values the approximation of the tree prior may depend on. The operator never moves them", new ArrayList<>());
     final public Input<Integer> treePriorWarmUpInput = new Input<>("treePriorWarmUp", "the number of proposals after which the approximation of the tree prior is fitted for the first time", 500);
     final public Input<Boolean> scaleWeightByLogNumTipsInput = new Input<>("scaleWeightByLogNumTips", "whether to scale the weight by the natural logarithm of the number of tips n, so that the operator is selected with weight * ln(n). Otherwise, the weight is used as given", false);
+
+    // the adapters have no use for the node, as the parameters of the tree prior do not belong to one
+    private static final int NO_NODE = -1;
 
     private Tree tree;
     private Mutations mutations;
@@ -100,9 +105,15 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         }
     }
 
-    /** Returns the number of values of the parameters of the tree prior, and checks that they are real or integer vectors. */
+    /**
+     * Returns the number of values of the parameters of the tree prior, and checks that they are real or integer
+     * vectors. The values of the adapters follow those of the parameters.
+     */
     private int countTreePriorParameterValues() {
         int numValues = 0;
+        for (Adapter adapter : this.adaptersInput.get()) {
+            numValues += adapter.getNumMutable() + adapter.getNumImmutable();
+        }
         for (StateNode parameter : this.treePriorParametersInput.get()) {
             if (parameter instanceof RealScalar<?>) {
                 numValues++;
@@ -153,7 +164,10 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         return logHastingsRatio;
     }
 
-    /** Reads the current values of the parameters of the tree prior into the array that is handed to the approximation. */
+    /**
+     * Reads the current values of the parameters of the tree prior, and then the mutable and immutable values of the
+     * adapters, into the array that is handed to the approximation.
+     */
     private void readTreePriorParameterValues() {
         int index = 0;
         for (StateNode parameter : this.treePriorParametersInput.get()) {
@@ -167,6 +181,15 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
                 for (int i = 0; i < vector.size(); i++) {
                     this.treePriorParameterValues[index++] = vector.get(i);
                 }
+            }
+        }
+
+        for (Adapter adapter : this.adaptersInput.get()) {
+            for (double value : adapter.getMutable(NO_NODE)) {
+                this.treePriorParameterValues[index++] = value;
+            }
+            for (double value : adapter.getImmutable(NO_NODE)) {
+                this.treePriorParameterValues[index++] = value;
             }
         }
     }

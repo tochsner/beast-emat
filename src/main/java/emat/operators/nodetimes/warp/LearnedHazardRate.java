@@ -36,7 +36,11 @@ public class LearnedHazardRate {
     // below this size of the difference of two log rates, the integral of the rate is expanded in a series
     private static final double SMALL_DIFFERENCE = 1e-3;
 
-    private static final int MAX_EVALUATIONS = 200;
+    private static final int MAX_EVALUATIONS = 2000;
+
+    // the fit only has to reproduce the log densities to a few digits, and the default tolerances keep the optimiser
+    // iterating long after it has stopped improving
+    private static final double FIT_TOLERANCE = 1e-6;
 
     // the hazard that the fit uses, which is chosen at the first fit if the hazard is AUTO
     private TreeHazard resolvedHazard;
@@ -56,6 +60,9 @@ public class LearnedHazardRate {
     private double[][] knotWeights;
     private double[] interceptWeights;
     private double rmsResidual = Double.NaN;
+
+    // why the most recent fit with a hazard failed, or null if it did not
+    private String failureReason;
 
     /** A tree by the sorted heights of its tips and of its internal nodes, with the parameters and log density it was seen with. */
     private record Observation(double[] parameters, double[] tipHeights, double[] internalHeights, double logDensity) {
@@ -100,6 +107,11 @@ public class LearnedHazardRate {
     /** Returns the number of observations that were made, including those that are no longer kept. */
     public long getNumObserved() {
         return this.numObserved;
+    }
+
+    /** Returns why the most recent fit failed, or null if it did not. */
+    public String getFailureReason() {
+        return this.failureReason;
     }
 
     /** Returns the root mean square of the residuals of the last fit to the log densities. */
@@ -182,25 +194,24 @@ public class LearnedHazardRate {
     /**
      * Fits the weights to the most recent half of the observations. If the hazard is AUTO, the first fit tries both
      * hazards and keeps the one with the smaller residual for good. A fit that fails or is not finite is ignored and
-     * the previous fit is kept.
+     * the previous fit is kept. Returns whether the fit succeeded.
      */
-    public void fit() {
+    public boolean fit() {
         int numUsed = Math.min(this.observations.size(), Math.max(this.observations.size() / 2, 10));
         List<Observation> all = new ArrayList<>(this.observations);
         List<Observation> used = all.subList(all.size() - numUsed, all.size());
         if (used.size() < 3) {
-            return;
+            return false;
         }
 
         if (this.resolvedHazard != null) {
-            this.keepFit(this.fitWithHazard(used, this.resolvedHazard));
-            return;
+            return this.keepFit(this.fitWithHazard(used, this.resolvedHazard));
         }
 
         Fit coalescentFit = this.fitWithHazard(used, TreeHazard.COALESCENT);
         Fit birthDeathFit = this.fitWithHazard(used, TreeHazard.BIRTH_DEATH);
         if (coalescentFit == null && birthDeathFit == null) {
-            return;
+            return false;
         }
 
         boolean isCoalescent = birthDeathFit == null || (coalescentFit != null && coalescentFit.rmsResidual() <= birthDeathFit.rmsResidual());
@@ -208,7 +219,7 @@ public class LearnedHazardRate {
         this.candidateRmsResiduals = new double[]{
                 coalescentFit == null ? Double.NaN : coalescentFit.rmsResidual(),
                 birthDeathFit == null ? Double.NaN : birthDeathFit.rmsResidual()};
-        this.keepFit(isCoalescent ? coalescentFit : birthDeathFit);
+        return this.keepFit(isCoalescent ? coalescentFit : birthDeathFit);
     }
 
     /** Returns the hazard the fit uses, or null if it is AUTO and has not been chosen yet. */
@@ -227,6 +238,7 @@ public class LearnedHazardRate {
         double[] scales = new double[this.numParameters];
         this.computeStandardisation(used, means, scales);
         if (knots == null) {
+            this.failureReason = "the heights of the internal nodes are all zero";
             return null;
         }
 
@@ -256,10 +268,15 @@ public class LearnedHazardRate {
                     .maxEvaluations(MAX_EVALUATIONS)
                     .maxIterations(MAX_EVALUATIONS)
                     .build();
-            double[] weights = new LevenbergMarquardtOptimizer().optimize(problem).getPoint().toArray();
+            double[] weights = new LevenbergMarquardtOptimizer()
+                    .withCostRelativeTolerance(FIT_TOLERANCE)
+                    .withParameterRelativeTolerance(FIT_TOLERANCE)
+                    .withOrthoTolerance(FIT_TOLERANCE)
+                    .optimize(problem).getPoint().toArray();
 
             for (double weight : weights) {
                 if (!Double.isFinite(weight)) {
+                    this.failureReason = "the weights are not finite";
                     return null;
                 }
             }
@@ -267,6 +284,7 @@ public class LearnedHazardRate {
             return new Fit(knots, means, scales, weights, this.computeRmsResidual(weights, located, numKnotsTotal, numFeatures, target));
         } catch (RuntimeException exception) {
             // the optimiser did not converge or met a value that is not finite, so there is no fit
+            this.failureReason = exception.getClass().getSimpleName() + ": " + exception.getMessage();
             return null;
         }
     }
@@ -531,9 +549,9 @@ public class LearnedHazardRate {
         return Math.sqrt(squareSum / located.size());
     }
 
-    private void keepFit(Fit fit) {
+    private boolean keepFit(Fit fit) {
         if (fit == null) {
-            return;
+            return false;
         }
 
         int numFeatures = 1 + this.numParameters;
@@ -549,6 +567,7 @@ public class LearnedHazardRate {
         this.interceptWeights = Arrays.copyOfRange(fit.weights(), numKnotsTotal * numFeatures, fit.weights().length);
         this.rmsResidual = fit.rmsResidual();
         this.isFitted = true;
+        return true;
     }
 
     /* Evaluation */
