@@ -39,6 +39,7 @@ public class LearnedWarpOperatorTest {
     private RealScalarParam<PositiveReal> clockRate;
     private LearnedWarpOperator operator;
     private Base clockModel;
+    private boolean isOptimised;
 
     /** Moves the logarithm of the population size and the growth rate, as the log and the identity transform do. */
     private static class ParameterAdapter extends BEASTObject implements Adapter {
@@ -119,7 +120,7 @@ public class LearnedWarpOperatorTest {
                                                RealScalarParam<Real> growthRate, Base clockModel) {
         LearnedWarpOperator learned = new LearnedWarpOperator();
         learned.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "adapter", new ParameterAdapter(popSize, growthRate),
-                "branchRateModel", clockModel, "optimise", false,
+                "branchRateModel", clockModel, "optimise", this.isOptimised,
                 "treePrior", new CompoundDistribution(), "hazard", TreeHazard.COALESCENT, "numKnots", 12);
         return learned;
     }
@@ -214,6 +215,19 @@ public class LearnedWarpOperatorTest {
         StringWriter rewritten = new StringWriter();
         this.operator.storeToFile(new PrintWriter(rewritten));
         assertEquals(42.5, new JSONObject(rewritten.toString()).getDouble("treeLengthEss"));
+    }
+
+    /** After the first fit, the scale factor shrinks quickly under rejections. */
+    @Test
+    public void testScaleFactorShrinksUnderRejections() {
+        this.isOptimised = true;
+        this.setUp();
+
+        double fittedScale = this.operator.getCoercableParameterValue();
+        for (int i = 0; i < 50; i++) {
+            this.operator.optimize(Double.NEGATIVE_INFINITY);
+        }
+        assertTrue(this.operator.getCoercableParameterValue() < 0.7 * fittedScale);
     }
 
     /** A proposal is rejected until the rate has been fitted. */

@@ -51,6 +51,9 @@ public class LearnedWarpOperator extends TreeOperator {
     final public Input<Integer> essThinningInput = new Input<>("essThinning", "the number of observations between two values of the trace of the tree length whose effective sample size is compared with minEss, which also delays the first check until there are 100 such values", 12);
     final public Input<Integer> maxObservationsInput = new Input<>("maxObservations", "the number of most recent observations that are kept", 1000);
 
+    // the gain of the tuning of the scale factor decays with the number of proposals since the first fit, but not below this value
+    private static final double MIN_TUNING_GAIN = 0.01;
+
     // the key under which the effective sample size of the tree length is kept in the state file
     private static final String ESS_KEY = "treeLengthEss";
 
@@ -85,6 +88,9 @@ public class LearnedWarpOperator extends TreeOperator {
     private CenteredMultivariateNormalSampler stepSampler;
 
     private double scaleFactor;
+
+    // the number of proposals the scale factor was tuned on, which are those since the first fit
+    private long numTuningSteps;
 
     // the heights of all nodes before the move, by node number
     private double[] oldHeights;
@@ -474,10 +480,19 @@ public class LearnedWarpOperator extends TreeOperator {
 
     /* Tuning */
 
+    /**
+     * Tunes the scale factor with a gain that decays with the number of proposals since the first fit, down to a floor.
+     * The gain of the schedule of BEAST counts all proposals, including those rejected before the first fit, which
+     * would leave the scale factor almost untouched.
+     */
     @Override
     public void optimize(double logAlpha) {
         if (this.optimiseInput.get() && this.hazardRate.isFitted()) {
-            double delta = this.calcDelta(logAlpha) + Math.log(this.getCoercableParameterValue());
+            this.numTuningSteps++;
+            double gain = Math.max(1.0 / (this.numTuningSteps + 1.0), MIN_TUNING_GAIN);
+            double acceptance = Double.isNaN(logAlpha) ? 0.0 : Math.min(1.0, Math.exp(logAlpha));
+
+            double delta = gain * (acceptance - this.getTargetAcceptanceProbability()) + Math.log(this.getCoercableParameterValue());
             this.setCoercableParameterValue(Math.exp(delta));
         }
     }
