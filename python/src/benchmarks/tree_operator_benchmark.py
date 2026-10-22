@@ -91,9 +91,7 @@ OUTPUT_PATH = TESTS_PATH / "operator_benchmark" / "hcv"
 TREE_OPERATOR_IDS = [
     "IntervalScaleOperator.hcv",
     "RootScaleOperator.hcv",
-    "InnerNodeResampleOperator.hcv",
     "MutationDirectedSprOperator.hcv",
-    "WilsonBalding.hcv",
 ]
 
 WINDOW_PROBABILITIES = [0.0, 0.1, 0.3, 0.5, 0.7]
@@ -152,14 +150,12 @@ def get_configurations() -> list[Configuration]:
                 labels={"annealing": annealing, "fullExplorationProbability": full_exploration_probability},
             ))
 
-    # the mix suggested by the two experiments above: less Wilson-Balding and node displacement, more interval scaling and mdSPR
+    # the mix suggested by the two experiments above: less node displacement, more interval scaling and mdSPR
     configurations.append(Configuration(
         "proposed_mix", "proposal",
         operator_attributes={
             "IntervalScaleOperator.hcv": {"weight": "4.0"},
-            "InnerNodeResampleOperator.hcv": {"weight": "30.0"},
             "MutationDirectedSprOperator.hcv": {"weight": "20.0"},
-            "WilsonBalding.hcv": {"weight": "2.0"},
         },
         labels={"mix": "proposed"},
     ))
