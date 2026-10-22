@@ -9,6 +9,7 @@ import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.BranchReformOperator;
 import emat.operators.CoalescentWarpOperator;
 import emat.operators.QuantileWarpOperator;
+import emat.operators.LearnedWarpOperator;
 import emat.operators.DiagnosticAdaptiveOperator;
 import emat.operators.IdenticalTipPermutationOperator;
 import emat.operators.IntervalScaleOperator;
@@ -63,6 +64,7 @@ open module my.beast.example {
             IntervalScaleOperator,
             CoalescentWarpOperator,
             QuantileWarpOperator,
+            LearnedWarpOperator,
             MutationDirectedSprOperator,
             IdenticalTipPermutationOperator,
             DiagnosticAdaptiveOperator,

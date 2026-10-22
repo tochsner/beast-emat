@@ -157,7 +157,7 @@ public class CoalescentWarpOperator extends TreeOperator {
     }
 
     /** Returns the integral from zero to the height of the inverse population size. */
-    private double computeCoalescentTime(double height, double popSize, double growthRate) {
+    protected double computeCoalescentTime(double height, double popSize, double growthRate) {
         if (Math.abs(growthRate) < MIN_GROWTH_RATE) {
             return height / popSize;
         }
@@ -165,14 +165,14 @@ public class CoalescentWarpOperator extends TreeOperator {
     }
 
     /** Returns the height at which the integral of the inverse population size equals the given coalescent time. */
-    private double computeHeight(double coalescentTime, double popSize, double growthRate) {
+    protected double computeHeight(double coalescentTime, double popSize, double growthRate) {
         if (Math.abs(growthRate) < MIN_GROWTH_RATE) {
             return coalescentTime * popSize;
         }
         return Math.log1p(growthRate * popSize * coalescentTime) / growthRate;
     }
 
-    private double computeLogInversePopSize(double height, double popSize, double growthRate) {
+    protected double computeLogInversePopSize(double height, double popSize, double growthRate) {
         return growthRate * height - Math.log(popSize);
     }
 
