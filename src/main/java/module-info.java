@@ -14,9 +14,7 @@ import emat.operators.SiteRegionGibbsOperator;
 import emat.operators.MissingTipGibbsOperator;
 import emat.operators.MissingCladeGibbsOperator;
 import emat.operators.RootScaleOperator;
-import emat.operators.ParameterFollowingOperator;
 import emat.helper.ExcessMutationLogger;
-import emat.helper.ParameterFollowing;
 import emat.helper.TreePriorSurrogate;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
@@ -59,8 +57,6 @@ open module my.beast.example {
             MutationDirectedSprOperator,
             IdenticalTipPermutationOperator,
             BranchReformOperator,
-            ParameterFollowingOperator,
-            ParameterFollowing,
             ExcessMutationLogger,
             TreePriorSurrogate,
             InsertionSortTreeIntervals,

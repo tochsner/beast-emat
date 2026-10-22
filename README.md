@@ -51,4 +51,3 @@ All operators live in `emat.operators` and keep the mutations on the tree consis
 
 | Operator                     | Description                                                                                         |
 |------------------------------|-----------------------------------------------------------------------------------------------------|
-| `ParameterFollowingOperator` | Wraps a tree operator and shifts tree prior parameters along with the change of the tree length.    |
