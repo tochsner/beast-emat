@@ -292,37 +292,6 @@ public class Mutations extends StateNode {
         return count;
     }
 
-    /**
-     * Returns the number of excess mutations on the tree. On a single branch and site, at
-     * most one mutation is needed in the parsimony sense, so a branch and site with n
-     * mutations contributes max(n - 1, 0). Mutations above the root are excluded.
-     */
-    public int getExcessMutationCount() {
-        int rootNr = this.tree.getRoot().getNr();
-        int[] mutationsAtSite = new int[this.numSites];
-
-        int excessCount = 0;
-        for (int nodeNr = 0; nodeNr < this.numNodes; nodeNr++) {
-            if (nodeNr == rootNr) {
-                continue;
-            }
-
-            List<Mutation> mutations = this.mutationsAboveNode[nodeNr];
-            for (Mutation mutation : mutations) {
-                // every mutation after the first one at its site is in excess
-                if (mutationsAtSite[mutation.site()]++ > 0) {
-                    excessCount++;
-                }
-            }
-
-            // reset only the touched sites for the next branch
-            for (Mutation mutation : mutations) {
-                mutationsAtSite[mutation.site()] = 0;
-            }
-        }
-        return excessCount;
-    }
-
     public TreeInterface getTree() {
         return this.tree;
     }
@@ -444,13 +413,11 @@ public class Mutations extends StateNode {
     @Override
     public void init(PrintStream out) {
         out.print(this.getID() + ".count\t");
-        out.print(this.getID() + ".excessCount\t");
     }
 
     @Override
     public void log(long sample, PrintStream out) {
         out.print(this.getMutationCount() + "\t");
-        out.print(this.getExcessMutationCount() + "\t");
     }
 
     @Override
