@@ -3,10 +3,14 @@ package emat;
 import beast.base.util.Randomizer;
 import emat.helper.GlobalSplineTreePriorApproximation;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+
+import java.util.function.DoubleUnaryOperator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class GlobalSplineTreePriorApproximationTest {
 
@@ -16,6 +20,10 @@ public class GlobalSplineTreePriorApproximationTest {
     }
 
     private GlobalSplineTreePriorApproximation fitApproximation(int numObservations) {
+        return this.fitApproximation(numObservations, height -> getLogTreePrior(height, 1.0));
+    }
+
+    private GlobalSplineTreePriorApproximation fitApproximation(int numObservations, DoubleUnaryOperator logPrior) {
         GlobalSplineTreePriorApproximation approximation = new GlobalSplineTreePriorApproximation(12, 1, 200, 1e-8);
 
         for (int i = 0; i < numObservations; i++) {
@@ -30,7 +38,7 @@ public class GlobalSplineTreePriorApproximationTest {
                 double newHeight = Randomizer.nextDouble();
                 double midpoint = (oldHeight + newHeight) / 2.0;
                 approximation.addNode(midpoint, parameters, oldHeight - midpoint, newHeight - midpoint);
-                change += getLogTreePrior(newHeight, theta) - getLogTreePrior(oldHeight, theta);
+                change += theta * (logPrior.applyAsDouble(newHeight) - logPrior.applyAsDouble(oldHeight));
             }
             approximation.finishObservation(change);
         }
@@ -64,6 +72,7 @@ public class GlobalSplineTreePriorApproximationTest {
      * decay rate, including intervals that cross several knots and ranges that stick out beyond them.
      */
     @Test
+    @Timeout(15)
     public void testSampledHeightsFollowTheApproximateDensity() {
         Randomizer.setSeed(3);
         GlobalSplineTreePriorApproximation approximation = this.fitApproximation(3000);
@@ -76,8 +85,43 @@ public class GlobalSplineTreePriorApproximationTest {
                 {60.0, 0.0, 1.0, 1.0},
                 {-40.0, -0.5, 1.5, 1.2},
                 {3.0, 0.45, 0.47, 1.0},
+                // strong concavity previously stalled the single exponential proposal
+                {0.0, 0.0, 1.0, 1000.0},
+                {500.0, 0.0, 1.0, 1000.0},
+                // convex residuals and linear extrapolation on either side of the knots
+                {0.0, 0.0, 1.0, -20.0},
+                {2.0, -2.0, -1.0, 1.0},
+                {-2.0, 2.0, 3.0, 1.0},
         };
 
+        this.assertSampledDensity(approximation, cases);
+    }
+
+    /** Refining one peak must preserve the relative masses of all peaks. */
+    @Test
+    @Timeout(15)
+    public void testMultimodalDensity() {
+        Randomizer.setSeed(17);
+        GlobalSplineTreePriorApproximation approximation = this.fitApproximation(3000,
+                height -> 20.0 * Math.cos(4.0 * Math.PI * height));
+        this.assertSampledDensity(approximation, new double[][]{
+                {0.0, 0.0, 1.0, 1.0},
+                {10.0, 0.0, 1.0, 10.0}
+        });
+    }
+
+    /** Non-finite inputs fail explicitly instead of entering a rejection loop that cannot accept. */
+    @Test
+    public void testNonFiniteEnvelopeFails() {
+        Randomizer.setSeed(3);
+        GlobalSplineTreePriorApproximation approximation = this.fitApproximation(3000);
+        assertThrows(IllegalArgumentException.class,
+                () -> approximation.sampleHeight(Double.NaN, 0.0, 1.0, new double[]{1.0}));
+        assertThrows(ArithmeticException.class,
+                () -> approximation.sampleHeight(0.0, 0.0, 1.0, new double[]{Double.NaN}));
+    }
+
+    private void assertSampledDensity(GlobalSplineTreePriorApproximation approximation, double[][] cases) {
         int numDraws = 100000;
         int numBins = 16;
         int numCells = 20000;

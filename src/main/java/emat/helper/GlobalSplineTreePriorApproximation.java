@@ -49,10 +49,6 @@ public class GlobalSplineTreePriorApproximation implements LearnedTreePrior {
     // the largest number of observations that are kept
     private static final int MAX_STORED_OBSERVATIONS = 5000;
 
-    // the exponent changes by about this much over a piece of the envelope, unless there are too many pieces
-    private static final double MAX_EXPONENT_CHANGE_PER_PIECE = 0.25;
-    private static final int MAX_PIECES_PER_KNOT_INTERVAL = 64;
-
     private final int numKnots;
     private final int numParameters;
     private final int warmUp;
@@ -105,9 +101,6 @@ public class GlobalSplineTreePriorApproximation implements LearnedTreePrior {
     private final double[] hatIntegrals;
     private final double[] hatIntegralsLow;
     private final double[] hatIntegralsHigh;
-    private double[] pieceBounds = new double[0];
-    private double[] pieceCeilings = new double[0];
-    private double[] pieceMasses = new double[0];
 
     /**
      * @param numKnots      the number of knots along the height
@@ -190,104 +183,108 @@ public class GlobalSplineTreePriorApproximation implements LearnedTreePrior {
     }
 
     /**
-     * Draws a height from the density ∝ exp(-decayRate h + a(h)) between the bounds by rejection. The exponent is
-     * piecewise quadratic, as its slope is linear between the knots. The interval is split at the knots and
-     * every piece is split further until the exponent changes little over it. The density is below the constant
-     * at the maximum of the exponent over the piece, so a draw from the piecewise constant envelope is accepted
-     * with the probability exp(exponent - maximum).
+     * Draws from exp(-decayRate h + a(h)) using an adaptive piecewise exponential envelope. Within each
+     * knot interval the exponent is quadratic: its chord bounds a convex piece and its midpoint tangent
+     * bounds a concave piece. Rejected pieces are bisected to tighten the envelope. Every attempt uses
+     * a valid upper bound, so adaptation preserves the exact target density.
      */
     @Override
     public double sampleHeight(double decayRate, double lower, double upper, double[] parameters) {
-        if (!this.isFitted) {
-            return TruncatedDensitySampler.sampleExponential(decayRate, lower, upper);
+        if (!Double.isFinite(decayRate) || !Double.isFinite(lower) || !Double.isFinite(upper)) {
+            throw new IllegalArgumentException("Sampling requires finite rates and bounds.");
         }
         if (upper <= lower) {
             return lower;
         }
-
-        this.updateCache(parameters);
-        int numPieces = this.buildEnvelope(decayRate, lower, upper);
-
-        double totalMass = 0.0;
-        for (int i = 0; i < numPieces; i++) {
-            totalMass += this.pieceMasses[i];
+        if (!this.isFitted) {
+            return TruncatedDensitySampler.sampleExponential(decayRate, lower, upper);
         }
 
+        this.updateCache(parameters);
         double referenceIntegral = this.computeIntegral(lower);
+        List<ExponentialPiece> pieces = new ArrayList<>();
+        int nextKnot = this.findFirstKnotAbove(lower);
+        double start = lower;
+        double startExponent = 0.0;
+        while (start < upper) {
+            double end = nextKnot < this.numKnots ? Math.min(upper, this.knots[nextKnot]) : upper;
+            double endExponent = this.computeExponent(decayRate, lower, referenceIntegral, end);
+            double curvature = (this.computeSlope(end) - this.computeSlope(start)) / (end - start);
+            pieces.add(new ExponentialPiece(start, end, startExponent, endExponent, curvature));
+            start = end;
+            startExponent = endExponent;
+            nextKnot++;
+        }
+
         while (true) {
+            double largestMass = Double.NEGATIVE_INFINITY;
+            for (ExponentialPiece piece : pieces) {
+                largestMass = Math.max(largestMass, piece.logMass);
+            }
+            double totalMass = 0.0;
+            for (ExponentialPiece piece : pieces) {
+                totalMass += Math.exp(piece.logMass - largestMass);
+            }
             double u = Randomizer.nextDouble() * totalMass;
-            int piece = 0;
-            while (piece < numPieces - 1 && u > this.pieceMasses[piece]) {
-                u -= this.pieceMasses[piece];
-                piece++;
+            int index = 0;
+            while (index < pieces.size() - 1) {
+                u -= Math.exp(pieces.get(index).logMass - largestMass);
+                if (u <= 0.0) {
+                    break;
+                }
+                index++;
             }
 
-            double pieceStart = this.pieceBounds[piece];
-            double height = pieceStart + (this.pieceBounds[piece + 1] - pieceStart) * Randomizer.nextDouble();
-            double exponent = this.computeExponent(decayRate, lower, referenceIntegral, height);
-            if (Math.log(Randomizer.nextDouble()) < exponent - this.pieceCeilings[piece]) {
-                return Math.min(Math.max(height, lower), upper);
+            ExponentialPiece piece = pieces.get(index);
+            double height = TruncatedDensitySampler.sampleExponential(piece.rate, piece.lower, piece.upper);
+            double midpoint = piece.lower + 0.5 * (piece.upper - piece.lower);
+            double logAcceptance = piece.curvature < 0.0
+                    ? 0.5 * piece.curvature * (height - midpoint) * (height - midpoint)
+                    : -0.5 * piece.curvature * (height - piece.lower) * (piece.upper - height);
+            if (Math.log(Randomizer.nextDouble()) < logAcceptance) {
+                return height;
             }
+
+            // refine only the rejected piece; the other exponential bounds remain valid
+            double midpointExponent = 0.5 * piece.lowerExponent + 0.5 * piece.upperExponent
+                    - piece.curvature * (piece.upper - piece.lower) * (piece.upper - piece.lower) / 8.0;
+            if (midpoint <= piece.lower || midpoint >= piece.upper) {
+                throw new ArithmeticException("Cannot refine the sampling envelope at floating-point resolution.");
+            }
+            pieces.set(index, new ExponentialPiece(piece.lower, midpoint,
+                    piece.lowerExponent, midpointExponent, piece.curvature));
+            pieces.add(new ExponentialPiece(midpoint, piece.upper,
+                    midpointExponent, piece.upperExponent, piece.curvature));
         }
     }
 
-    /**
-     * Fills the bounds, the exponents at the maxima and the masses of the envelope pieces and returns their
-     * number. Exponents are measured from the value at the lower bound and masses from the largest exponent.
-     */
-    private int buildEnvelope(double decayRate, double lower, double upper) {
-        // the pieces split at the knots inside the interval
-        int firstKnot = this.findFirstKnotAbove(lower);
-        int lastKnot = this.findFirstKnotAbove(upper);
+    /** An exponential upper bound on one quadratic piece, with its analytically integrated mass. */
+    private static final class ExponentialPiece {
+        final double lower;
+        final double upper;
+        final double lowerExponent;
+        final double upperExponent;
+        final double curvature;
+        final double rate;
+        final double logMass;
 
-        int numSegments = lastKnot - firstKnot + 1;
-        int maxPieces = numSegments * MAX_PIECES_PER_KNOT_INTERVAL;
-        if (this.pieceCeilings.length < maxPieces) {
-            this.pieceBounds = new double[maxPieces + 1];
-            this.pieceCeilings = new double[maxPieces];
-            this.pieceMasses = new double[maxPieces];
-        }
-
-        double referenceIntegral = this.computeIntegral(lower);
-        int numPieces = 0;
-        double largestCeiling = Double.NEGATIVE_INFINITY;
-
-        for (int segment = 0; segment < numSegments; segment++) {
-            double start = segment == 0 ? lower : this.knots[firstKnot + segment - 1];
-            double end = segment == numSegments - 1 ? upper : this.knots[firstKnot + segment];
-
-            double steepness = Math.max(Math.abs(this.computeSlope(start) - decayRate), Math.abs(this.computeSlope(end) - decayRate));
-            int numSubPieces = (int) Math.min(MAX_PIECES_PER_KNOT_INTERVAL,
-                    Math.max(1.0, Math.ceil(steepness * (end - start) / MAX_EXPONENT_CHANGE_PER_PIECE)));
-
-            for (int i = 0; i < numSubPieces; i++) {
-                double pieceStart = start + (end - start) * i / numSubPieces;
-                double pieceEnd = i == numSubPieces - 1 ? end : start + (end - start) * (i + 1) / numSubPieces;
-
-                double ceiling = Math.max(
-                        this.computeExponent(decayRate, lower, referenceIntegral, pieceStart),
-                        this.computeExponent(decayRate, lower, referenceIntegral, pieceEnd));
-
-                // the slope of the exponent is linear in the piece, so it has a maximum where it turns from + to -
-                double startSlope = this.computeSlope(pieceStart) - decayRate;
-                double endSlope = this.computeSlope(pieceEnd) - decayRate;
-                if (startSlope > 0.0 && endSlope < 0.0) {
-                    double vertex = pieceStart + (pieceEnd - pieceStart) * startSlope / (startSlope - endSlope);
-                    ceiling = Math.max(ceiling, this.computeExponent(decayRate, lower, referenceIntegral, vertex));
-                }
-
-                this.pieceBounds[numPieces] = pieceStart;
-                this.pieceBounds[numPieces + 1] = pieceEnd;
-                this.pieceCeilings[numPieces] = ceiling;
-                largestCeiling = Math.max(largestCeiling, ceiling);
-                numPieces++;
+        ExponentialPiece(double lower, double upper, double lowerExponent, double upperExponent, double curvature) {
+            this.lower = lower;
+            this.upper = upper;
+            this.lowerExponent = lowerExponent;
+            this.upperExponent = upperExponent;
+            this.curvature = curvature;
+            double width = upper - lower;
+            double difference = upperExponent - lowerExponent;
+            this.rate = -difference / width;
+            double lift = Math.max(0.0, -curvature * width * width / 8.0);
+            double magnitude = Math.abs(difference);
+            double logMean = magnitude == 0.0 ? 0.0 : Math.log(-Math.expm1(-magnitude) / magnitude);
+            this.logMass = Math.max(lowerExponent, upperExponent) + lift + Math.log(width) + logMean;
+            if (!Double.isFinite(this.rate) || !Double.isFinite(this.logMass) || !Double.isFinite(curvature)) {
+                throw new ArithmeticException("Non-finite exponential sampling envelope.");
             }
         }
-
-        for (int i = 0; i < numPieces; i++) {
-            this.pieceMasses[i] = (this.pieceBounds[i + 1] - this.pieceBounds[i]) * Math.exp(this.pieceCeilings[i] - largestCeiling);
-        }
-        return numPieces;
     }
 
     /** Returns -decayRate (h - lower) + a(h) - a(lower). */
