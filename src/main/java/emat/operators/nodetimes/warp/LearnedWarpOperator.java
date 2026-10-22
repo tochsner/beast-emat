@@ -33,7 +33,8 @@ import java.util.List;
         "that the tree prior gave the trees of the chain. The hazard says how the number of units at risk depends on the " +
         "number of lineages, and AUTO chooses between the two by the residual of their fits at the first fit. " +
         "The mean rate of the clock model then follows from keeping the product of the mean rate and the tree length, weighted by " +
-        "the relative rates of the branches. Proposals are rejected until the first fit.")
+        "the relative rates of the branches. The covariance of the step only learns from the chain once the tree length has reached " +
+        "the minimum effective sample size. Proposals are rejected until the first fit.")
 public class LearnedWarpOperator extends TreeOperator {
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "the mutations to move along with the tree", Input.Validate.REQUIRED);
@@ -54,6 +55,10 @@ public class LearnedWarpOperator extends TreeOperator {
     // the gain of the tuning of the scale factor decays with the number of proposals since the first fit, but not below this value
     private static final double MIN_TUNING_GAIN = 0.01;
 
+    // the number of values the covariance of the step must have learned from before the rate is fitted for the first time, as the steps
+    // drawn from a covariance that has seen next to nothing are tiny and would be accepted trivially, which would inflate the scale factor
+    private static final long MIN_RECORDED_VALUES = 1000;
+
     // the key under which the effective sample size of the tree length is kept in the state file
     private static final String ESS_KEY = "treeLengthEss";
 
@@ -64,7 +69,7 @@ public class LearnedWarpOperator extends TreeOperator {
     private long numProposals;
     private long nextFitSize;
     private boolean hasReportedHazard;
-    private boolean hasReportedEss;
+    private boolean hasReachedEss;
 
     // the trace of the tree length at the observations, which tells whether the chain has left its starting state
     private ThinnedEssTracker treeLengthTracker;
@@ -84,8 +89,10 @@ public class LearnedWarpOperator extends TreeOperator {
     private Base branchRateModel;
     private RealScalarParam<?> meanRate;
 
-    // the learned distribution of the values that are moved, from which the zero-mean steps are drawn
+    // the learned distribution of the values that are moved, from which the zero-mean steps are drawn. It only learns from the
+    // chain once the tree length has reached the minimum effective sample size, so that the burn-in does not inflate its covariance
     private CenteredMultivariateNormalSampler stepSampler;
+    private long numRecordedValues;
 
     private double scaleFactor;
 
@@ -154,7 +161,10 @@ public class LearnedWarpOperator extends TreeOperator {
 
     @Override
     public double proposal() {
-        this.stepSampler.record(new double[0], this.readMutable());
+        if (this.hasReachedEss) {
+            this.stepSampler.record(new double[0], this.readMutable());
+            this.numRecordedValues++;
+        }
         this.observeState();
 
         double[] step = this.stepSampler.sampleConditionally(new double[0], this.scaleFactor);
@@ -313,7 +323,7 @@ public class LearnedWarpOperator extends TreeOperator {
     /**
      * Records the state of every few proposals with the log density of the tree prior, and fits the rate when enough
      * observations are there for the first time or have doubled since the last fit, and the tree length has reached the
-     * minimum effective sample size. The fit only changes between
+     * minimum effective sample size and the covariance of the step has learned from enough values. The fit only changes between
      * proposals, so a proposal and its reverse use the same rate.
      */
     private void observeState() {
@@ -325,7 +335,8 @@ public class LearnedWarpOperator extends TreeOperator {
         this.observe(this.treePriorInput.get().getCurrentLogP());
         this.treeLengthTracker.record(NodeTimes.computeTreeLength(this.tree));
         this.reportReachedEss();
-        if (this.hazardRate.getNumObserved() >= this.nextFitSize && this.treeLengthTracker.hasReached(this.minEssInput.get())) {
+        boolean hasLearnedSteps = this.numRecordedValues >= MIN_RECORDED_VALUES;
+        if (this.hazardRate.getNumObserved() >= this.nextFitSize && hasLearnedSteps && this.treeLengthTracker.hasReached(this.minEssInput.get())) {
             boolean hasFitted = this.hazardRate.fit();
             this.reportFit(hasFitted);
             this.reportChosenHazard();
@@ -337,10 +348,10 @@ public class LearnedWarpOperator extends TreeOperator {
         }
     }
 
-    /** Announces once that the tree length has reached the effective sample size that the first fit waits for. */
+    /** Announces once that the tree length has reached the effective sample size that the learning waits for, and starts the learning of the step. */
     private void reportReachedEss() {
-        if (!this.hasReportedEss && this.treeLengthTracker.hasReached(this.minEssInput.get())) {
-            this.hasReportedEss = true;
+        if (!this.hasReachedEss && this.treeLengthTracker.hasReached(this.minEssInput.get())) {
+            this.hasReachedEss = true;
             System.out.printf("%s: tree length reached an ESS of %.1f after %d proposals%n",
                     this.getID(), this.treeLengthTracker.getEss(), this.numProposals);
         }
