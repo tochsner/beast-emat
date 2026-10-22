@@ -25,7 +25,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
 
 public class IncrementalStoreTreeTest {
 
@@ -39,8 +39,8 @@ public class IncrementalStoreTreeTest {
      */
     @Test
     public void testMatchesCoreTree() {
-        // both chains run on the same thread, as the randomizer seeds the threads differently
-        assertTimeoutPreemptively(TIMEOUT, () -> {
+        // the chains run on the calling thread, as the randomizer keeps a separate generator for every thread
+        assertTimeout(TIMEOUT, () -> {
             List<String> expectedStates = this.runChain(11, new Tree(), false);
             List<String> actualStates = this.runChain(11, new IncrementalStoreTree(), false);
 
@@ -57,7 +57,7 @@ public class IncrementalStoreTreeTest {
      */
     @Test
     public void testRestoresPreviousState() {
-        assertTimeoutPreemptively(TIMEOUT, () -> this.runChain(13, new IncrementalStoreTree(), true));
+        assertTimeout(TIMEOUT, () -> this.runChain(13, new IncrementalStoreTree(), true));
     }
 
     @Test

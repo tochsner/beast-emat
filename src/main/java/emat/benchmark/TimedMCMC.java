@@ -7,7 +7,7 @@ import beast.base.evolution.tree.Tree;
 import beast.base.inference.MCMC;
 import beast.base.inference.Operator;
 import beast.base.util.Randomizer;
-import emat.operators.MutationDirectedSprOperator;
+import emat.operators.topology.MutationDirectedSprOperator;
 import org.xml.sax.SAXException;
 
 import javax.xml.parsers.ParserConfigurationException;

@@ -1,29 +1,18 @@
-import emat.adapters.CoalescentExposureAdapter;
-import emat.adapters.CoalescentWarpAdapter;
-import emat.adapters.IntervalScaleAdapter;
 import emat.adapters.MutationCountAdapter;
 import emat.alignment.FitchFilteredAlignment;
-import emat.benchmark.DiagnosticMCMC;
 import emat.benchmark.TimedMCMC;
 import emat.initalisation.ParsimonyMutationsInitialiser;
-import emat.operators.BranchReformOperator;
-import emat.operators.CoalescentWarpOperator;
-import emat.operators.QuantileWarpOperator;
-import emat.operators.LearnedWarpOperator;
-import emat.operators.DiagnosticAdaptiveOperator;
-import emat.operators.IdenticalTipPermutationOperator;
-import emat.operators.IntervalScaleOperator;
-import emat.operators.MutationDirectedSprOperator;
-import emat.operators.MutationTimeOperator;
-import emat.operators.InnerNodeDisplacementOperator;
-import emat.operators.BatchNodeDisplacementOperator;
-import emat.operators.SiteHistoryGibbsOperator;
-import emat.operators.SiteRegionGibbsOperator;
-import emat.operators.MissingTipGibbsOperator;
-import emat.operators.MissingCladeGibbsOperator;
-import emat.operators.RootScaleOperator;
+import emat.operators.mutations.BranchReformOperator;
+import emat.operators.nodetimes.warp.LearnedWarpOperator;
+import emat.operators.nodetimes.IntervalScaleOperator;
+import emat.operators.topology.MutationDirectedSprOperator;
+import emat.operators.mutations.MutationTimeOperator;
+import emat.operators.nodetimes.InnerNodeDisplacementOperator;
+import emat.operators.nodetimes.batch.BatchNodeDisplacementOperator;
+import emat.operators.mutations.SiteHistoryGibbsOperator;
+import emat.operators.mutations.MissingCladeGibbsOperator;
+import emat.operators.nodetimes.RootScaleOperator;
 import emat.helper.ExcessMutationLogger;
-import emat.helper.TreePriorSurrogate;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
 import emat.tree.IncrementalStoreTree;
@@ -41,7 +30,12 @@ open module my.beast.example {
     exports emat.alignment;
     exports emat.benchmark;
     exports emat.prior;
-    exports emat.operators;
+    exports emat.operators.mutations;
+    exports emat.operators.nodetimes;
+    exports emat.operators.nodetimes.batch;
+    exports emat.operators.nodetimes.warp;
+    exports emat.operators.topology;
+    exports emat.operators.topology.mdspr;
     exports emat.helper;
     exports emat.initalisation;
     exports emat.state;
@@ -57,26 +51,15 @@ open module my.beast.example {
             InnerNodeDisplacementOperator,
             BatchNodeDisplacementOperator,
             SiteHistoryGibbsOperator,
-            SiteRegionGibbsOperator,
-            MissingTipGibbsOperator,
             MissingCladeGibbsOperator,
             RootScaleOperator,
             IntervalScaleOperator,
-            CoalescentWarpOperator,
-            QuantileWarpOperator,
             LearnedWarpOperator,
             MutationDirectedSprOperator,
-            IdenticalTipPermutationOperator,
-            DiagnosticAdaptiveOperator,
             BranchReformOperator,
             ExcessMutationLogger,
-            TreePriorSurrogate,
             InsertionSortTreeIntervals,
             IncrementalStoreTree,
-            IntervalScaleAdapter,
-            CoalescentExposureAdapter,
-            CoalescentWarpAdapter,
             MutationCountAdapter,
-            TimedMCMC,
-            DiagnosticMCMC;
+            TimedMCMC;
 }

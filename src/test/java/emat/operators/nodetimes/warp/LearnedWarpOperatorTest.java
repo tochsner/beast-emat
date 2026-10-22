@@ -1,0 +1,121 @@
+package emat.operators.nodetimes.warp;
+
+import beast.base.evolution.alignment.Alignment;
+import beast.base.evolution.alignment.Sequence;
+import beast.base.evolution.tree.Node;
+import beast.base.evolution.tree.TreeParser;
+import beast.base.inference.CompoundDistribution;
+import beast.base.spec.domain.PositiveReal;
+import beast.base.spec.domain.Real;
+import beast.base.spec.inference.parameter.RealScalarParam;
+import emat.initalisation.ParsimonyMutationsInitialiser;
+import emat.state.Mutations;
+import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+public class LearnedWarpOperatorTest {
+
+    private static final double POP_SIZE = 10.0;
+    private static final double GROWTH_RATE = 0.1;
+    private static final int NUM_TIPS = 40;
+
+    private TreeParser tree;
+    private RealScalarParam<PositiveReal> popSize;
+    private RealScalarParam<Real> growthRate;
+    private RealScalarParam<PositiveReal> clockRate;
+    private LearnedWarpOperator operator;
+
+    private LearnedWarpOperator createOperator(TreeParser tree, Mutations mutations, RealScalarParam<PositiveReal> popSize,
+                                               RealScalarParam<Real> growthRate, RealScalarParam<PositiveReal> clockRate) {
+        LearnedWarpOperator learned = new LearnedWarpOperator();
+        learned.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "popSize", popSize, "growthRate", growthRate,
+                "clockRate", clockRate, "sdLogPopSize", 0.1, "sdGrowthRate", 0.03, "correlation", 0.5, "optimise", false,
+                "treePrior", new CompoundDistribution(), "hazard", TreeHazard.COALESCENT, "numKnots", 12);
+        return learned;
+    }
+
+    private TreeParser createTree(String newick, Mutations[] mutationsOut) {
+        List<Sequence> sequences = new ArrayList<>();
+        for (int i = 0; i < NUM_TIPS; i++) {
+            sequences.add(new Sequence("t" + i, "ACGTAC"));
+        }
+        Alignment alignment = new Alignment();
+        alignment.initByName("sequence", sequences, "dataType", "nucleotide");
+
+        TreeParser parsed = new TreeParser();
+        parsed.initByName("newick", newick, "IsLabelledNewick", true, "adjustTipHeights", false);
+
+        Mutations mutations = new Mutations();
+        mutations.initByName("tree", parsed, "alignment", alignment);
+        ParsimonyMutationsInitialiser initialiser = new ParsimonyMutationsInitialiser();
+        initialiser.initByName("mutations", mutations);
+        initialiser.initStateNodes();
+        mutationsOut[0] = mutations;
+        return parsed;
+    }
+
+    private void setUp() {
+        Random random = new Random(3);
+        CoalescentSimulation simulated = new CoalescentSimulation(random, NUM_TIPS, POP_SIZE, GROWTH_RATE);
+        Mutations[] mutations = new Mutations[1];
+        this.tree = this.createTree(simulated.newick, mutations);
+
+        this.popSize = new RealScalarParam<>(POP_SIZE, PositiveReal.INSTANCE);
+        this.growthRate = new RealScalarParam<>(GROWTH_RATE, Real.INSTANCE);
+        this.clockRate = new RealScalarParam<>(0.001, PositiveReal.INSTANCE);
+        this.operator = this.createOperator(this.tree, mutations[0], this.popSize, this.growthRate, this.clockRate);
+
+        for (int i = 0; i < 400; i++) {
+            double logPopSize = Math.log(POP_SIZE) + 0.3 * random.nextGaussian();
+            double growth = GROWTH_RATE + 0.05 * random.nextGaussian();
+            CoalescentSimulation other = new CoalescentSimulation(random, NUM_TIPS, Math.exp(logPopSize), growth);
+            this.operator.getHazardRate().addObservation(other.tipHeights, other.internalHeights, new double[]{logPopSize, growth}, other.logDensity);
+        }
+        this.operator.getHazardRate().fit();
+    }
+
+    private double[] getHeights() {
+        double[] heights = new double[this.tree.getNodeCount()];
+        for (Node node : this.tree.getNodesAsArray()) {
+            heights[node.getNr()] = node.getHeight();
+        }
+        return heights;
+    }
+
+    /** A proposal is rejected until the rate has been fitted. */
+    @Test
+    public void testRejectsBeforeFit() {
+        this.setUp();
+        Mutations[] mutations = new Mutations[1];
+        TreeParser other = this.createTree(new CoalescentSimulation(new Random(5), NUM_TIPS, POP_SIZE, GROWTH_RATE).newick, mutations);
+        LearnedWarpOperator unfitted = this.createOperator(other, mutations[0], this.popSize, this.growthRate, this.clockRate);
+
+        assertEquals(Double.NEGATIVE_INFINITY, unfitted.warp(0.05, 0.01));
+    }
+
+    /** A step and then the opposite step restore the tree, and their Hastings ratios cancel. */
+    @Test
+    public void testReverseStepUndoesMove() {
+        this.setUp();
+        double[] before = this.getHeights();
+
+        double forward = this.operator.warp(0.1, 0.03);
+        assertTrue(Double.isFinite(forward));
+        double backward = this.operator.warp(-0.1, -0.03);
+
+        assertEquals(0.0, forward + backward, 1e-8);
+        double[] after = this.getHeights();
+        for (int i = 0; i < before.length; i++) {
+            assertEquals(before[i], after[i], 1e-9);
+        }
+        assertEquals(POP_SIZE, this.popSize.get(), 1e-9);
+        assertEquals(GROWTH_RATE, this.growthRate.get(), 1e-9);
+    }
+
+}
