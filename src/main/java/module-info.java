@@ -1,8 +1,15 @@
+import emat.adapters.CoalescentExposureAdapter;
+import emat.adapters.CoalescentWarpAdapter;
+import emat.adapters.IntervalScaleAdapter;
 import emat.adapters.MutationCountAdapter;
 import emat.alignment.FitchFilteredAlignment;
+import emat.benchmark.DiagnosticMCMC;
 import emat.benchmark.TimedMCMC;
 import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.BranchReformOperator;
+import emat.operators.CoalescentWarpOperator;
+import emat.operators.QuantileWarpOperator;
+import emat.operators.DiagnosticAdaptiveOperator;
 import emat.operators.IdenticalTipPermutationOperator;
 import emat.operators.IntervalScaleOperator;
 import emat.operators.MutationDirectedSprOperator;
@@ -54,13 +61,20 @@ open module my.beast.example {
             MissingCladeGibbsOperator,
             RootScaleOperator,
             IntervalScaleOperator,
+            CoalescentWarpOperator,
+            QuantileWarpOperator,
             MutationDirectedSprOperator,
             IdenticalTipPermutationOperator,
+            DiagnosticAdaptiveOperator,
             BranchReformOperator,
             ExcessMutationLogger,
             TreePriorSurrogate,
             InsertionSortTreeIntervals,
             IncrementalStoreTree,
+            IntervalScaleAdapter,
+            CoalescentExposureAdapter,
+            CoalescentWarpAdapter,
             MutationCountAdapter,
-            TimedMCMC;
+            TimedMCMC,
+            DiagnosticMCMC;
 }
