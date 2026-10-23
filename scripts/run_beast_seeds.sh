@@ -45,6 +45,6 @@ echo "running $BEAST_XML with seed $seed"
 
 # beast uses state.file.name as the full state file name, the jvm reads it from JAVA_TOOL_OPTIONS
 base=$(basename "$BEAST_XML" .xml)
-export JAVA_TOOL_OPTIONS="-Dstate.file.name=data/out/$base-$seed.state"
+export JAVA_TOOL_OPTIONS="-Xmx16G -Dstate.file.name=data/out/$base-$seed.state"
 
-mvn ${MVN_FLAGS:--q} exec:exec -Dbeast.args="-seed $seed $BEAST_XML -overwrite"
+mvn ${MVN_FLAGS:--q} exec:exec -Dbeast.args="-overwrite -seed $seed $BEAST_XML"

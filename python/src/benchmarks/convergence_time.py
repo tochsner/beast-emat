@@ -98,12 +98,22 @@ def get_num_sequences(method: str, experiment: str) -> int:
 
 
 def load_logs(log_paths: dict[tuple[str, int], Path]) -> dict[tuple[str, int], pd.DataFrame]:
-    """Reads the MCMC log of each experiment and seed."""
+    """Reads the MCMC log of each experiment and seed, skipping any empty log files."""
     logs = {}
 
     for key, log_path in log_paths.items():
+        # Check if the file is empty and skip if so
+        if log_path.stat().st_size == 0:
+            print(f"Skipping empty log file: {log_path.name}")
+            continue
+
         # a run that is still in progress may have a partially written last line
         log_df = pd.read_csv(log_path, comment="#", delimiter="\t").dropna()
+
+        # Also skip if the log_df is empty after reading (empty header file, etc)
+        if log_df.empty:
+            print(f"Skipping log file (no data after parsing): {log_path.name}")
+            continue
 
         seconds_per_sample = get_seconds_per_sample(log_path, log_df["Sample"].iloc[-1])
         log_df["minutes"] = log_df["Sample"] * seconds_per_sample / 60
