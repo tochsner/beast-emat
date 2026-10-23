@@ -43,8 +43,8 @@ module load stack/2024-06 openjdk/25.0.2_10 maven/3.8.4
 seed=$SLURM_ARRAY_TASK_ID
 echo "running $BEAST_XML with seed $seed"
 
-# beast prefixes the state file name with file.name.prefix, the jvm reads it from JAVA_TOOL_OPTIONS
+# beast uses state.file.name as the full state file name, the jvm reads it from JAVA_TOOL_OPTIONS
 base=$(basename "$BEAST_XML" .xml)
-export JAVA_TOOL_OPTIONS="-Dfile.name.prefix=data/out/$base-$seed-"
+export JAVA_TOOL_OPTIONS="-Dstate.file.name=data/out/$base-$seed.state"
 
 mvn ${MVN_FLAGS:--q} exec:exec -Dbeast.args="-seed $seed $BEAST_XML -overwrite"
