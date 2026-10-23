@@ -14,4 +14,4 @@ PYTHONPATH=python uv run --project python python -m src.data_pipeline.cli data/f
 scripts/generate_xmls.sh [--force]
 ```
 
-The FASTA downloaders are in `src/data_pipeline/download/`: `cog_uk_to_fasta.py` (SARS-CoV-2, COG-UK/ENA), `seqset_to_fasta.py` (Pathoplexus SeqSet) and `xml_to_fasta.py` (recover the alignment of an existing XML).
+The FASTA downloaders are in `src/data_pipeline/download/`: `cog_uk_to_fasta.py` (SARS-CoV-2, COG-UK/ENA), `seqset_to_fasta.py` (Pathoplexus SeqSet, one per `data/seqsets/*-seqset.json`) and `xml_to_fasta.py` (recover the alignment of an existing XML).

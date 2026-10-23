@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Generates the BEAST XMLs (beauti, emat, bd_emat) of all current datasets into data/xmls.
-# The FASTA files (and metadata) are expected in data/fasta. Only the SARS-CoV-2 (COG-UK) and West Nile
-# virus FASTA files are downloaded if missing.
+# The FASTA files (and metadata) are expected in data/fasta. Only the SARS-CoV-2 (COG-UK), West Nile
+# virus and GenBank FASTA files are downloaded if missing.
 # Usage: scripts/generate_xmls.sh [--force] [--chain-length N] [--store-every N]
+
+# setup
+
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -13,6 +16,8 @@ run_python() {
     uv run --project python python -m "$@"
 }
 
+# download functions
+
 # fasta_from_cog <fasta name> <number of sequences>: downloads, aligns and subsamples SARS-CoV-2
 fasta_from_cog() {
     local fasta="data/fasta/$1.fasta"
@@ -21,13 +26,41 @@ fasta_from_cog() {
     fi
 }
 
-# fasta_from_seqset: downloads the West Nile virus sequences of the Pathoplexus SeqSet
+# seqset_organism <seqset stem>: the LAPIS organism of a Pathoplexus SeqSet, the stem itself unless listed here
+seqset_organism() {
+    case "$1" in
+        wnv-pathoplexus) echo west-nile ;;
+        *) echo "$1" ;;
+    esac
+}
+
+# seqset_id <seqset stem>: the dataset id of a Pathoplexus SeqSet, the stem without separators unless listed here
+seqset_id() {
+    case "$1" in
+        wnv-pathoplexus) echo wnv ;;
+        *) echo "${1//[^A-Za-z0-9]/}" ;;
+    esac
+}
+
+# fasta_from_seqset <seqset file>: downloads the sequences of a Pathoplexus SeqSet
 fasta_from_seqset() {
-    local fasta="data/fasta/wnv-pathoplexus.fasta"
+    local stem fasta
+    stem=$(basename "$1" -seqset.json)
+    fasta="data/fasta/$stem.fasta"
     if [[ ! -f "$fasta" ]]; then
-        run_python src.data_pipeline.download.seqset_to_fasta data/seqsets/wnv-pathoplexus-seqset.json "$fasta"
+        run_python src.data_pipeline.download.seqset_to_fasta "$1" "$fasta" --organism "$(seqset_organism "$stem")"
     fi
 }
+
+# fasta_from_genbank <metadata file> <fasta name>: downloads the GenBank sequences listed in a metadata table
+fasta_from_genbank() {
+    local fasta="data/fasta/$2.fasta"
+    if [[ ! -f "$fasta" ]]; then
+        run_python src.data_pipeline.download.genbank_to_fasta "data/genbank/$1" "$fasta"
+    fi
+}
+
+# generation function
 
 # generate <fasta name> <dataset id> [extra cli args]: renders all templates for a FASTA file
 generate() {
@@ -36,15 +69,34 @@ generate() {
     run_python src.data_pipeline.cli "$fasta" --id "$id" "$@" ${pipeline_args[@]+"${pipeline_args[@]}"}
 }
 
+# downloads
+
 fasta_from_cog cog-uk-sars-cov-2-aligned-5000 5000
-fasta_from_cog cog-uk-sars-cov-2-aligned 10000
-fasta_from_seqset
+fasta_from_cog cog-uk-sars-cov-2-aligned-10000 10000
+fasta_from_cog cog-uk-sars-cov-2-aligned-20000 20000
+for seqset in data/seqsets/*-seqset.json; do
+    fasta_from_seqset "$seqset"
+done
+fasta_from_genbank nextstrain_community_cevo-public_ReVSeq-project_adenovirus_b1_whole_metadata.tsv genbank-adenovirus-b1
+fasta_from_genbank nextstrain_community_cevo-public_ReVSeq-project_hmpv_all_genome_metadata.tsv genbank-hmpv
+
+# xml generation
+
+# datasets whose FASTA headers already hold the dates
 
 generate zika zika
 generate ebola ebola
 generate cog-uk-sars-cov-2-aligned-5000 sars5000
-generate cog-uk-sars-cov-2-aligned sars10000
-generate wnv-pathoplexus wnv
+generate cog-uk-sars-cov-2-aligned-10000 sars10000
+generate cog-uk-sars-cov-2-aligned-20000 sars20000
+for seqset in data/seqsets/*-seqset.json; do
+    stem=$(basename "$seqset" -seqset.json)
+    generate "$stem" "$(seqset_id "$stem")"
+done
+generate genbank-adenovirus-b1 adenovirusb1
+generate genbank-hmpv hmpv
+
+# datasets whose dates come from a metadata table
 
 # the NCBI SARS-CoV-2 FASTA has no dates in its headers, they come from the metadata CSV
 ncbi=NCBI_SC2_countries_nextclade.aligned.clean.subsampled

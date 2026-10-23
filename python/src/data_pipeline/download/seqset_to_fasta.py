@@ -76,7 +76,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("seqset", help="SeqSet export file (JSON)")
     parser.add_argument("output", help="output FASTA file")
-    parser.add_argument("--organism", default="west-nile", help="LAPIS organism (default: west-nile)")
+    parser.add_argument("--organism", required=True, help="LAPIS organism, e.g. west-nile")
     parser.add_argument(
         "--unaligned", action="store_true", help="download unaligned instead of aligned sequences"
     )
