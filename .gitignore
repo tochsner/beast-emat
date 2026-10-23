@@ -3,5 +3,6 @@ resources
 target
 docs
 data
+plots
 tests/
 .DS_Store
