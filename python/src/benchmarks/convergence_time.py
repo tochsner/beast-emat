@@ -1,8 +1,9 @@
 """Computes the running time until all parameters of each run reach an ESS of 200 (ignoring the tree topology).
 
-Every seed of a run is analysed separately. Runs that have not converged yet are extrapolated from the ESS per minute
-of their slowest parameter. The plots show the mean over the seeds, with the spread over the seeds as uncertainty.
-The plots are stored in the plots directory at the repository root.
+The logs are named <method>_<experiment>-<seed>.log and grouped by method. Every seed of a run is analysed separately.
+Runs that have not converged yet are extrapolated from the ESS per minute of their slowest parameter. The plots of each
+method show the mean over the seeds, with the spread over the seeds as uncertainty. The plots are stored in the plots
+directory at the repository root, prefixed with the method.
 """
 
 import math
@@ -24,15 +25,10 @@ REPOSITORY_PATH = Path(__file__).resolve().parents[3]
 OUT_PATH = REPOSITORY_PATH / "data" / "out"
 PLOTS_PATH = REPOSITORY_PATH / "plots"
 
-METHOD = "emat"
+LOG_PATTERN = re.compile(r"(?P<method>.+)_(?P<experiment>[^_]+)-(?P<seed>\d+)\.log")
 TARGET_ESS = 200
 BURNIN_FRACTION = 0.1
 NUM_POINTS = 200
-
-EXPERIMENTS = [
-    "hcv", "zika", "sars", "ebola", "sars5000", "sars10000",
-    "bd_hcv", "bd_zika", "bd_sars", "bd_ebola", "bd_sars5000", "bd_sars10000",
-]
 
 
 def set_plot_theme() -> None:
@@ -52,17 +48,17 @@ def set_plot_theme() -> None:
     )
 
 
-def find_log_paths(experiment: str) -> dict[int, Path]:
-    """Returns the log file of each seed of the run, keyed by seed."""
-    pattern = re.compile(rf"{METHOD}_{experiment}-(\d+)\.log")
-
+def find_log_paths() -> dict[str, dict[tuple[str, int], Path]]:
+    """Returns the log file of each experiment and seed, grouped by method."""
     log_paths = {}
-    for path in OUT_PATH.glob(f"{METHOD}_{experiment}-*.log"):
-        match = pattern.fullmatch(path.name)
+    for path in OUT_PATH.glob("*.log"):
+        match = LOG_PATTERN.fullmatch(path.name)
         if match:
-            log_paths[int(match.group(1))] = path
+            method = match.group("method")
+            key = (match.group("experiment"), int(match.group("seed")))
+            log_paths.setdefault(method, {})[key] = path
 
-    return dict(sorted(log_paths.items()))
+    return {method: dict(sorted(paths.items())) for method, paths in sorted(log_paths.items())}
 
 
 def get_job_start(log_path: Path) -> float | None:
@@ -76,7 +72,7 @@ def get_job_start(log_path: Path) -> float | None:
     return None
 
 
-def get_seconds_per_sample(experiment: str, log_path: Path, last_sample: int) -> float:
+def get_seconds_per_sample(log_path: Path, last_sample: int) -> float:
     """Returns the wall-clock seconds per MCMC sample, estimated from the time between the start of the job and the last sample."""
     # the job starts at the started-job comment if the log has one, otherwise at the creation of the log file
     stat = log_path.stat()
@@ -86,13 +82,13 @@ def get_seconds_per_sample(experiment: str, log_path: Path, last_sample: int) ->
 
     # the log file is last modified when the last sample was logged
     elapsed_seconds = stat.st_mtime - start_timestamp
-    print(f"{experiment}: no timing known, estimated {elapsed_seconds / last_sample * 1e6:.0f}s per million samples from the file timestamps")
+    print(f"{log_path.name}: estimated {elapsed_seconds / last_sample * 1e6:.0f}s per million samples from the file timestamps")
     return elapsed_seconds / last_sample
 
 
-def get_num_sequences(experiment: str) -> int:
+def get_num_sequences(method: str, experiment: str) -> int:
     """Returns the number of sequences, read from the header of a tree file of the run."""
-    tree_path = next(OUT_PATH.glob(f"{METHOD}_{experiment}-*.trees"))
+    tree_path = next(OUT_PATH.glob(f"{method}_{experiment}-*.trees"))
     with open(tree_path) as file:
         for line in file:
             match = re.search(r"ntax\s*=\s*(\d+)", line, re.IGNORECASE)
@@ -101,29 +97,20 @@ def get_num_sequences(experiment: str) -> int:
     raise ValueError(f"no ntax found in {tree_path}")
 
 
-def load_logs() -> tuple[dict[tuple[str, int], pd.DataFrame], dict[str, int]]:
-    """Reads the MCMC log of each seed of each run, keyed by experiment and seed, and the number of sequences of each run."""
+def load_logs(log_paths: dict[tuple[str, int], Path]) -> dict[tuple[str, int], pd.DataFrame]:
+    """Reads the MCMC log of each experiment and seed."""
     logs = {}
-    num_sequences = {}
 
-    for experiment in EXPERIMENTS:
-        log_paths = find_log_paths(experiment)
-        if not log_paths:
-            print(f"{experiment}: no log found")
-            continue
+    for key, log_path in log_paths.items():
+        # a run that is still in progress may have a partially written last line
+        log_df = pd.read_csv(log_path, comment="#", delimiter="\t").dropna()
 
-        for seed, log_path in log_paths.items():
-            # a run that is still in progress may have a partially written last line
-            log_df = pd.read_csv(log_path, comment="#", delimiter="\t").dropna()
+        seconds_per_sample = get_seconds_per_sample(log_path, log_df["Sample"].iloc[-1])
+        log_df["minutes"] = log_df["Sample"] * seconds_per_sample / 60
 
-            seconds_per_sample = get_seconds_per_sample(experiment, log_path, log_df["Sample"].iloc[-1])
-            log_df["minutes"] = log_df["Sample"] * seconds_per_sample / 60
+        logs[key] = log_df
 
-            logs[(experiment, seed)] = log_df
-
-        num_sequences[experiment] = get_num_sequences(experiment)
-
-    return logs, num_sequences
+    return logs
 
 
 def get_ess_trajectory(log_df: pd.DataFrame) -> pd.DataFrame:
@@ -178,7 +165,7 @@ def get_convergence_df(ess_trajectories: dict[tuple[str, int], pd.DataFrame]) ->
     return pd.DataFrame(convergence_rows)
 
 
-def get_summary_df(convergence_df: pd.DataFrame, experiments: list[str], num_sequences: dict[str, int]) -> pd.DataFrame:
+def get_summary_df(convergence_df: pd.DataFrame, num_sequences: dict[str, int]) -> pd.DataFrame:
     """Returns the running time of each run, averaged over its seeds, with the range over the seeds.
 
     The status is projected if any seed of the run has not converged yet.
@@ -201,7 +188,6 @@ def get_summary_df(convergence_df: pd.DataFrame, experiments: list[str], num_seq
             projected=("projected", "any"),
             slowest_parameter=("parameter", lambda parameters: parameters.mode().iloc[0]),
         )
-        .reindex(experiments)
         .reset_index()
     )
     summary_df["num_sequences"] = summary_df["experiment"].map(num_sequences)
@@ -220,7 +206,7 @@ def format_minutes(minutes: float) -> str:
     return f"{minutes // 60}h{minutes % 60}min"
 
 
-def plot_convergence_time(summary_df: pd.DataFrame, experiment_colors: dict[str, tuple]) -> None:
+def plot_convergence_time(method: str, summary_df: pd.DataFrame, experiment_colors: dict[str, tuple]) -> None:
     """Plots the mean running time of each run against its number of sequences, with the range over its seeds."""
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
@@ -239,7 +225,7 @@ def plot_convergence_time(summary_df: pd.DataFrame, experiment_colors: dict[str,
     ax.set_ylim(-0.03 * summary_df["min_minutes"].max(), summary_df["max_minutes"].max() * 1.2)
     ax.set_xlabel("number of sequences")
     ax.set_ylabel("running time (min)")
-    ax.set_title("Running time until ESS ≥ 200 on all parameters")
+    ax.set_title(f"{method}: running time until ESS ≥ 200 on all parameters")
 
     fig.tight_layout()
 
@@ -258,12 +244,13 @@ def plot_convergence_time(summary_df: pd.DataFrame, experiment_colors: dict[str,
         expand=(1.3, 1.6),
     )
 
-    fig.savefig(PLOTS_PATH / "convergence_time.png", dpi=200, bbox_inches="tight")
+    fig.savefig(PLOTS_PATH / f"{method}_convergence_time.png", dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_min_ess_trajectories(ess_trajectories: dict[tuple[str, int], pd.DataFrame], experiments: list[str], experiment_colors: dict[str, tuple]) -> None:
+def plot_min_ess_trajectories(method: str, ess_trajectories: dict[tuple[str, int], pd.DataFrame], experiment_colors: dict[str, tuple]) -> None:
     """Plots the ESS of the slowest parameter over running time, with one line per seed."""
+    experiments = list(experiment_colors)
     ncols = 3
     nrows = math.ceil(len(experiments) / ncols)
     fig, axes = plt.subplots(nrows, ncols, figsize=(3.64 * ncols, 2.8 * nrows), squeeze=False)
@@ -283,12 +270,13 @@ def plot_min_ess_trajectories(ess_trajectories: dict[tuple[str, int], pd.DataFra
     for ax in axes.flat[len(experiments):]:
         ax.set_visible(False)
 
+    fig.suptitle(f"{method}: minimum ESS over running time", x=0.01, ha="left", fontweight="bold")
     fig.tight_layout()
-    fig.savefig(PLOTS_PATH / "ess_trajectories.png", dpi=200, bbox_inches="tight")
+    fig.savefig(PLOTS_PATH / f"{method}_ess_trajectories.png", dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_relative_convergence_time(convergence_df: pd.DataFrame, experiments: list[str]) -> None:
+def plot_relative_convergence_time(method: str, convergence_df: pd.DataFrame, experiments: list[str]) -> None:
     """Plots the mean time until each parameter reaches the target ESS, relative to the slowest parameter of each seed."""
     relative_df = convergence_df.assign(
         relative=convergence_df["minutes"] / convergence_df.groupby(["experiment", "seed"])["minutes"].transform("max"),
@@ -322,31 +310,40 @@ def plot_relative_convergence_time(convergence_df: pd.DataFrame, experiments: li
     ax.grid(False)
     ax.set_xlabel("")
     ax.set_ylabel("")
+    ax.set_title(f"{method}: time until ESS ≥ 200 per parameter", loc="left")
 
     fig.tight_layout()
-    fig.savefig(PLOTS_PATH / "relative_convergence_time.png", dpi=200, bbox_inches="tight")
+    fig.savefig(PLOTS_PATH / f"{method}_relative_convergence_time.png", dpi=200, bbox_inches="tight")
     plt.close(fig)
+
+
+def analyse_method(method: str, log_paths: dict[tuple[str, int], Path]) -> None:
+    """Analyses all seeds of all experiments of a method and plots the results, prefixed with the method."""
+    logs = load_logs(log_paths)
+    experiments = sorted({experiment for experiment, _ in logs})
+    num_sequences = {experiment: get_num_sequences(method, experiment) for experiment in experiments}
+
+    # each experiment keeps the same color in all plots of the method
+    experiment_colors = dict(zip(experiments, sns.color_palette("deep")))
+
+    ess_trajectories = {key: get_ess_trajectory(log_df) for key, log_df in logs.items()}
+    convergence_df = get_convergence_df(ess_trajectories)
+    summary_df = get_summary_df(convergence_df, num_sequences)
+
+    print(f"\n{method}")
+    print(summary_df[["experiment", "num_sequences", "num_seeds", "minutes", "min_minutes", "max_minutes", "status", "slowest_parameter"]].to_string(index=False))
+
+    plot_convergence_time(method, summary_df, experiment_colors)
+    plot_min_ess_trajectories(method, ess_trajectories, experiment_colors)
+    plot_relative_convergence_time(method, convergence_df, experiments)
 
 
 def main() -> None:
     set_plot_theme()
     PLOTS_PATH.mkdir(parents=True, exist_ok=True)
 
-    # each experiment keeps the same color in all plots
-    experiment_colors = dict(zip(EXPERIMENTS, sns.color_palette("deep")))
-
-    logs, num_sequences = load_logs()
-    experiments = [experiment for experiment in EXPERIMENTS if experiment in num_sequences]
-
-    ess_trajectories = {key: get_ess_trajectory(log_df) for key, log_df in logs.items()}
-    convergence_df = get_convergence_df(ess_trajectories)
-    summary_df = get_summary_df(convergence_df, experiments, num_sequences)
-
-    print(summary_df[["experiment", "num_sequences", "num_seeds", "minutes", "min_minutes", "max_minutes", "status", "slowest_parameter"]].to_string(index=False))
-
-    plot_convergence_time(summary_df, experiment_colors)
-    plot_min_ess_trajectories(ess_trajectories, experiments, experiment_colors)
-    plot_relative_convergence_time(convergence_df, experiments)
+    for method, log_paths in find_log_paths().items():
+        analyse_method(method, log_paths)
 
 
 if __name__ == "__main__":
