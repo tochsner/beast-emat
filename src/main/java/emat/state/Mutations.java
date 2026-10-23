@@ -79,6 +79,15 @@ public class Mutations extends StateNode {
     }
 
     /**
+     * Marks the branch above the given node as changed without replacing its mutations. This is
+     * meant for a change of the start of the branch, which the mutations do not store.
+     */
+    public void markBranchChanged(Node node, Operator operator) {
+        this.startEditing(operator);
+        this.isBranchDirty[node.getNr()] = true;
+    }
+
+    /**
      * Replaces the mutations of every branch without going through an operator. This is
      * meant for initialisation only, so the replaced mutations are also stored.
      */
@@ -208,17 +217,20 @@ public class Mutations extends StateNode {
         // check that every mutation lies on the branch
 
         for (Mutation mutation : mutations) {
-            if (mutation.timeOfPreviousMutation() > branchStartHeight) {
-                throw new RuntimeException("timeOfPreviousMutation is earlier than the branch.");
-            }
             if (mutation.time() > branchStartHeight) {
                 throw new RuntimeException("time is earlier than the branch.");
             }
-            if (mutation.timeOfPreviousMutation() < branchEndHeight) {
-                throw new RuntimeException("timeOfPreviousMutation is later than the branch.");
-            }
             if (mutation.time() < branchEndHeight) {
                 throw new RuntimeException("time is later than the branch.");
+            }
+            if (mutation.isFirstAtSite()) {
+                continue;
+            }
+            if (mutation.timeOfPreviousMutation() > branchStartHeight) {
+                throw new RuntimeException("timeOfPreviousMutation is earlier than the branch.");
+            }
+            if (mutation.timeOfPreviousMutation() < branchEndHeight) {
+                throw new RuntimeException("timeOfPreviousMutation is later than the branch.");
             }
             if (mutation.time() > mutation.timeOfPreviousMutation()) {
                 throw new RuntimeException("Mutation happens before the previous mutation at its site.");
@@ -241,10 +253,14 @@ public class Mutations extends StateNode {
 
             if (lastMutation == null) {
                 // the first mutation at a site has no predecessor, so it starts at the branch start
-                if (mutation.timeOfPreviousMutation() != branchStartHeight) {
+                if (!mutation.isFirstAtSite()) {
                     throw new RuntimeException("First mutation at a site does not start at the beginning of the branch.");
                 }
                 continue;
+            }
+
+            if (mutation.isFirstAtSite()) {
+                throw new RuntimeException("Mutation at a site that already mutated starts at the beginning of the branch.");
             }
 
             // check that the state is consistent

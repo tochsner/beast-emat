@@ -428,7 +428,7 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
         }
         Arrays.sort(jumpTimes);
 
-        double previousHeight = branchStartHeight;
+        double previousHeight = Mutation.BRANCH_START;
         for (int i = 0; i < numJumps; i++) {
             double height = branchStartHeight - jumpTimes[i];
             branchMutations.add(new Mutation(nodeNr, height, previousHeight, site, states[i], states[i + 1]));

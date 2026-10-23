@@ -53,6 +53,7 @@ public final class ForwardSiteSimulator {
     public int simulateBranch(Node node, int site, int startState, double rateScale, List<Mutation> branchMutations) {
         double endHeight = node.getHeight();
         double previousHeight = node.getParent().getHeight();
+        double timeOfPreviousMutation = Mutation.BRANCH_START;
         int state = startState;
 
         while (true) {
@@ -63,9 +64,10 @@ public final class ForwardSiteSimulator {
             }
 
             int newState = this.sampleNewState(state);
-            branchMutations.add(new Mutation(node.getNr(), height, previousHeight, site, state, newState));
+            branchMutations.add(new Mutation(node.getNr(), height, timeOfPreviousMutation, site, state, newState));
 
             previousHeight = height;
+            timeOfPreviousMutation = height;
             state = newState;
         }
     }

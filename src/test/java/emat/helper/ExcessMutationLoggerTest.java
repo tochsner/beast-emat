@@ -33,9 +33,9 @@ public class ExcessMutationLoggerTest {
     public void testLogsOnlyMutationsBeyondParsimony() {
         TreeParser tree = this.createTree();
         Mutations mutations = this.createMutations(tree, new String[] {"AA", "AA", "AG"}, new Mutation[] {
-                new Mutation(this.getNodeNr(tree, "A"), 0.6, 1.0, 0, A, C),
+                new Mutation(this.getNodeNr(tree, "A"), 0.6, Mutation.BRANCH_START, 0, A, C),
                 new Mutation(this.getNodeNr(tree, "A"), 0.3, 0.6, 0, C, A),
-                new Mutation(this.getNodeNr(tree, "C"), 0.5, 2.0, 1, A, G)
+                new Mutation(this.getNodeNr(tree, "C"), 0.5, Mutation.BRANCH_START, 1, A, G)
         });
 
         int nodeNr = this.getNodeNr(tree, "A");
@@ -46,7 +46,7 @@ public class ExcessMutationLoggerTest {
     public void testLogsPlaceholderWithoutExcess() {
         TreeParser tree = this.createTree();
         Mutations mutations = this.createMutations(tree, new String[] {"AA", "AA", "AG"}, new Mutation[] {
-                new Mutation(this.getNodeNr(tree, "C"), 0.5, 2.0, 1, A, G)
+                new Mutation(this.getNodeNr(tree, "C"), 0.5, Mutation.BRANCH_START, 1, A, G)
         });
 
         assertEquals("-\t-", this.logExcess(mutations));
@@ -60,8 +60,8 @@ public class ExcessMutationLoggerTest {
     public void testSeparatesMutationsOnMissingTips() {
         TreeParser tree = this.createTree();
         Mutations mutations = this.createMutations(tree, new String[] {"AA", "NA", "AA"}, new Mutation[] {
-                new Mutation(this.getNodeNr(tree, "B"), 0.5, 1.0, 0, A, C),
-                new Mutation(this.getNodeNr(tree, "A"), 0.6, 1.0, 1, A, C),
+                new Mutation(this.getNodeNr(tree, "B"), 0.5, Mutation.BRANCH_START, 0, A, C),
+                new Mutation(this.getNodeNr(tree, "A"), 0.6, Mutation.BRANCH_START, 1, A, C),
                 new Mutation(this.getNodeNr(tree, "A"), 0.3, 0.6, 1, C, A)
         });
 
@@ -75,7 +75,7 @@ public class ExcessMutationLoggerTest {
     public void testTreatsCladesOfMissingTipsAsMissing() {
         TreeParser tree = this.createTree();
         Mutations mutations = this.createMutations(tree, new String[] {"-A", "NA", "AA"}, new Mutation[] {
-                new Mutation(this.getNodeNr(tree, "X"), 1.5, 2.0, 0, A, G)
+                new Mutation(this.getNodeNr(tree, "X"), 1.5, Mutation.BRANCH_START, 0, A, G)
         });
 
         assertEquals("-\t0:1@" + this.getNodeNr(tree, "X") + "(2,1.0)", this.logExcess(mutations));

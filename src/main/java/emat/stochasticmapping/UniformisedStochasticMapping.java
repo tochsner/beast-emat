@@ -173,7 +173,7 @@ public class UniformisedStochasticMapping implements StochasticMapping {
         List<Mutation> siteMutations = new ArrayList<>();
         int currentState = state;
         boolean hasMutated = false;
-        double previousHeight = branchStartHeight;
+        double previousHeight = Mutation.BRANCH_START;
         double[] weights = new double[this.numStates];
 
         for (int i = 0; i < numJumps; i++) {
@@ -221,7 +221,7 @@ public class UniformisedStochasticMapping implements StochasticMapping {
         // sample the state after every jump, conditional on reaching the end state, and keep the real jumps
 
         int state = startState;
-        double previousHeight = branchStartHeight;
+        double previousHeight = Mutation.BRANCH_START;
         double[] weights = new double[this.numStates];
 
         for (int i = 0; i < numJumps; i++) {

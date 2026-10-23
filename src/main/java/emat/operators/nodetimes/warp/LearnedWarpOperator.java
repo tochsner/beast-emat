@@ -40,6 +40,7 @@ public class LearnedWarpOperator extends TreeOperator {
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "the mutations to move along with the tree", Input.Validate.REQUIRED);
     final public Input<List<Adapter>> adaptersInput = new Input<>("adapter", "adapters of the parameters of the tree prior, which give the real representation the operator works on: the mutable values are moved, and the immutable values only inform the learned rate", new ArrayList<>());
     final public Input<Base> branchRateModelInput = new Input<>("branchRateModel", "the clock model, whose mean rate is set so that its product with the tree length, weighted by the relative rates of the branches, stays the same. The relative rates of the branches must not depend on the heights of the nodes, so that a normalised relaxed clock is not supported. Without a clock model or without a mean rate the rate is not changed");
+    final public Input<Boolean> fitImmutableInput = new Input<>("fitImmutable", "whether the learned rate also depends on the immutable values of the adapters. The step is conditioned on them either way. Each value adds a weight for every knot to the fit, which makes it slower", true);
     final public Input<Double> scaleFactorInput = new Input<>("scaleFactor", "the factor by which the learned standard deviations of the step are scaled, which is tuned if optimise is set, and which defaults to 2.38 / sqrt(d) for d mutable values");
     final public Input<Boolean> optimiseInput = new Input<>("optimise", "whether to tune the scale factor towards the target acceptance probability", true);
 
@@ -84,13 +85,15 @@ public class LearnedWarpOperator extends TreeOperator {
     private List<Adapter> adapters;
     private int numMutable;
     private int numImmutable;
+    private int numFeatureImmutable;
 
     // the mean rate of the clock model that is mapped along with the tree, or null if the rate is fixed
     private Base branchRateModel;
     private RealScalarParam<?> meanRate;
 
-    // the learned distribution of the values that are moved, from which the zero-mean steps are drawn. It only learns from the
-    // chain once the tree length has reached the minimum effective sample size, so that the burn-in does not inflate its covariance
+    // the learned distribution of the values that are moved given the immutable values, from which the zero-mean steps are drawn.
+    // It only learns from the chain once the tree length has reached the minimum effective sample size, so that the burn-in does
+    // not inflate its covariance
     private CenteredMultivariateNormalSampler stepSampler;
     private long numRecordedValues;
 
@@ -124,9 +127,10 @@ public class LearnedWarpOperator extends TreeOperator {
 
         Double scaleFactor = this.scaleFactorInput.get();
         this.scaleFactor = scaleFactor != null ? scaleFactor : 2.38 / Math.sqrt(this.numMutable);
-        this.stepSampler = new CenteredMultivariateNormalSampler(this.numMutable);
+        this.stepSampler = new CenteredMultivariateNormalSampler(this.numImmutable, this.numMutable);
 
-        this.hazardRate = new LearnedHazardRate(this.hazardInput.get(), this.numKnotsInput.get(), this.numMutable + this.numImmutable, this.maxObservationsInput.get());
+        this.numFeatureImmutable = this.fitImmutableInput.get() ? this.numImmutable : 0;
+        this.hazardRate = new LearnedHazardRate(this.hazardInput.get(), this.numKnotsInput.get(), this.numMutable + this.numFeatureImmutable, this.maxObservationsInput.get());
         this.nextFitSize = this.minObservationsInput.get();
         this.treeLengthTracker = new ThinnedEssTracker(this.essThinningInput.get());
     }
@@ -162,13 +166,30 @@ public class LearnedWarpOperator extends TreeOperator {
     @Override
     public double proposal() {
         if (this.hasReachedEss) {
-            this.stepSampler.record(new double[0], this.readMutable());
+            this.stepSampler.record(this.readImmutable(), this.readMutable());
             this.numRecordedValues++;
         }
         this.observeState();
 
-        double[] step = this.stepSampler.sampleConditionally(new double[0], this.scaleFactor);
+        double[] step = this.sampleStep();
         return this.warp(step);
+    }
+
+    /**
+     * Draws a step whose covariance is that of the mutable values given the immutable values, which the move leaves as they are,
+     * so that the covariance is the same for the step and for its reverse. The sampler centres its draws on the mean of the
+     * mutable values given the immutable values, which would make the step asymmetric, so that mean is removed.
+     */
+    private double[] sampleStep() {
+        double[] immutable = this.readImmutable();
+        double[] step = this.stepSampler.sampleConditionally(immutable, this.scaleFactor);
+
+        // with a scale factor of zero, the draw is the mean itself
+        double[] mean = this.stepSampler.sampleConditionally(immutable, 0.0);
+        for (int i = 0; i < step.length; i++) {
+            step[i] -= mean[i];
+        }
+        return step;
     }
 
     /**
@@ -391,18 +412,24 @@ public class LearnedWarpOperator extends TreeOperator {
 
     /* Parameters */
 
-    /** Returns the mutable values followed by the immutable values of the adapters, which the learned rate depends on. */
+    /** Returns the mutable values followed by the immutable values of the adapters if the learned rate depends on them. */
     private double[] readFeatures() {
-        double[] features = new double[this.numMutable + this.numImmutable];
+        double[] features = new double[this.numMutable + this.numFeatureImmutable];
         System.arraycopy(this.readMutable(), 0, features, 0, this.numMutable);
-
-        int index = this.numMutable;
-        for (Adapter adapter : this.adapters) {
-            double[] immutable = adapter.getImmutable(NO_NODE);
-            System.arraycopy(immutable, 0, features, index, immutable.length);
-            index += immutable.length;
-        }
+        System.arraycopy(this.readImmutable(), 0, features, this.numMutable, this.numFeatureImmutable);
         return features;
+    }
+
+    private double[] readImmutable() {
+        double[] immutable = new double[this.numImmutable];
+
+        int index = 0;
+        for (Adapter adapter : this.adapters) {
+            double[] values = adapter.getImmutable(NO_NODE);
+            System.arraycopy(values, 0, immutable, index, values.length);
+            index += values.length;
+        }
+        return immutable;
     }
 
     private double[] readMutable() {

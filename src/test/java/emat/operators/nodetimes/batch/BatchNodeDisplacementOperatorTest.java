@@ -362,9 +362,9 @@ public class BatchNodeDisplacementOperatorTest {
             history.add(new ArrayList<>());
         }
         history.get(b.getNr()).addAll(List.of(
-                new Mutation(b.getNr(), 0.8, 1.0, 2, A, C),
+                new Mutation(b.getNr(), 0.8, Mutation.BRANCH_START, 2, A, C),
                 new Mutation(b.getNr(), 0.4, 0.8, 2, C, 3),
-                new Mutation(b.getNr(), 0.3, 1.0, 1, A, G)
+                new Mutation(b.getNr(), 0.3, Mutation.BRANCH_START, 1, A, G)
         ));
 
         Mutations mutations = new Mutations();
@@ -389,10 +389,10 @@ public class BatchNodeDisplacementOperatorTest {
             assertEquals(0.4, bMutations.get(1).time(), 0.0);
             assertEquals(0.3, bMutations.get(2).time(), 0.0);
 
-            // the first mutation at site 2 and the one at site 1 start at X, the second at site 2 follows the first
-            assertEquals(x.getHeight(), bMutations.get(0).timeOfPreviousMutation(), 0.0);
+            // the first mutation at site 2 and the one at site 1 start at the branch start, the second at site 2 follows the first
+            assertTrue(bMutations.get(0).isFirstAtSite());
             assertEquals(0.8, bMutations.get(1).timeOfPreviousMutation(), 0.0);
-            assertEquals(x.getHeight(), bMutations.get(2).timeOfPreviousMutation(), 0.0);
+            assertTrue(bMutations.get(2).isFirstAtSite());
         }
     }
 
@@ -450,12 +450,12 @@ public class BatchNodeDisplacementOperatorTest {
         }
 
         history.get(root.getNr()).add(new Mutation(root.getNr(), 2.0, 2.0, 0, G, A));
-        history.get(x.getNr()).add(new Mutation(x.getNr(), 1.5, 2.0, 0, A, G));
-        history.get(b.getNr()).add(new Mutation(b.getNr(), 0.5, 1.0, 2, A, C));
+        history.get(x.getNr()).add(new Mutation(x.getNr(), 1.5, Mutation.BRANCH_START, 0, A, G));
+        history.get(b.getNr()).add(new Mutation(b.getNr(), 0.5, Mutation.BRANCH_START, 2, A, C));
         history.get(c.getNr()).addAll(List.of(
-                new Mutation(c.getNr(), 1.5, 2.0, 0, A, C),
-                new Mutation(c.getNr(), 1.2, 2.0, 1, A, C),
-                new Mutation(c.getNr(), 0.8, 2.0, 2, A, C)
+                new Mutation(c.getNr(), 1.5, Mutation.BRANCH_START, 0, A, C),
+                new Mutation(c.getNr(), 1.2, Mutation.BRANCH_START, 1, A, C),
+                new Mutation(c.getNr(), 0.8, Mutation.BRANCH_START, 2, A, C)
         ));
 
         return history;

@@ -154,7 +154,7 @@ public class ParsimonyMutationsInitialiser extends BEASTObject implements StateN
             }
 
             double time = branchEndHeight + Randomizer.nextDouble() * branchLength;
-            mutations.add(new Mutation(nodeNr, time, branchStartHeight, site, oldState, newState));
+            mutations.add(new Mutation(nodeNr, time, Mutation.BRANCH_START, site, oldState, newState));
         }
 
         mutations.sort(Comparator.comparingDouble(Mutation::time).reversed());

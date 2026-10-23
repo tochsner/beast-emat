@@ -260,7 +260,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         // rearrange the mutations: join G–P–S into G–S, then split G'–S' into G'–P'–S'
 
         List<Mutation> joinedMutations = this.branchMutations.joinBranches(
-                this.mutations.getMutations(parent), this.mutations.getMutations(sibling), sibling.getNr(), grandparent.getHeight()
+                this.mutations.getMutations(parent), this.mutations.getMutations(sibling), sibling.getNr()
         );
         newBranchMutations.put(sibling, joinedMutations);
 

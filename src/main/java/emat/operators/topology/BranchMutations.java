@@ -8,8 +8,8 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Joins, splits and relinks the mutation lists of branches when a node is removed from, inserted
- * into or moved along a branch, keeping the times of previous mutations consistent. The per-site lookups
+ * Joins, splits and relinks the mutation lists of branches when a node is removed from or inserted
+ * into a branch, keeping the times of previous mutations consistent. The per-site lookups
  * use arrays over all sites that are reused between calls, so an instance must not be
  * shared between threads.
  */
@@ -32,13 +32,11 @@ public final class BranchMutations {
     }
 
     /**
-     * Joins an upper and a lower branch into one branch that belongs to the given node and
-     * starts at the given height. The first mutation at a site on the lower branch now
-     * follows the last mutation at that site on the upper branch, or the start of the
-     * joined branch if there is none.
+     * Joins an upper and a lower branch into one branch that belongs to the given node. The
+     * first mutation at a site on the lower branch now follows the last mutation at that site
+     * on the upper branch, or the start of the joined branch if there is none.
      */
-    public List<Mutation> joinBranches(List<Mutation> upperMutations, List<Mutation> lowerMutations,
-                                       int nodeNr, double branchStartHeight) {
+    public List<Mutation> joinBranches(List<Mutation> upperMutations, List<Mutation> lowerMutations, int nodeNr) {
         int stamp = this.getNextStamp();
         List<Mutation> joinedMutations = new ArrayList<>(upperMutations.size() + lowerMutations.size());
 
@@ -59,9 +57,8 @@ public final class BranchMutations {
             int site = mutation.site();
 
             double timeOfPreviousMutation = mutation.timeOfPreviousMutation();
-            if (this.lowerStampOfSite[site] != stamp) {
-                this.lowerStampOfSite[site] = stamp;
-                timeOfPreviousMutation = this.upperStampOfSite[site] == stamp ? this.lastUpperTimeOfSite[site] : branchStartHeight;
+            if (mutation.isFirstAtSite() && this.upperStampOfSite[site] == stamp) {
+                timeOfPreviousMutation = this.lastUpperTimeOfSite[site];
             }
 
             joinedMutations.add(new Mutation(
@@ -76,7 +73,7 @@ public final class BranchMutations {
     /**
      * Splits the mutations of a branch at the given height. The mutations above it move to
      * the upper node, and the others to the lower node, where the first mutation at a site
-     * now starts at the split height.
+     * now starts at the start of the branch.
      */
     public Split splitBranch(List<Mutation> branchMutations, double splitHeight, int upperNodeNr, int lowerNodeNr) {
         int stamp = this.getNextStamp();
@@ -105,7 +102,7 @@ public final class BranchMutations {
             double timeOfPreviousMutation = mutation.timeOfPreviousMutation();
             if (this.lowerStampOfSite[site] != stamp) {
                 this.lowerStampOfSite[site] = stamp;
-                timeOfPreviousMutation = splitHeight;
+                timeOfPreviousMutation = Mutation.BRANCH_START;
             }
 
             lowerMutations.add(new Mutation(
@@ -118,37 +115,11 @@ public final class BranchMutations {
     }
 
     /**
-     * Moves the start of a branch to the given height. The mutation times stay, but the first mutation at
-     * each site starts at the new branch start. The other mutations are kept as they are.
-     */
-    public List<Mutation> moveBranchStart(List<Mutation> branchMutations, double branchStartHeight) {
-        int stamp = this.getNextStamp();
-
-        Mutation[] newBranchMutations = new Mutation[branchMutations.size()];
-        for (int i = 0; i < newBranchMutations.length; i++) {
-            Mutation mutation = branchMutations.get(i);
-
-            if (this.lowerStampOfSite[mutation.site()] == stamp) {
-                newBranchMutations[i] = mutation;
-            } else {
-                this.lowerStampOfSite[mutation.site()] = stamp;
-                newBranchMutations[i] = new Mutation(
-                        mutation.nodeNr(), mutation.time(), branchStartHeight,
-                        mutation.site(), mutation.oldState(), mutation.newState()
-                );
-            }
-        }
-
-        // an immutable list is not copied again when the mutations of the branch are set
-        return List.of(newBranchMutations);
-    }
-
-    /**
      * Returns a copy of the given mutations of one branch, sorted by descending height,
      * where every mutation follows the previous mutation at its site, or the branch start
      * if there is none.
      */
-    public List<Mutation> linkMutations(List<Mutation> branchMutations, double branchStartHeight) {
+    public List<Mutation> linkMutations(List<Mutation> branchMutations) {
         int stamp = this.getNextStamp();
 
         List<Mutation> sortedMutations = new ArrayList<>(branchMutations);
@@ -157,7 +128,7 @@ public final class BranchMutations {
         List<Mutation> linkedMutations = new ArrayList<>(sortedMutations.size());
         for (Mutation mutation : sortedMutations) {
             int site = mutation.site();
-            double timeOfPreviousMutation = this.upperStampOfSite[site] == stamp ? this.lastUpperTimeOfSite[site] : branchStartHeight;
+            double timeOfPreviousMutation = this.upperStampOfSite[site] == stamp ? this.lastUpperTimeOfSite[site] : Mutation.BRANCH_START;
             this.upperStampOfSite[site] = stamp;
             this.lastUpperTimeOfSite[site] = mutation.time();
 

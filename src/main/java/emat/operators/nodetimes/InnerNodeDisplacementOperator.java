@@ -8,7 +8,6 @@ import beast.base.evolution.tree.Tree;
 import beast.base.util.Randomizer;
 import emat.prior.GeneticPrior;
 import emat.operators.nodetimes.batch.TruncatedDensitySampler;
-import emat.operators.topology.BranchMutations;
 import emat.state.Mutation;
 import emat.state.Mutations;
 
@@ -26,14 +25,12 @@ public class InnerNodeDisplacementOperator extends TreeOperator {
     Mutations mutations;
     GeneticPrior geneticPrior;
     Tree tree;
-    BranchMutations branchMutations;
 
     @Override
     public void initAndValidate() {
         this.mutations = this.mutationsInput.get();
         this.geneticPrior = this.geneticPriorInput.get();
         this.tree = this.treeInput.get();
-        this.branchMutations = new BranchMutations(this.mutations.getReferenceSequence().length);
     }
 
     /**
@@ -82,7 +79,7 @@ public class InnerNodeDisplacementOperator extends TreeOperator {
         for (Node child : node.getChildren()) {
             List<Mutation> childMutations = this.mutations.getMutations(child);
             if (!childMutations.isEmpty()) {
-                this.mutations.applyMutations(child, this.branchMutations.moveBranchStart(childMutations, newHeight), this);
+                this.mutations.markBranchChanged(child, this);
             }
         }
 

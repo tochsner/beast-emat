@@ -135,7 +135,7 @@ public class JukesCantorStochasticMappingTest {
         double[] previousHeights = new double[NUM_SITES];
         for (int site = 0; site < NUM_SITES; site++) {
             states[site] = differingSites.containsSite(site) ? differingSites.getStartState(differingSites.getSlot(site)) : site % NUM_STATES;
-            previousHeights[site] = START_HEIGHT;
+            previousHeights[site] = Mutation.BRANCH_START;
         }
 
         double previousHeight = START_HEIGHT;
@@ -170,7 +170,7 @@ public class JukesCantorStochasticMappingTest {
     private List<Mutation> getDummyMutations(int numJumps) {
         List<Mutation> mutations = new ArrayList<>();
         for (int i = 0; i < numJumps; i++) {
-            mutations.add(new Mutation(0, END_HEIGHT, START_HEIGHT, 0, 0, 1));
+            mutations.add(new Mutation(0, END_HEIGHT, Mutation.BRANCH_START, 0, 0, 1));
         }
         return mutations;
     }

@@ -59,8 +59,8 @@ public class GeneticPriorTest {
         for (int nodeNr = 0; nodeNr < tree.getNodeCount(); nodeNr++) {
             mutationsAboveNode.add(new ArrayList<>());
         }
-        mutationsAboveNode.get(nodeB.getNr()).add(new Mutation(nodeB.getNr(), 0.4, 1.0, 1, 1, 3));
-        mutationsAboveNode.get(nodeCD.getNr()).add(new Mutation(nodeCD.getNr(), 1.2, 2.0, 0, 0, 2));
+        mutationsAboveNode.get(nodeB.getNr()).add(new Mutation(nodeB.getNr(), 0.4, Mutation.BRANCH_START, 1, 1, 3));
+        mutationsAboveNode.get(nodeCD.getNr()).add(new Mutation(nodeCD.getNr(), 1.2, Mutation.BRANCH_START, 0, 0, 2));
 
         mutations.initialiseMutations(mutationsAboveNode);
 

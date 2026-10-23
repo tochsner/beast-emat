@@ -57,8 +57,8 @@ public class MutationTimeOperatorTest {
         for (int i = 0; i < tree.getNodeCount(); i++) {
             mutationsAboveNode.add(new ArrayList<>());
         }
-        mutationsAboveNode.get(nodeNr).add(new Mutation(nodeNr, 1.5, 2.0, 0, 0, 2));
-        mutationsAboveNode.get(nodeNr).add(new Mutation(nodeNr, 1.0, 2.0, 1, 1, 0));
+        mutationsAboveNode.get(nodeNr).add(new Mutation(nodeNr, 1.5, Mutation.BRANCH_START, 0, 0, 2));
+        mutationsAboveNode.get(nodeNr).add(new Mutation(nodeNr, 1.0, Mutation.BRANCH_START, 1, 1, 0));
         mutationsAboveNode.get(nodeNr).add(new Mutation(nodeNr, 0.5, 1.5, 0, 2, 3));
 
         mutations.initialiseMutations(mutationsAboveNode);

@@ -30,6 +30,7 @@
             <scope>runtime</scope>
             <includes>
                 <include>my.beast.example:beast-my-package</include>
+                <include>org.ojalgo:ojalgo</include>
             </includes>
         </dependencySet>
     </dependencySets>

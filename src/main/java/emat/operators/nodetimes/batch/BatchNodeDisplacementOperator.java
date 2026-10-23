@@ -12,7 +12,6 @@ import beast.base.spec.type.RealScalar;
 import beast.base.spec.type.RealVector;
 import beast.base.util.Randomizer;
 import emat.operators.nodetimes.NodeTimes;
-import emat.operators.topology.BranchMutations;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
@@ -59,8 +58,6 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     private Node[] batchNodes;
     private int batchCount;
 
-    private BranchMutations branchMutations;
-
     // the approximation of the tree prior, or null to draw from the genetic prior only
     private LearnedTreePrior treePriorApproximation;
 
@@ -90,7 +87,6 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         }
 
         this.batchNodes = new Node[this.internalNodeNrs.length];
-        this.branchMutations = new BranchMutations(this.mutations.getReferenceSequence().length);
 
         this.setCoercableParameterValue(this.batchSizeInput.get());
         this.weightFactor = this.scaleWeightByLogNumTipsInput.get() ? Math.log(this.tree.getLeafNodeCount()) : 1.0;
@@ -246,12 +242,12 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
 
         node.setHeight(newHeight);
 
-        // let the branches below start at the new height
+        // the mutations on the branches below do not store the branch start, but the branches changed
 
         for (Node child : node.getChildren()) {
             List<Mutation> childMutations = this.mutations.getMutations(child);
             if (!childMutations.isEmpty()) {
-                this.mutations.applyMutations(child, this.branchMutations.moveBranchStart(childMutations, newHeight), this);
+                this.mutations.markBranchChanged(child, this);
             }
         }
 

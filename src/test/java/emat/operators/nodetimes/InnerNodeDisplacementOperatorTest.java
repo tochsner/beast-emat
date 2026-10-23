@@ -131,12 +131,12 @@ public class InnerNodeDisplacementOperatorTest {
         }
 
         history.get(root.getNr()).add(new Mutation(root.getNr(), 2.0, 2.0, 0, G, A));
-        history.get(x.getNr()).add(new Mutation(x.getNr(), 1.5, 2.0, 0, A, G));
-        history.get(b.getNr()).add(new Mutation(b.getNr(), 0.5, 1.0, 2, A, C));
+        history.get(x.getNr()).add(new Mutation(x.getNr(), 1.5, Mutation.BRANCH_START, 0, A, G));
+        history.get(b.getNr()).add(new Mutation(b.getNr(), 0.5, Mutation.BRANCH_START, 2, A, C));
         history.get(c.getNr()).addAll(List.of(
-                new Mutation(c.getNr(), 1.5, 2.0, 0, A, C),
-                new Mutation(c.getNr(), 1.2, 2.0, 1, A, C),
-                new Mutation(c.getNr(), 0.8, 2.0, 2, A, C)
+                new Mutation(c.getNr(), 1.5, Mutation.BRANCH_START, 0, A, C),
+                new Mutation(c.getNr(), 1.2, Mutation.BRANCH_START, 1, A, C),
+                new Mutation(c.getNr(), 0.8, Mutation.BRANCH_START, 2, A, C)
         ));
 
         return history;

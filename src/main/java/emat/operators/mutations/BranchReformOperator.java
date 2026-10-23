@@ -177,12 +177,12 @@ public class BranchReformOperator extends Operator {
         for (int i = 0; i < branchMutations.size(); i++) {
             Mutation mutation = branchMutations.get(i);
             newBranchMutations.add(new Mutation(
-                    mutation.nodeNr(), newTimes[i], branchStartHeight,
+                    mutation.nodeNr(), newTimes[i], Mutation.BRANCH_START,
                     mutation.site(), mutation.oldState(), mutation.newState()
             ));
         }
 
-        this.mutations.applyMutations(node, this.mutationLinker.linkMutations(newBranchMutations, branchStartHeight), this);
+        this.mutations.applyMutations(node, this.mutationLinker.linkMutations(newBranchMutations), this);
 
         return 0.0;
     }
@@ -247,13 +247,13 @@ public class BranchReformOperator extends Operator {
 
             double time = Math.min(Math.max(2.0 * rootHeight - mutation.time(), sibling.getHeight()), rootHeight);
             newSiblingMutations.add(new Mutation(
-                    sibling.getNr(), time, rootHeight,
+                    sibling.getNr(), time, Mutation.BRANCH_START,
                     mutation.site(), mutation.newState(), mutation.oldState()
             ));
         }
 
-        this.mutations.applyMutations(x, this.mutationLinker.linkMutations(newSubtreeMutations, rootHeight), this);
-        this.mutations.applyMutations(sibling, this.mutationLinker.linkMutations(newSiblingMutations, rootHeight), this);
+        this.mutations.applyMutations(x, this.mutationLinker.linkMutations(newSubtreeMutations), this);
+        this.mutations.applyMutations(sibling, this.mutationLinker.linkMutations(newSiblingMutations), this);
         this.updateRootSequence(root, newRootStates);
 
         // the path has the same length and differing sites in both directions

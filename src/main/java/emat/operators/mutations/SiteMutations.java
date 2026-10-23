@@ -18,7 +18,9 @@ public final class SiteMutations {
     /** Collects the mutations at the given site on the branch above the given node, sorted by descending height. */
     public static List<Mutation> collect(Mutations mutations, Node node, int site) {
         List<Mutation> siteMutations = new ArrayList<>();
-        for (Mutation mutation : mutations.getMutations(node)) {
+        List<Mutation> branchMutations = mutations.getMutations(node);
+        for (int i = 0; i < branchMutations.size(); i++) {
+            Mutation mutation = branchMutations.get(i);
             if (mutation.site() == site) {
                 siteMutations.add(mutation);
             }
@@ -41,7 +43,8 @@ public final class SiteMutations {
         }
 
         List<Mutation> newBranchMutations = new ArrayList<>();
-        for (Mutation mutation : branchMutations) {
+        for (int i = 0; i < branchMutations.size(); i++) {
+            Mutation mutation = branchMutations.get(i);
             if (mutation.site() != site) {
                 newBranchMutations.add(mutation);
             }

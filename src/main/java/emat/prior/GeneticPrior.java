@@ -235,7 +235,9 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
         List<Mutation> mutations = this.mutations.getMutations(root);
 
-        for (Mutation mutation : mutations) {
+        // index-based loops avoid allocating an iterator per branch, as the lists are immutable
+        for (int i = 0; i < mutations.size(); i++) {
+            Mutation mutation = mutations.get(i);
             branchLogP += Math.log(substitutionModelFrequencies[mutation.newState()])
                     - Math.log(substitutionModelFrequencies[mutation.oldState()]);
             rate += this.getEscapeRate(root, mutation.newState(), mutation.site())
@@ -258,7 +260,8 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
         // add the contribution of the explicit mutations
 
-        for (Mutation mutation : mutations) {
+        for (int i = 0; i < mutations.size(); i++) {
+            Mutation mutation = mutations.get(i);
             double mutationRate = this.getMutationRate(node, mutation.oldState(), mutation.newState(), mutation.site());
             branchLogP += Math.log(branchRate * mutationRate);
         }
@@ -268,7 +271,8 @@ public class GeneticPrior extends GenericTreeLikelihood {
         double totalMutationRate = this.getTotalMutationRate(parent);
         double previousHeight = parent.getHeight();
 
-        for (Mutation mutation : mutations) {
+        for (int i = 0; i < mutations.size(); i++) {
+            Mutation mutation = mutations.get(i);
             branchLogP -= branchRate * totalMutationRate * (previousHeight - mutation.time());
             totalMutationRate += this.getEscapeRate(node, mutation.newState(), mutation.site())
                     - this.getEscapeRate(node, mutation.oldState(), mutation.site());

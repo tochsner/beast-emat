@@ -48,11 +48,14 @@ public final class BranchTimeMapper {
         }
 
         List<Mutation> newBranchMutations = new ArrayList<>(branchMutations.size());
-        for (Mutation mutation : branchMutations) {
+        for (int i = 0; i < branchMutations.size(); i++) {
+            Mutation mutation = branchMutations.get(i);
             newBranchMutations.add(new Mutation(
                     mutation.nodeNr(),
                     mapHeight(mutation.time(), oldStartHeight, oldEndHeight, newStartHeight, newEndHeight),
-                    mapHeight(mutation.timeOfPreviousMutation(), oldStartHeight, oldEndHeight, newStartHeight, newEndHeight),
+                    mutation.isFirstAtSite()
+                            ? Mutation.BRANCH_START
+                            : mapHeight(mutation.timeOfPreviousMutation(), oldStartHeight, oldEndHeight, newStartHeight, newEndHeight),
                     mutation.site(), mutation.oldState(), mutation.newState()
             ));
         }

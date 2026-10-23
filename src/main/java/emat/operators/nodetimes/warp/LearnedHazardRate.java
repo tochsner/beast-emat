@@ -1,13 +1,5 @@
 package emat.operators.nodetimes.warp;
 
-import org.apache.commons.math4.legacy.core.Pair;
-import org.apache.commons.math4.legacy.fitting.leastsquares.LeastSquaresBuilder;
-import org.apache.commons.math4.legacy.fitting.leastsquares.LeastSquaresProblem;
-import org.apache.commons.math4.legacy.fitting.leastsquares.LevenbergMarquardtOptimizer;
-import org.apache.commons.math4.legacy.linear.Array2DRowRealMatrix;
-import org.apache.commons.math4.legacy.linear.ArrayRealVector;
-import org.apache.commons.math4.legacy.linear.RealMatrix;
-import org.apache.commons.math4.legacy.linear.RealVector;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -260,19 +252,9 @@ public class LearnedHazardRate {
 
         double ridgeRoot = Math.sqrt(RIDGE);
         try {
-            LeastSquaresProblem problem = new LeastSquaresBuilder()
-                    .start(start)
-                    .model(point -> this.evaluate(point, located, numKnotsTotal, numFeatures, numRidge, ridgeRoot))
-                    .target(target)
-                    .lazyEvaluation(false)
-                    .maxEvaluations(MAX_EVALUATIONS)
-                    .maxIterations(MAX_EVALUATIONS)
-                    .build();
-            double[] weights = new LevenbergMarquardtOptimizer()
-                    .withCostRelativeTolerance(FIT_TOLERANCE)
-                    .withParameterRelativeTolerance(FIT_TOLERANCE)
-                    .withOrthoTolerance(FIT_TOLERANCE)
-                    .optimize(problem).getPoint().toArray();
+            LevenbergMarquardtSolver solver = new LevenbergMarquardtSolver(
+                    point -> this.evaluate(point, located, numKnotsTotal, numFeatures, numRidge, ridgeRoot), target, FIT_TOLERANCE, MAX_EVALUATIONS);
+            double[] weights = solver.solve(start).point();
 
             for (double weight : weights) {
                 if (!Double.isFinite(weight)) {
@@ -442,9 +424,8 @@ public class LearnedHazardRate {
      * Returns the modelled log densities and their derivatives with respect to the weights, followed by the ridge
      * terms. The log rate at a knot is the product of the features and the weights of the knot.
      */
-    private Pair<RealVector, RealMatrix> evaluate(RealVector point, List<Located> located, int numKnotsTotal,
-                                                  int numFeatures, int numRidge, double ridgeRoot) {
-        double[] weights = point.toArray();
+    private LevenbergMarquardtSolver.Evaluation evaluate(double[] weights, List<Located> located, int numKnotsTotal,
+                                                         int numFeatures, int numRidge, double ridgeRoot) {
         int numRows = located.size() + numRidge;
         double[] values = new double[numRows];
         double[][] jacobian = new double[numRows][weights.length];
@@ -521,7 +502,7 @@ public class LearnedHazardRate {
             }
         }
 
-        return new Pair<>(new ArrayRealVector(values, false), new Array2DRowRealMatrix(jacobian, false));
+        return new LevenbergMarquardtSolver.Evaluation(values, jacobian);
     }
 
     /** Returns (exp(d) - 1) / d, the mean of exp(x d) over x from zero to one. */
@@ -541,7 +522,7 @@ public class LearnedHazardRate {
     }
 
     private double computeRmsResidual(double[] weights, List<Located> located, int numKnotsTotal, int numFeatures, double[] target) {
-        double[] model = this.evaluate(new ArrayRealVector(weights, false), located, numKnotsTotal, numFeatures, 0, 0.0).getFirst().toArray();
+        double[] model = this.evaluate(weights, located, numKnotsTotal, numFeatures, 0, 0.0).values();
         double squareSum = 0.0;
         for (int o = 0; o < located.size(); o++) {
             squareSum += (target[o] - model[o]) * (target[o] - model[o]);

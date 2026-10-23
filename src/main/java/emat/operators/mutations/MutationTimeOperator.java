@@ -72,7 +72,7 @@ public class MutationTimeOperator extends Operator {
             }
         }
 
-        double upperHeight = mutation.timeOfPreviousMutation();
+        double upperHeight = mutation.getTimeOfPreviousMutation(node.getParent().getHeight());
         double lowerHeight = nextMutationNr >= 0
                 ? branchMutations.get(nextMutationNr).time()
                 : node.getHeight();

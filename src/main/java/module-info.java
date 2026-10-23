@@ -23,6 +23,7 @@ open module my.beast.example {
     requires beast.base;
     requires org.apache.commons.statistics.distribution;
     requires org.apache.commons.math4.legacy;
+    requires ojalgo;
     requires java.xml;
     requires adaptiveoperators;
 

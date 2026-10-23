@@ -59,7 +59,7 @@ public class BranchReformOperatorTest {
 
         Node b = this.getNodeByTaxon(tree, "B");
         List<List<Mutation>> history = this.createEmptyHistory(tree);
-        history.get(b.getNr()).add(new Mutation(b.getNr(), 0.5, 1.0, 0, A, C));
+        history.get(b.getNr()).add(new Mutation(b.getNr(), 0.5, Mutation.BRANCH_START, 0, A, C));
         mutations.initialiseMutations(history);
 
         GeneticPrior geneticPrior = this.createGeneticPrior(alignment, tree, mutations);
@@ -112,8 +112,8 @@ public class BranchReformOperatorTest {
 
         List<List<Mutation>> history = this.createEmptyHistory(tree);
         history.get(nodeNr).addAll(List.of(
-                new Mutation(nodeNr, 0.7, 1.0, 0, A, G),
-                new Mutation(nodeNr, 0.5, 1.0, 1, C, A),
+                new Mutation(nodeNr, 0.7, Mutation.BRANCH_START, 0, A, G),
+                new Mutation(nodeNr, 0.5, Mutation.BRANCH_START, 1, C, A),
                 new Mutation(nodeNr, 0.3, 0.7, 0, G, T)
         ));
         mutations.initialiseMutations(history);
@@ -166,7 +166,7 @@ public class BranchReformOperatorTest {
 
         Node a = this.getNodeByTaxon(tree, "A");
         List<List<Mutation>> history = this.createEmptyHistory(tree);
-        history.get(a.getNr()).add(new Mutation(a.getNr(), 0.5, 1.0, 0, A, C));
+        history.get(a.getNr()).add(new Mutation(a.getNr(), 0.5, Mutation.BRANCH_START, 0, A, C));
         mutations.initialiseMutations(history);
 
         GeneticPrior geneticPrior = this.createGeneticPrior(alignment, tree, mutations);

@@ -61,13 +61,18 @@ public class IntervalScaleOperator extends ScaleTunedOperator {
 
         double actualScaler = lengthAfter / lengthBefore;
 
-        for (Scalable down : this.downInput.get()) {
-            int dimension = down.scale(1.0 / actualScaler);
-            logHastingsRatio -= dimension * Math.log(actualScaler);
-        }
-        for (Scalable up : this.upInput.get()) {
-            int dimension = up.scale(actualScaler);
-            logHastingsRatio += dimension * Math.log(actualScaler);
+        // scale returns the log Jacobian, i.e. dimension * log(factor)
+
+        try {
+            for (Scalable down : this.downInput.get()) {
+                logHastingsRatio += down.scale(1.0 / actualScaler);
+            }
+            for (Scalable up : this.upInput.get()) {
+                logHastingsRatio += up.scale(actualScaler);
+            }
+        } catch (IllegalArgumentException e) {
+            // a scalable rejected the move
+            return Double.NEGATIVE_INFINITY;
         }
 
         return logHastingsRatio;

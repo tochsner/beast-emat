@@ -233,14 +233,14 @@ public class MissingCladeGibbsOperator extends Operator {
 
         int branch = -1;
         int state = topState;
-        double previousHeight = 0.0;
+        double previousHeight = Mutation.BRANCH_START;
         for (double position = Randomizer.nextExponential(eventRate); position < totalLength; position += Randomizer.nextExponential(eventRate)) {
             int index = this.findBranch(branchStarts, position);
             Node node = cladeNodes.get(index);
             if (index != branch) {
                 branch = index;
                 state = this.getStartState(node, top, topState);
-                previousHeight = node.getParent().getHeight();
+                previousHeight = Mutation.BRANCH_START;
             }
 
             int newState = this.forwardSimulator.sampleUniformisedJump(state);
