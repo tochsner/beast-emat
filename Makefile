@@ -1,4 +1,4 @@
-.PHONY: xmls run stop plots
+.PHONY: xmls run stop plots plots_hpc
 
 xmls:
 	rm -f data/xmls/*
@@ -12,3 +12,6 @@ stop:
 
 plots:
 	cd python && uv run src/benchmarks/convergence_time.py
+
+plots_hpc:
+	sbatch scripts/run_plots.sh
