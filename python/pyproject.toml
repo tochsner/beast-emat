@@ -27,4 +27,4 @@ build-backend = "hatchling.build"
 packages = ["src"]
 
 [tool.uv.sources]
-nexwick = { path = "../../../Tools/nexwick/nexwick-py", editable = true }
+nexwick = { git = "https://github.com/tochsner/nexwick.git", rev = "7716e68a2d7a0977974fbef2f9074abeb0585bd4", subdirectory = "nexwick-py" }

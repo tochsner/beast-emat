@@ -6,6 +6,11 @@
 
 # setup
 
+# re-run under bash when started by another shell, e.g. sh, which may not support pipefail
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

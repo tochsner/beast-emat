@@ -568,7 +568,7 @@ wheels = [
 [[package]]
 name = "nexwick"
 version = "0.1.1"
-source = { editable = "../../../Tools/nexwick/nexwick-py" }
+source = { git = "https://github.com/tochsner/nexwick.git?subdirectory=nexwick-py&rev=7716e68a2d7a0977974fbef2f9074abeb0585bd4#7716e68a2d7a0977974fbef2f9074abeb0585bd4" }
 
 [[package]]
 name = "numpy"
@@ -905,7 +905,7 @@ requires-dist = [
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "mappy", specifier = ">=2.31" },
     { name = "matplotlib", specifier = ">=3.11.2" },
-    { name = "nexwick", editable = "../../../Tools/nexwick/nexwick-py" },
+    { name = "nexwick", git = "https://github.com/tochsner/nexwick.git?subdirectory=nexwick-py&rev=7716e68a2d7a0977974fbef2f9074abeb0585bd4" },
     { name = "numpy", specifier = ">=2.5.3" },
     { name = "pandas", specifier = ">=3.0.6" },
     { name = "pip", specifier = ">=26.2.1" },
