@@ -48,7 +48,7 @@
 
     <map name="Cauchy" >beast.base.spec.inference.distribution.Cauchy</map>
 
-    <run id="mcmc" spec="MCMC" chainLength="{{CHAIN_LENGTH}}" stateFileName="data/out/$(filebase)-$(seed).state">
+    <run id="mcmc" spec="MCMC" chainLength="{{CHAIN_LENGTH}}">
         <state id="state" spec="State" storeEvery="{{STORE_EVERY}}">
             <tree id="Tree.t:{{ID}}" spec="beast.base.evolution.tree.Tree" name="stateNode">
                 <trait id="dateTrait.t:{{ID}}" spec="beast.base.evolution.tree.TraitSet" dateFormat="yyyy-M-dd" traitname="date">
