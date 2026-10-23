@@ -126,7 +126,7 @@
         </operator>
         <operator id="SiteHistoryGibbsOperator.{{ID}}" spec="emat.operators.mutations.SiteHistoryGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" siteSelection="PARSIMONY" pseudoCount="0.5" weight="7.0"/>
         <operator id="MissingCladeGibbsOperator.{{ID}}" spec="emat.operators.mutations.MissingCladeGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0"/>
-        <operator id="LearnedWarpOperator.{{ID}}" spec="emat.operators.nodetimes.warp.LearnedWarpOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" treePrior="@CoalescentExponential.t:{{ID}}" hazard="COALESCENT" numKnots="20" minObservations="400" branchRateModel="@StrictClock.c:{{ID}}" weight="10.0">
+        <operator id="LearnedWarpOperator.{{ID}}" spec="emat.operators.nodetimes.warp.LearnedWarpOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" treePrior="@CoalescentExponential.t:{{ID}}" hazard="AUTO" numKnots="20" minObservations="400" branchRateModel="@StrictClock.c:{{ID}}" weight="10.0">
             <adapter spec="adapters.BasicAdapter">
                 <transform spec="transforms.RealScalarLogTransform" parameter="@ePopSize.t:{{ID}}"/>
                 <transform spec="transforms.RealScalarIdentityTransform" parameter="@growthRate.t:{{ID}}"/>
