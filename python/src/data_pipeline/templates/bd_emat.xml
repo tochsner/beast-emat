@@ -155,7 +155,7 @@
         <operator id="samplingProportionEpiScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@samplingProportionEpi.t:{{ID}}" scaleFactor="0.1" upper="10.0" weight="3.0"/>
         <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="10.0"/>
         <operator id="MutationDirectedSprOperator.{{ID}}" spec="emat.operators.topology.MutationDirectedSprOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" fullExplorationProbability="0.01" weight="25.0" scaleWeightByLogNumTips="true" windowProbability="0.3" subtreeSelection="BRANCH_LENGTH"/>
-        <operator id="BatchNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.batch.BatchNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0" treePriorKnots="20">
+        <operator id="BatchNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.batch.BatchNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0" treePriorKnots="20">
             <adapter spec="adapters.BasicAdapter">
                 <transform spec="transforms.RealScalarLogTransform" parameter="@originBDMMPrime.t:{{ID}}"/>
                 <transform spec="transforms.RealVectorLogTransform" parameter="@becomeUninfectiousRateEpi.t:{{ID}}"/>
@@ -163,7 +163,7 @@
                 <transform spec="transforms.RealVectorIdentityTransform" parameter="@samplingProportionEpi.t:{{ID}}"/>
             </adapter>
         </operator>
-        <operator id="SiteHistoryGibbsOperator.{{ID}}" spec="emat.operators.mutations.SiteHistoryGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" siteSelection="PARSIMONY" pseudoCount="0.5" weight="10.0"/>
+        <operator id="SiteHistoryGibbsOperator.{{ID}}" spec="emat.operators.mutations.SiteHistoryGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" siteSelection="PARSIMONY" pseudoCount="0.5" weight="15.0"/>
         <operator id="MissingCladeGibbsOperator.{{ID}}" spec="emat.operators.mutations.MissingCladeGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0"/>
         <operator id="LearnedWarpOperator.{{ID}}" spec="emat.operators.nodetimes.warp.LearnedWarpOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" treePrior="@BDMMPrime.t:{{ID}}" hazard="AUTO" numKnots="20" minObservations="400" branchRateModel="@StrictClock.c:{{ID}}" weight="10.0">
             <adapter spec="adapters.BasicAdapter">
