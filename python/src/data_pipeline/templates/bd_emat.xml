@@ -22,7 +22,7 @@
 
     <map name="OneOnX" >beast.base.inference.distribution.OneOnX</map>
 
-    <run id="mcmc" spec="mcmc.OperatorTimingMCMC" chainLength="{{CHAIN_LENGTH}}">
+    <run id="mcmc" spec="mcmc.ESSStoppingMCMC" chainLength="{{CHAIN_LENGTH}}">
         <state id="state" spec="State" storeEvery="{{STORE_EVERY}}">
             <tree id="Tree.t:{{ID}}" spec="emat.tree.IncrementalStoreTree" name="stateNode">
                 <trait id="dateTrait.t:{{ID}}" spec="beast.base.evolution.tree.TraitSet" dateFormat="yyyy-M-dd" traitname="date">
