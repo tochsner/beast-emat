@@ -6,3 +6,4 @@ data
 plots
 tests/
 .DS_Store
+*.state

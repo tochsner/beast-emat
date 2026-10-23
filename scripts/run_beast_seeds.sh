@@ -46,4 +46,4 @@ module load stack/2024-06 openjdk/25.0.2_10 maven/3.8.4
 
 seed=$SLURM_ARRAY_TASK_ID
 echo "running $BEAST_XML with seed $seed"
-mvn ${MVN_FLAGS:--q} exec:exec -Dbeast.args="-seed $seed $BEAST_XML"
+mvn ${MVN_FLAGS:--q} exec:exec -Dbeast.args="-seed $seed $BEAST_XML -overwrite"
