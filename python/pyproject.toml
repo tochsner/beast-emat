@@ -16,6 +16,7 @@ dependencies = [
     "mappy>=2.31",
     "tqdm>=4.70.1",
     "adjusttext>=1.4.0",
+    "xlrd>=2.0.2",
 ]
 
 [build-system]
