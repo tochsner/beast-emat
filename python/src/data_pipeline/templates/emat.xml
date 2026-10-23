@@ -145,7 +145,7 @@
                 <transform spec="transforms.RealScalarIdentityTransform" parameter="@growthRate.t:{{ID}}" />
             </adapter>
         </operator>
-        <logger id="tracelog" spec="Logger" fileName="out/$(filebase)-$(seed).log" logEvery="1000" model="@posterior" sanitiseHeaders="true" sort="smart">
+        <logger id="tracelog" spec="Logger" fileName="data/out/$(filebase)-$(seed).log" logEvery="1000" model="@posterior" sanitiseHeaders="true" sort="smart">
             <log idref="posterior"/>
             <log idref="likelihood"/>
             <log idref="prior"/>
@@ -164,7 +164,7 @@
             <log idref="likelihood"/>
             <log idref="prior"/>
         </logger>
-        <logger id="treelog.t:{{ID}}" spec="Logger" fileName="out/$(filebase)-$(tree)-$(seed).trees" logEvery="1000" mode="tree">
+        <logger id="treelog.t:{{ID}}" spec="Logger" fileName="data/out/$(filebase)-$(tree)-$(seed).trees" logEvery="1000" mode="tree">
             <log id="TreeWithMetaDataLogger.t:{{ID}}" spec="beast.base.spec.evolution.TreeWithMetaDataLogger" tree="@Tree.t:{{ID}}"/>
         </logger>
         <operatorschedule id="OperatorSchedule" spec="OperatorSchedule"/>

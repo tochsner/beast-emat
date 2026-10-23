@@ -207,7 +207,7 @@
             <skylineParameter idref="samplingRateSPCanonical.t:{{ID}}"/>
         </operator>
         <operator id="birthRateChangeTimesCanonicalOperator.t:{{ID}}" spec="bdmmprime.util.operators.ChangeTimeOperator" changeTimes="@birthRateChangeTimesCanonical.t:{{ID}}" weight="3.0"/>
-        <logger id="tracelog" spec="Logger" fileName="out/$(filebase).log" logEvery="1000" model="@posterior" sanitiseHeaders="true" sort="smart">
+        <logger id="tracelog" spec="Logger" fileName="data/out/$(filebase)-$(seed).log" logEvery="1000" model="@posterior" sanitiseHeaders="true" sort="smart">
             <log idref="posterior"/>
             <log idref="likelihood"/>
             <log idref="prior"/>
@@ -227,10 +227,10 @@
             <log idref="likelihood"/>
             <log idref="prior"/>
         </logger>
-        <logger id="treelog.t:{{ID}}" spec="Logger" fileName="out/$(filebase)-$(tree).trees" logEvery="1000" mode="tree">
+        <logger id="treelog.t:{{ID}}" spec="Logger" fileName="data/out/$(filebase)-$(tree)-$(seed).trees" logEvery="1000" mode="tree">
             <log id="TreeWithMetaDataLogger.t:{{ID}}" spec="beast.base.spec.evolution.TreeWithMetaDataLogger" tree="@Tree.t:{{ID}}"/>
         </logger>
-        <logger id="trajLogger.t:{{ID}}" spec="bdmmprime.util.OptionalLogger" fileName="$(filebase).$(tree).traj" logEvery="1000">
+        <logger id="trajLogger.t:{{ID}}" spec="bdmmprime.util.OptionalLogger" fileName="$(filebase).$(tree)-$(seed).traj" logEvery="1000">
             <log id="typedTraj.t:{{ID}}" spec="bdmmprime.trajectories.SampledTrajectory" bdmmDistrib="@BDMMPrime.t:{{ID}}" startTypePriorProbs="@startTypePriorProbs.t:{{ID}}" useTauLeaping="true">
                 <typeMappedTree id="typeMappedTree.t:{{ID}}" spec="bdmmprime.mapping.TypeMappedTree" bdmmDistrib="@BDMMPrime.t:{{ID}}" mapOnInit="false" remapOnLog="true" startTypePriorProbs="@startTypePriorProbs.t:{{ID}}" typeLabel="type" typeTraitSet="@typeTraitSet.t:{{ID}}" untypedTree="@Tree.t:{{ID}}"/>
             </log>
