@@ -95,6 +95,7 @@ fasta_from_genbank nextstrain_community_cevo-public_ReVSeq-project_hmpv_all_geno
 
 generate zika zika
 generate ebola ebola
+generate sars-757 sars-757
 generate cog-uk-sars-cov-2-aligned-5000 sars5000
 generate cog-uk-sars-cov-2-aligned-10000 sars10000
 generate cog-uk-sars-cov-2-aligned-20000 sars20000
