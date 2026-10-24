@@ -1,4 +1,4 @@
-.PHONY: xmls run stop plots plots_hpc
+.PHONY: xmls run stop plots plots_hpc summary
 
 xmls:
 	rm -f data/xmls/*
@@ -15,3 +15,6 @@ plots:
 
 plots_hpc:
 	sbatch scripts/run_plots.sh
+
+summary:
+	cd python && uv run -m src.data_pipeline.summary
