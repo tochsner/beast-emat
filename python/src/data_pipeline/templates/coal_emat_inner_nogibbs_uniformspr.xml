@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?><beast beautitemplate='Standard' beautistatus='' namespace="beast.core:beast.evolution.alignment:beast.evolution.tree.coalescent:beast.core.util:beast.evolution.nuc:beast.evolution.operators:beast.evolution.sitemodel:beast.evolution.substitutionmodel:beast.base.evolution.alignment:beast.pkgmgmt:beast.base.core:beast.base.inference:beast.base.evolution.tree.coalescent:beast.pkgmgmt:beast.base.core:beast.base.inference.util:beast.evolution.nuc:beast.base.evolution.operator:beast.base.inference.operator:beast.base.evolution.sitemodel:beast.base.evolution.substitutionmodel:beast.base.evolution.likelihood" required="" version="2.8">
+
+    {{ALIGNMENT}}
+
+    <data id="{{ID}}.variable" spec="emat.alignment.ConstantSiteFilteredAlignment" data="@{{ID}}" constant="false"/>
+
+    <data id="{{ID}}.constant" spec="emat.alignment.ConstantSiteFilteredAlignment" data="@{{ID}}" constant="true"/>
+
+    <map name="Uniform" >beast.base.inference.distribution.Uniform</map>
+
+    <map name="Exponential" >beast.base.inference.distribution.Exponential</map>
+
+    <map name="LogNormal" >beast.base.inference.distribution.LogNormalDistributionModel</map>
+
+    <map name="Normal" >beast.base.inference.distribution.Normal</map>
+
+    <map name="Beta" >beast.base.inference.distribution.Beta</map>
+
+    <map name="Gamma" >beast.base.inference.distribution.Gamma</map>
+
+    <map name="LaplaceDistribution" >beast.base.inference.distribution.LaplaceDistribution</map>
+
+    <map name="prior" >beast.base.inference.distribution.Prior</map>
+
+    <map name="InverseGamma" >beast.base.inference.distribution.InverseGamma</map>
+
+    <map name="OneOnX" >beast.base.inference.distribution.OneOnX</map>
+
+    <run id="mcmc" spec="mcmc.ESSStoppingMCMC" chainLength="{{CHAIN_LENGTH}}">
+        <state id="state" spec="State" storeEvery="{{STORE_EVERY}}">
+            <tree id="Tree.t:{{ID}}" spec="emat.tree.IncrementalStoreTree" name="stateNode">
+                <trait id="dateTrait.t:{{ID}}" spec="beast.base.evolution.tree.TraitSet" dateFormat="yyyy-M-dd" traitname="date">
+{{DATE_TRAIT}}
+                    <taxa id="TaxonSet.{{ID}}" spec="TaxonSet">
+                        <alignment idref="{{ID}}"/>
+                    </taxa>
+                </trait>
+                <taxonset idref="TaxonSet.{{ID}}"/>
+            </tree>
+            <stateNode id="clockRate.c:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="1.0"/>
+            <stateNode id="kappa.s:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="2.0"/>
+            <stateNode id="freqParameter.s:{{ID}}" spec="beast.base.spec.inference.parameter.SimplexParam" dimension="4" domain="UnitInterval">0.25 0.25 0.25 0.25</stateNode>
+            <stateNode id="ePopSize.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="0.3"/>
+            <stateNode id="growthRate.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real" value="3.0E-4"/>
+            <stateNode id="mutations.{{ID}}" spec="emat.state.Mutations" tree="@Tree.t:{{ID}}" alignment="@{{ID}}.variable"/>
+        </state>
+        <init id="RandomTree.t:{{ID}}" spec="RandomTree" estimate="false" initial="@Tree.t:{{ID}}" taxa="@{{ID}}">
+            <populationModel id="ConstantPopulation0.t:{{ID}}" spec="ConstantPopulation">
+                <parameter id="randomPopSize.t:{{ID}}" spec="parameter.RealParameter" name="popSize">1.0</parameter>
+            </populationModel>
+        </init>
+        <init id="ParsimonyMutationsInitialiser.{{ID}}" spec="emat.initalisation.ParsimonyMutationsInitialiser" mutations="@mutations.{{ID}}"/>
+        <distribution id="posterior" spec="CompoundDistribution">
+            <distribution id="prior" spec="CompoundDistribution">
+                <distribution id="CoalescentExponential.t:{{ID}}" spec="Coalescent">
+                    <populationModel id="ExponentialGrowth.t:{{ID}}" spec="beast.base.spec.evolution.tree.coalescent.ExponentialGrowth" growthRate="@growthRate.t:{{ID}}" popSize="@ePopSize.t:{{ID}}"/>
+                    <treeIntervals id="TreeIntervals.t:{{ID}}" spec="emat.tree.InsertionSortTreeIntervals" tree="@Tree.t:{{ID}}"/>
+                </distribution>
+                <distribution id="ClockPrior.c:{{ID}}" spec="beast.base.spec.inference.distribution.Gamma" param="@clockRate.c:{{ID}}">
+                    <alpha id="RealScalarParam.0" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real" estimate="false" value="0.01"/>
+                    <theta id="RealScalarParam.1" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" estimate="false" value="100.0"/>
+                </distribution>
+                <distribution id="FrequenciesPrior.s:{{ID}}" spec="beast.base.spec.inference.distribution.Dirichlet" param="@freqParameter.s:{{ID}}">
+                    <alpha id="RealVectorParam.0" spec="beast.base.spec.inference.parameter.RealVectorParam" dimension="4" domain="PositiveReal" estimate="false">4.0 4.0 4.0 4.0</alpha>
+                </distribution>
+                <distribution id="GrowthRatePrior.t:{{ID}}" spec="beast.base.spec.inference.distribution.Laplace" param="@growthRate.t:{{ID}}">
+                    <mu id="RealScalarParam.75" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real" estimate="false" value="0.001"/>
+                    <scale id="RealScalarParam.76" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" estimate="false" value="30.701135"/>
+                </distribution>
+                <distribution id="KappaPrior.s:{{ID}}" spec="beast.base.spec.inference.distribution.LogNormal" param="@kappa.s:{{ID}}">
+                    <M id="RealScalarParam.15" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real" estimate="false" value="1.0"/>
+                    <S id="RealScalarParam.16" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" estimate="false" value="1.25"/>
+                </distribution>
+                <distribution id="ePopSizePrior.t:{{ID}}" spec="beast.base.spec.inference.distribution.Gamma" param="@ePopSize.t:{{ID}}">
+                    <alpha id="RealScalarParam.73" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real" estimate="false" value="0.01"/>
+                    <theta id="RealScalarParam.74" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" estimate="false" value="100.0"/>
+                </distribution>
+            </distribution>
+            <distribution id="likelihood" spec="CompoundDistribution">
+                <distribution id="geneticPrior.{{ID}}" spec="emat.prior.GeneticPrior" data="@{{ID}}.variable" mutations="@mutations.{{ID}}" tree="@Tree.t:{{ID}}">
+                    <siteModel id="SiteModel.s:{{ID}}" spec="beast.base.spec.evolution.sitemodel.SiteModel" gammaCategoryCount="1">
+                        <mutationRate id="mutationRate.s:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" estimate="false" value="1.0"/>
+                        <shape id="gammaShape.s:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" estimate="false" value="1.0"/>
+                        <proportionInvariant id="proportionInvariant.s:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="UnitInterval" estimate="false"/>
+                        <substModel id="hky.s:{{ID}}" spec="beast.base.spec.evolution.substitutionmodel.HKY" kappa="@kappa.s:{{ID}}">
+                            <frequencies id="estimatedFreqs.s:{{ID}}" spec="beast.base.spec.evolution.substitutionmodel.Frequencies" frequencies="@freqParameter.s:{{ID}}"/>
+                        </substModel>
+                    </siteModel>
+                    <branchRateModel id="StrictClock.c:{{ID}}" spec="beast.base.spec.evolution.branchratemodel.StrictClockModel" clock.rate="@clockRate.c:{{ID}}"/>
+                </distribution>
+                <distribution id="constantSitesLikelihood.{{ID}}" spec="beast.base.spec.evolution.likelihood.TreeLikelihood" data="@{{ID}}.constant" tree="@Tree.t:{{ID}}" siteModel="@SiteModel.s:{{ID}}" branchRateModel="@StrictClock.c:{{ID}}" useAmbiguities="false" implementation="beast.base.spec.evolution.likelihood.TreeLikelihood"/>
+            </distribution>
+        </distribution>
+        <operator id="StrictClockRateScaler.c:{{ID}}" spec="beast.base.spec.evolution.operator.AdaptableOperatorSampler" weight="1.5">
+            <parameter idref="clockRate.c:{{ID}}"/>
+            <operator id="AVMNOperator.{{ID}}" spec="beast.base.spec.evolution.operator.AdaptableVarianceMultivariateNormalOperator" allowNonsense="true" beta="0.05" burnin="400" initial="800" weight="0.1">
+                <transformations id="AVMNSumTransform.{{ID}}" spec="beast.base.spec.inference.operator.Transform$LogConstrainedSumTransform">
+                    <f idref="freqParameter.s:{{ID}}"/>
+                </transformations>
+                <transformations id="AVMNLogTransform.{{ID}}" spec="beast.base.spec.inference.operator.Transform$LogTransform">
+                    <f idref="clockRate.c:{{ID}}"/>
+                    <f idref="kappa.s:{{ID}}"/>
+                </transformations>
+                <transformations id="AVMNNoTransform.{{ID}}" spec="beast.base.spec.inference.operator.Transform$NoTransform"/>
+            </operator>
+            <operator id="StrictClockRateScalerX.c:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@clockRate.c:{{ID}}" scaleFactor="0.1" upper="10.0" weight="0.1"/>
+        </operator>
+        <operator id="KappaScaler.s:{{ID}}" spec="beast.base.spec.evolution.operator.AdaptableOperatorSampler" weight="0.5">
+            <parameter idref="kappa.s:{{ID}}"/>
+            <operator idref="AVMNOperator.{{ID}}"/>
+            <operator id="KappaScalerX.s:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@kappa.s:{{ID}}" scaleFactor="0.1" upper="10.0" weight="0.1"/>
+        </operator>
+        <operator id="FrequenciesExchanger.s:{{ID}}" spec="beast.base.spec.evolution.operator.AdaptableOperatorSampler" weight="0.5">
+            <parameter idref="freqParameter.s:{{ID}}"/>
+            <operator idref="AVMNOperator.{{ID}}"/>
+            <operator id="FrequenciesExchangerX.s:{{ID}}" spec="beast.base.spec.inference.operator.DeltaExchangeOperator" delta="0.01" weight="0.1">
+                <parameter idref="freqParameter.s:{{ID}}"/>
+            </operator>
+        </operator>
+        <operator id="ePopSizeGrowthRateUpDown.t:{{ID}}" spec="beast.base.spec.evolution.operator.UpDownOperator" weight="3.0" scaleFactor="0.1">
+            <up idref="ePopSize.t:{{ID}}"/>
+            <up idref="growthRate.t:{{ID}}"/>
+        </operator>
+        <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="10.0"/>
+        <operator id="MutationDirectedSprOperator.{{ID}}" spec="emat.operators.topology.MutationDirectedSprOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" fullExplorationProbability="0.01" weight="25.0" scaleWeightByLogNumTips="true" windowProbability="0.0" subtreeSelection="UNIFORM"/>
+        <operator id="InnerNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.InnerNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="30.0"/>
+        <operator id="ClockIntervalScaleOperator.{{ID}}" spec="emat.operators.nodetimes.IntervalScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="5.0">
+            <down idref="clockRate.c:{{ID}}"/>
+        </operator>
+        <operator id="BranchReformOperator.{{ID}}" spec="emat.operators.mutations.BranchReformOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0"/>
+        <operator id="MutationTimeOperator.{{ID}}" spec="emat.operators.mutations.MutationTimeOperator" mutations="@mutations.{{ID}}" weight="15.0"/>
+        <operator id="ePopSizeScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@ePopSize.t:{{ID}}" upper="10.0" weight="3.0"/>
+        <operator id="GrowthRateRandomWalk.t:{{ID}}" spec="beast.base.spec.inference.operator.RealRandomWalkOperator" scalar="@growthRate.t:{{ID}}" scaleFactor="0.1" weight="3.0"/>
+        <operator id="LinCombSliceOperator.{{ID}}" spec="slice.LinCombSliceOperator" weight="2.0">
+            <adapter spec="adapters.BasicAdapter">
+                <transform spec="transforms.RealScalarLogTransform" parameter="@ePopSize.t:{{ID}}" />
+                <transform spec="transforms.RealScalarIdentityTransform" parameter="@growthRate.t:{{ID}}" />
+            </adapter>
+        </operator>
+        <logger id="tracelog" spec="Logger" fileName="data/out/$(filebase)-$(seed).log" logEvery="1000" model="@posterior" sanitiseHeaders="true" sort="smart">
+            <log idref="posterior"/>
+            <log idref="likelihood"/>
+            <log idref="prior"/>
+            <log idref="geneticPrior.{{ID}}"/>
+            <log idref="constantSitesLikelihood.{{ID}}"/>
+            <log id="TreeHeight.t:{{ID}}" spec="beast.base.evolution.tree.TreeStatLogger" tree="@Tree.t:{{ID}}"/>
+            <log idref="clockRate.c:{{ID}}"/>
+            <log idref="kappa.s:{{ID}}"/>
+            <log idref="freqParameter.s:{{ID}}"/>
+            <log idref="CoalescentExponential.t:{{ID}}"/>
+            <log idref="ePopSize.t:{{ID}}"/>
+            <log idref="growthRate.t:{{ID}}"/>
+            <log idref="mutations.{{ID}}"/>
+        </logger>
+        <logger id="screenlog" spec="Logger" logEvery="1000">
+            <log idref="posterior"/>
+            <log idref="likelihood"/>
+            <log idref="prior"/>
+        </logger>
+        <logger id="treelog.t:{{ID}}" spec="Logger" fileName="data/out/$(filebase)-$(tree)-$(seed).trees" logEvery="1000" mode="tree">
+            <log id="TreeWithMetaDataLogger.t:{{ID}}" spec="beast.base.spec.evolution.TreeWithMetaDataLogger" tree="@Tree.t:{{ID}}"/>
+        </logger>
+        <operatorschedule id="OperatorSchedule" spec="OperatorSchedule"/>
+    </run>
+
+</beast>

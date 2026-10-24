@@ -78,17 +78,21 @@ def get_seconds_per_sample(log_path: Path, last_sample: int) -> float:
     stat = log_path.stat()
     start_timestamp = get_job_start(log_path)
     if start_timestamp is None:
-        start_timestamp = stat.st_birthtime
+        # st_birthtime is not available on all platforms (e.g. Linux), where the oldest known timestamp is used instead
+        start_timestamp = getattr(stat, "st_birthtime", min(stat.st_ctime, stat.st_mtime))
 
     # the log file is last modified when the last sample was logged
-    elapsed_seconds = stat.st_mtime - start_timestamp
+    elapsed_seconds = max(stat.st_mtime - start_timestamp, 1.0)
     print(f"{log_path.name}: estimated {elapsed_seconds / last_sample * 1e6:.0f}s per million samples from the file timestamps")
     return elapsed_seconds / last_sample
 
 
 def get_num_sequences(method: str, experiment: str) -> int:
     """Returns the number of sequences, read from the header of a tree file of the run."""
-    tree_path = next(OUT_PATH.glob(f"{method}_{experiment}-*.trees"))
+    tree_path = next(OUT_PATH.glob(f"{method}_{experiment}-*.trees"), None)
+    if tree_path is None:
+        raise ValueError(f"no tree file found for {method}_{experiment}")
+
     with open(tree_path) as file:
         for line in file:
             match = re.search(r"ntax\s*=\s*(\d+)", line, re.IGNORECASE)
@@ -108,10 +112,14 @@ def load_logs(log_paths: dict[tuple[str, int], Path]) -> dict[tuple[str, int], p
             continue
 
         # a run that is still in progress may have a partially written last line
-        log_df = pd.read_csv(log_path, comment="#", delimiter="\t").dropna()
+        try:
+            log_df = pd.read_csv(log_path, comment="#", delimiter="\t").dropna()
+        except (pd.errors.EmptyDataError, pd.errors.ParserError) as error:
+            print(f"Skipping unreadable log file: {log_path.name} ({error})")
+            continue
 
         # Also skip if the log_df is empty after reading (empty header file, etc)
-        if log_df.empty:
+        if log_df.empty or "Sample" not in log_df.columns or log_df["Sample"].iloc[-1] <= 0:
             print(f"Skipping log file (no data after parsing): {log_path.name}")
             continue
 
@@ -123,10 +131,21 @@ def load_logs(log_paths: dict[tuple[str, int], Path]) -> dict[tuple[str, int], p
     return logs
 
 
-def get_ess_trajectory(log_df: pd.DataFrame) -> pd.DataFrame:
-    """Computes the ESS of each parameter at evenly spaced points in time, as if the run were stopped there."""
-    # constant columns are left out, as their ESS is undefined
-    columns = [column for column in log_df.columns if column not in ["Sample", "minutes", "mutations.excessCount"] and log_df[column].std() > 0]
+def get_ess_trajectory(log_df: pd.DataFrame) -> pd.DataFrame | None:
+    """Computes the ESS of each parameter at evenly spaced points in time, as if the run were stopped there.
+
+    Returns None if the log is too short or has no varying parameters.
+    """
+    # constant and non-numeric columns are left out, as their ESS is undefined
+    columns = [
+        column for column in log_df.columns
+        if column not in ["Sample", "minutes", "mutations.excessCount"]
+        and pd.api.types.is_numeric_dtype(log_df[column]) and log_df[column].std() > 0
+    ]
+    if len(log_df) < 20 or not columns:
+        print("Skipping run with too few samples or no varying parameters")
+        return None
+
     values = log_df[columns].to_numpy(dtype=float)
     minutes = log_df["minutes"].to_numpy()
 
@@ -330,13 +349,31 @@ def plot_relative_convergence_time(method: str, convergence_df: pd.DataFrame, ex
 def analyse_method(method: str, log_paths: dict[tuple[str, int], Path]) -> None:
     """Analyses all seeds of all experiments of a method and plots the results, prefixed with the method."""
     logs = load_logs(log_paths)
-    experiments = sorted({experiment for experiment, _ in logs})
-    num_sequences = {experiment: get_num_sequences(method, experiment) for experiment in experiments}
+
+    # experiments without a readable tree file cannot be placed on the plots
+    num_sequences = {}
+    for experiment in sorted({experiment for experiment, _ in logs}):
+        try:
+            num_sequences[experiment] = get_num_sequences(method, experiment)
+        except (StopIteration, ValueError, OSError) as error:
+            print(f"Skipping experiment {method}_{experiment}: {error}")
+    logs = {key: log_df for key, log_df in logs.items() if key[0] in num_sequences}
+    experiments = sorted(num_sequences)
 
     # each experiment keeps the same color in all plots of the method
-    experiment_colors = dict(zip(experiments, sns.color_palette("deep")))
+    # (the palette is sized to the experiments, as zip would silently drop experiments beyond the palette length)
+    palette = sns.color_palette("deep") if len(experiments) <= 10 else sns.color_palette("husl", len(experiments))
+    experiment_colors = dict(zip(experiments, palette))
 
     ess_trajectories = {key: get_ess_trajectory(log_df) for key, log_df in logs.items()}
+    ess_trajectories = {key: trajectory for key, trajectory in ess_trajectories.items() if trajectory is not None}
+    if not ess_trajectories:
+        print(f"\n{method}: no usable runs, skipping")
+        return
+    experiments = [experiment for experiment in experiments if any(experiment == key[0] for key in ess_trajectories)]
+    experiment_colors = {experiment: experiment_colors[experiment] for experiment in experiments}
+    num_sequences = {experiment: num_sequences[experiment] for experiment in experiments}
+
     convergence_df = get_convergence_df(ess_trajectories)
     summary_df = get_summary_df(convergence_df, num_sequences)
 
