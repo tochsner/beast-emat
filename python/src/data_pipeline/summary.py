@@ -10,12 +10,22 @@ from src.data_pipeline.fasta import iterate_records
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
+
+def character_table(characters):
+    """Returns a boolean lookup table over byte values that is true for the given characters."""
+    table = np.zeros(256, dtype=bool)
+    table[list(characters)] = True
+    return table
+
+
 # pairs compared per dataset before switching to random sampling of pairs
 MAX_PAIRS = 50_000
 SEED = 0
 
-NUCLEOTIDE_TABLE = np.zeros(256, dtype=bool)
-NUCLEOTIDE_TABLE[list(b"ACGT")] = True
+NUCLEOTIDE_TABLE = character_table(b"ACGT")
+# gaps and unknown bases count as missing, the other IUPAC codes as ambiguous
+MISSING_TABLE = character_table(b"-.?NX")
+AMBIGUOUS_TABLE = character_table(b"RYSWKMBDHV")
 
 
 def main():
@@ -36,26 +46,37 @@ def main():
 
 
 def summarise_dataset(path, rng):
-    """Returns the summary row of a FASTA file: name, sequence count, length range and mean pairwise distance."""
+    """Returns the summary row of a FASTA file: name, sequence count, length range, missing and ambiguous fractions, mean pairwise distance and fully constant sites."""
     sequences = [sequence.upper() for _, sequence in iterate_records(path)]
     if not sequences:
         raise ValueError(f"no sequences in {path}")
 
     lengths = [len(sequence) for sequence in sequences]
+    encoded = [np.frombuffer(sequence.encode("ascii"), dtype=np.uint8) for sequence in sequences]
     row = {
         "name": path.stem,
         "sequences": len(sequences),
         "min_length": min(lengths),
         "max_length": max(lengths),
+        "missing_fraction": compute_character_fraction(encoded, MISSING_TABLE),
+        "ambiguous_fraction": compute_character_fraction(encoded, AMBIGUOUS_TABLE),
         "mean_distance": None,
         "pair_count": None,
+        "constant_sites": None,
     }
 
     # distances between sites only make sense for aligned sequences of equal length
     if row["min_length"] == row["max_length"]:
-        encoded = [np.frombuffer(sequence.encode("ascii"), dtype=np.uint8) for sequence in sequences]
         row["mean_distance"], row["pair_count"] = compute_mean_pairwise_distance(encoded, rng)
+        row["constant_sites"] = count_fully_constant_sites(encoded)
     return row
+
+
+def compute_character_fraction(encoded, table):
+    """Returns the fraction of all characters over all sequences that are marked in the lookup `table`."""
+    total = sum(len(sequence) for sequence in encoded)
+    marked = sum(np.count_nonzero(table[sequence]) for sequence in encoded)
+    return marked / total
 
 
 def compute_mean_pairwise_distance(encoded, rng):
@@ -93,20 +114,32 @@ def sample_pairs(count, rng):
     return zip(first.tolist(), second.tolist())
 
 
+def count_fully_constant_sites(encoded):
+    """Returns the number of sites where every sequence has the same nucleotide, without any gaps or ambiguous bases.
+
+    The sequences must be aligned, so they all have the same length.
+    """
+    matrix = np.stack(encoded)
+    nucleotides = NUCLEOTIDE_TABLE[matrix].all(axis=0)
+    identical = (matrix == matrix[0]).all(axis=0)
+    return int(np.count_nonzero(nucleotides & identical))
+
+
 def format_table(rows):
     """Returns the summary rows as a markdown table."""
     lines = [
-        "| Dataset | Sequences | Min length | Max length | Mean pairwise distance | Pairs compared |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Dataset | Sequences | Min length | Max length | Missing fraction | Ambiguous fraction | Mean pairwise distance | Pairs compared | Fully constant sites |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         if row["mean_distance"] is None:
             distance, pairs = "n/a", "n/a"
         else:
             distance, pairs = f"{row['mean_distance']:.4f}", row["pair_count"]
+        constant = "n/a" if row["constant_sites"] is None else row["constant_sites"]
         lines.append(
             f"| {row['name']} | {row['sequences']} | {row['min_length']} | {row['max_length']} "
-            f"| {distance} | {pairs} |"
+            f"| {row['missing_fraction']:.4f} | {row['ambiguous_fraction']:.4f} | {distance} | {pairs} | {constant} |"
         )
     return "\n".join(lines) + "\n"
 
