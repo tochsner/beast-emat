@@ -168,9 +168,9 @@
                 <transform spec="transforms.RealVectorIdentityTransform" parameter="@samplingProportionEpi.t:{{ID}}"/>
             </adapter>
         </operator>
-        <operator id="SiteHistoryGibbsOperator.{{ID}}" spec="emat.operators.mutations.SiteHistoryGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" siteSelection="PARSIMONY" pseudoCount="0.5" weight="15.0"/>
-        <operator id="MissingCladeGibbsOperator.{{ID}}" spec="emat.operators.mutations.MissingCladeGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0"/>
-        <operator id="LearnedWarpOperator.{{ID}}" spec="emat.operators.nodetimes.warp.LearnedWarpOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" treePrior="@BDMMPrime.t:{{ID}}" hazard="AUTO" numKnots="20" minObservations="400" branchRateModel="@StrictClock.c:{{ID}}" weight="10.0">
+        <operator id="SiteHistoryGibbsOperator.{{ID}}" spec="emat.operators.mutations.SiteHistoryGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" siteSelection="PARSIMONY" pseudoCount="0.5" weight="20.0"/>
+        <operator id="MissingCladeGibbsOperator.{{ID}}" spec="emat.operators.mutations.MissingCladeGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="20.0"/>
+        <operator id="LearnedWarpOperator.{{ID}}" spec="emat.operators.nodetimes.warp.LearnedWarpOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" treePrior="@BDMMPrime.t:{{ID}}" hazard="AUTO" numKnots="20" minObservations="400" branchRateModel="@StrictClock.c:{{ID}}" weight="15.0">
             <adapter spec="adapters.BasicAdapter">
                 <transform spec="transforms.RealScalarLogTransform" parameter="@originBDMMPrime.t:{{ID}}"/>
                 <transform spec="transforms.RealVectorLogTransform" parameter="@becomeUninfectiousRateEpi.t:{{ID}}"/>
