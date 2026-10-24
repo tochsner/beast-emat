@@ -9,10 +9,18 @@ https://www.ncbi.nlm.nih.gov/books/NBK25499/.
 The FASTA headers have the form `accession|YYYY-MM-DD`, with the date taken from
 the table. Dates given as a range, such as `2022-12-31 (2022-07-26 - 2022-12-31)`,
 use their first part. Sequences without a valid date are skipped.
+
+The sequences are aligned with MAFFT, see https://mafft.cbrc.jp/alignment/software/,
+which must be on the PATH. With `--reference`, each sequence is aligned to the reference
+genome, otherwise the sequences are aligned to each other. The output is then an aligned
+FASTA file of equal-length sequences with gaps. Pass `--no-align` to keep the unaligned
+sequences.
 """
 
 import argparse
 import csv
+import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -71,6 +79,37 @@ def parse_fasta(text):
     return records
 
 
+def run_mafft(options, inputs, num_threads):
+    """Returns the aligned FASTA text that MAFFT writes for the given options and input files."""
+    result = subprocess.run(
+        ["mafft", *options, "--thread", str(num_threads), *inputs],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    return result.stdout
+
+
+def add_to_reference(path, reference, num_threads):
+    """Returns the sequences of a FASTA file aligned to a reference, without the reference itself."""
+    with open(reference) as f:
+        reference_name = parse_fasta(f.read())[0][0].split()[0]
+    aligned = parse_fasta(run_mafft(["--6merpair", "--addfragments", str(path)], [str(reference)], num_threads))
+    sequences = [(header, sequence) for header, sequence in aligned if header.split()[0] != reference_name]
+    columns = [i for i in range(len(sequences[0][1])) if any(sequence[i] != "-" for _, sequence in sequences)]
+    return "".join(f">{header}\n{''.join(sequence[i] for i in columns)}\n" for header, sequence in sequences)
+
+
+def align_fasta(path, reference, num_threads):
+    """Aligns the sequences of a FASTA file with MAFFT, replacing the file with the alignment."""
+    if reference:
+        aligned = add_to_reference(path, reference, num_threads)
+    else:
+        aligned = run_mafft(["--parttree", "--retree", "2"], [str(path)], num_threads)
+    with open(path, "w") as f:
+        f.write(aligned)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("metadata", help="tab-separated metadata table with accession and date columns")
@@ -80,6 +119,9 @@ def main():
     parser.add_argument(
         "--delay", type=float, default=0.4, help="seconds between requests (NCBI allows 3 per second without an API key)"
     )
+    parser.add_argument("--no-align", dest="align", action="store_false", help="keep the sequences unaligned")
+    parser.add_argument("--reference", help="reference genome FASTA to align the sequences to")
+    parser.add_argument("--threads", type=int, default=os.cpu_count(), help="MAFFT threads used for the alignment")
     args = parser.parse_args()
 
     dates = read_dates(args.metadata)
@@ -111,6 +153,10 @@ def main():
 
     print(f"skipped {num_missing} accessions not found in GenBank", file=sys.stderr)
     print(f"skipped {num_undated} sequences without a valid date", file=sys.stderr)
+
+    if args.align:
+        print(f"aligning sequences in {args.output}", file=sys.stderr)
+        align_fasta(args.output, args.reference, args.threads)
 
 
 if __name__ == "__main__":

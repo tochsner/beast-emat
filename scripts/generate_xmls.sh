@@ -57,11 +57,15 @@ fasta_from_seqset() {
     fi
 }
 
-# fasta_from_genbank <metadata file> <fasta name>: downloads the GenBank sequences listed in a metadata table
+# fasta_from_genbank <metadata file> <fasta name> [reference FASTA]: downloads and aligns the GenBank sequences listed in a metadata table
 fasta_from_genbank() {
     local fasta="data/fasta/$2.fasta"
     if [[ ! -f "$fasta" ]]; then
-        run_python src.data_pipeline.download.genbank_to_fasta "data/genbank/$1" "$fasta"
+        if [[ -n "${3:-}" ]]; then
+            run_python src.data_pipeline.download.genbank_to_fasta "data/genbank/$1" "$fasta" --reference "$3"
+        else
+            run_python src.data_pipeline.download.genbank_to_fasta "data/genbank/$1" "$fasta"
+        fi
     fi
 }
 
@@ -82,8 +86,8 @@ fasta_from_cog cog-uk-sars-cov-2-aligned-20000 20000
 for seqset in data/seqsets/*-seqset.json; do
     fasta_from_seqset "$seqset"
 done
-fasta_from_genbank nextstrain_community_cevo-public_ReVSeq-project_adenovirus_b1_whole_metadata.tsv genbank-adenovirus-b1
-fasta_from_genbank nextstrain_community_cevo-public_ReVSeq-project_hmpv_all_genome_metadata.tsv genbank-hmpv
+fasta_from_genbank nextstrain_community_cevo-public_ReVSeq-project_adenovirus_b1_whole_metadata.tsv genbank-adenovirus-b1 "data/reference/adenovirus_b1_ NC_011203.1.fasta"
+fasta_from_genbank nextstrain_community_cevo-public_ReVSeq-project_hmpv_all_genome_metadata.tsv genbank-hmpv "data/reference/hmpv_ NC_039199.1.fasta"
 
 # xml generation
 
