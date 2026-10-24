@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class ConstantSiteFilteredAlignmentTest {
 
@@ -22,16 +22,19 @@ public class ConstantSiteFilteredAlignmentTest {
         assertArrayEquals(new int[]{1, 3, 4, 6, 7}, this.createFilteredAlignment(alignment, false).indices());
     }
 
-    /** Checks that a selection without any site is rejected. */
+    /** Checks that a selection without any site gives an alignment without sites. */
     @Test
-    public void testEmptySelectionIsRejected() {
+    public void testEmptySelectionHasNoSites() {
         Alignment alignment = new Alignment();
         alignment.initByName(
                 "sequence", List.of(new Sequence("A", "AC"), new Sequence("B", "AC")),
                 "dataType", "nucleotide"
         );
 
-        assertThrows(RuntimeException.class, () -> this.createFilteredAlignment(alignment, false));
+        ConstantSiteFilteredAlignment variableSites = this.createFilteredAlignment(alignment, false);
+        assertEquals(0, variableSites.getSiteCount());
+        assertEquals(0, variableSites.getPatternCount());
+        assertEquals(2, this.createFilteredAlignment(alignment, true).getSiteCount());
     }
 
     private Alignment createAlignment() {

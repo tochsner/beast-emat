@@ -10,7 +10,7 @@ import java.util.stream.IntStream;
 @Description("Alignment that keeps the sites of another alignment that are fully constant, or all other sites. A " +
         "site is fully constant if every taxon has the same unambiguous state there, so no taxon has a gap or " +
         "missing data. The same alignment with opposite flags splits the sites into two disjoint alignments that " +
-        "together contain every site.")
+        "together contain every site. The alignment has no sites if there are none of the requested kind.")
 public class ConstantSiteFilteredAlignment extends FilteredAlignment {
 
     final public Input<Boolean> constantInput = new Input<>("constant", "if true, keep the fully constant sites, otherwise keep all other sites", true);
@@ -32,10 +32,6 @@ public class ConstantSiteFilteredAlignment extends FilteredAlignment {
         int[] selectedSites = IntStream.range(0, alignment.getSiteCount())
                 .filter(site -> isConstantPattern[alignment.getPatternIndex(site)] == constant)
                 .toArray();
-
-        if (selectedSites.length == 0) {
-            throw new IllegalArgumentException("No sites are selected with constant=" + constant + ".");
-        }
 
         this.filterInput.setValue(this.getFilterSpec(selectedSites), this);
         super.initAndValidate();
@@ -62,6 +58,11 @@ public class ConstantSiteFilteredAlignment extends FilteredAlignment {
 
     /** Returns the filter specification of the given sorted sites, with consecutive sites merged into ranges. */
     private String getFilterSpec(int[] sortedSites) {
+        // the filter needs a non-empty specification, and the empty range 2-1 selects no sites
+        if (sortedSites.length == 0) {
+            return "2-1";
+        }
+
         StringBuilder filterSpec = new StringBuilder();
 
         int rangeStart = 0;
