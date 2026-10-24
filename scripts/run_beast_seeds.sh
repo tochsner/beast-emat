@@ -19,6 +19,7 @@ if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
     script=$(realpath "$0")
     cd "$(dirname "$script")/.."
     mkdir -p data/logs data/out
+    rm -rf data/logs/* data/out/*
 
     for xml in data/xmls/coal_emat_*.xml; do
         sbatch --job-name="beast-$(basename "$xml" .xml)" --export=ALL,BEAST_XML="$xml" "$script"

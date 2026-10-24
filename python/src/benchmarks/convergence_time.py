@@ -218,7 +218,7 @@ def format_minutes(minutes: float) -> str:
 
 def plot_convergence_time(method: str, summary_df: pd.DataFrame, experiment_colors: dict[str, tuple]) -> None:
     """Plots the mean running time of each run against its number of sequences, with the range over its seeds."""
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=(9, 5))
 
     for _, row in summary_df.iterrows():
         ax.errorbar(
@@ -251,7 +251,7 @@ def plot_convergence_time(method: str, summary_df: pd.DataFrame, experiment_colo
     adjust_text(
         texts, x=summary_df["num_sequences"], y=summary_df["minutes"], ax=ax,
         arrowprops={"arrowstyle": "-", "color": "#bbbbbb", "linewidth": 0.8, "shrinkB": 6},
-        expand=(1.3, 1.6),
+        expand=(0.8, 0.8),
     )
 
     fig.savefig(PLOTS_PATH / f"{method}_convergence_time.png", dpi=200, bbox_inches="tight")
@@ -311,7 +311,7 @@ def plot_relative_convergence_time(method: str, convergence_df: pd.DataFrame, ex
         columns=mean_df.columns,
     )
 
-    fig, ax = plt.subplots(figsize=(6, 0.28 * len(mean_df) + 1))
+    fig, ax = plt.subplots(figsize=(10, 0.5 * len(mean_df) + 1))
 
     sns.heatmap(
         mean_df, cmap="Blues", vmin=0, vmax=1, annot=annot_df, fmt="", annot_kws={"fontsize": 7},
