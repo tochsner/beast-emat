@@ -7,6 +7,7 @@ import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
+import beast.base.spec.evolution.tree.coalescent.BayesianSkyline;
 import beast.base.spec.type.IntVector;
 import beast.base.spec.type.RealScalar;
 import beast.base.spec.type.RealVector;
@@ -22,7 +23,8 @@ import java.util.List;
 @Description("Displaces the heights of a batch of internal nodes one after the other, each within the range that keeps " +
     "the topology and the times of all mutations on its adjacent branches. Every node draws its new height from the conditional of " +
     "the genetic prior times a learned quadratic approximation of the tree prior, so only the error of that approximation " +
-    "enters the acceptance probability.")
+    "enters the acceptance probability. If the tree prior is a Bayesian skyline, the approximation is replaced by the exact " +
+    "conditional of the skyline, so that the tree prior cancels as well.")
 public class BatchNodeDisplacementOperator extends TreeOperator {
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "");
@@ -34,6 +36,7 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     final public Input<List<StateNode>> treePriorParametersInput = new Input<>("treePriorParameter", "real scalar, real vector or integer vector parameters of the tree prior, which the approximation of the tree prior may depend on", new ArrayList<>());
     final public Input<List<Adapter>> adaptersInput = new Input<>("adapter", "adapters of further parameters of the tree prior, whose mutable and immutable values the approximation of the tree prior may depend on. The operator never moves them", new ArrayList<>());
     final public Input<Integer> treePriorWarmUpInput = new Input<>("treePriorWarmUp", "the number of proposals after which the approximation of the tree prior is fitted for the first time", 500);
+    final public Input<BayesianSkyline> skylineInput = new Input<>("skyline", "a Bayesian skyline tree prior, whose exact conditional density of the height of a node is drawn from instead of a learned approximation of the tree prior");
     final public Input<Boolean> scaleWeightByLogNumTipsInput = new Input<>("scaleWeightByLogNumTips", "whether to scale the weight by the natural logarithm of the number of tips n, so that the operator is selected with weight * ln(n). Otherwise, the weight is used as given", false);
 
     // the adapters have no use for the node, as the parameters of the tree prior do not belong to one
@@ -57,6 +60,9 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     // the nodes of the last batch, in the order they were displaced in
     private Node[] batchNodes;
     private int batchCount;
+
+    // the exact conditional of the skyline, or null if the tree prior is not a skyline
+    private SkylineConditional skylineConditional;
 
     // the approximation of the tree prior, or null to draw from the genetic prior only
     private LearnedTreePrior treePriorApproximation;
@@ -91,7 +97,10 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         this.setCoercableParameterValue(this.batchSizeInput.get());
         this.weightFactor = this.scaleWeightByLogNumTipsInput.get() ? Math.log(this.tree.getLeafNodeCount()) : 1.0;
 
-        if (this.learnTreePriorInput.get()) {
+        BayesianSkyline skyline = this.skylineInput.get();
+        if (skyline != null) {
+            this.skylineConditional = new SkylineConditional(this.tree, skyline.popSizeParamInput.get(), skyline.groupSizeParamInput.get());
+        } else if (this.learnTreePriorInput.get()) {
             this.treePriorParameterValues = new double[this.countTreePriorParameterValues()];
             this.treePriorApproximation = new GlobalSplineTreePriorApproximation(
                     this.treePriorKnotsInput.get(), this.treePriorParameterValues.length, this.treePriorWarmUpInput.get());
@@ -138,6 +147,10 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         if (this.treePriorApproximation != null) {
             this.readTreePriorParameterValues();
             this.treePriorApproximation.startObservation();
+        }
+
+        if (this.skylineConditional != null) {
+            this.skylineConditional.startBatch();
         }
 
         double logHastingsRatio = 0.0;
@@ -218,7 +231,8 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
      * Displaces the given node within the given range and returns the log Hastings ratio. The new height h is
      * drawn from the density ∝ exp(-k h + a(h)). The first factor is the genetic prior as a function of the height,
      * which is exact as the mutations on the three neighbouring branches keep their times. The second factor
-     * approximates the tree prior by the learned approximation a. Neither the range nor the rates depend on the
+     * approximates the tree prior by the learned approximation a, or is the exact conditional of a skyline tree
+     * prior given the heights of all other nodes. Neither the range nor the rates depend on the
      * height of the node, so the reverse move draws from the same density and the normalisation cancels.
      */
     private double displace(Node node, double minHeight, double maxHeight) {
@@ -231,7 +245,11 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
 
         // sample new node height
 
-        if (this.treePriorApproximation == null) {
+        if (this.skylineConditional != null) {
+            newHeight = this.skylineConditional.sampleHeight(oldHeight, geneticDecayRate, minHeight, maxHeight);
+            approximateChange = this.skylineConditional.getChange(oldHeight, newHeight);
+            this.skylineConditional.moveNode(oldHeight, newHeight);
+        } else if (this.treePriorApproximation == null) {
             newHeight = TruncatedDensitySampler.sampleExponential(geneticDecayRate, minHeight, maxHeight);
         } else {
             newHeight = this.treePriorApproximation.sampleHeight(geneticDecayRate, minHeight, maxHeight, this.treePriorParameterValues);

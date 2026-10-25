@@ -21,7 +21,7 @@ import java.util.function.IntUnaryOperator;
  * Single sites are mapped with the rate μ̃ = s μ̄ on a branch with rate scale s, where μ̄ is
  * the average escape rate of the rate matrix Q, which does not depend on the end states.
  */
-public class JukesCantorStochasticMapping implements StochasticMapping {
+public class JukesCantorStochasticMapping implements StochasticMapping, BranchHistorySampler {
 
     // safeguard against endless rejection sampling caused by numerical problems
     private static final int MAX_ATTEMPTS = 100000;
@@ -124,15 +124,12 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
     /* Branch Histories */
 
     /**
-     * Samples the history of every site on the branch above the given node, which runs from
-     * the start height down to the end height, under Jukes-Cantor with the given rate μ̃ of
-     * leaving any state. The differing sites map every site whose end states differ to its
-     * states at the start and at the end. At every other site, both end states equal the
-     * state returned by the given lookup, which is only called for the rare sites that
-     * receive mutations. The mutations are sorted by descending height.
+     * Samples the history of every site on the branch under Jukes-Cantor with the rate μ̃ of
+     * leaving any state, which ignores the rate scale of the model.
      */
-    public List<Mutation> sampleBranchHistory(int nodeNr, double branchStartHeight, double branchEndHeight, double mutationRate,
-                                              SiteChanges differingSites, IntUnaryOperator agreeingStates) {
+    @Override
+    public List<Mutation> sampleBranchHistory(int nodeNr, double branchStartHeight, double branchEndHeight, double rateScale,
+                                              double jukesCantorRate, SiteChanges differingSites, IntUnaryOperator agreeingStates) {
         // evolution runs forwards in time from the branch start to the branch end
 
         double duration = branchStartHeight - branchEndHeight;
@@ -143,7 +140,7 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
             return branchMutations;
         }
 
-        double expectedJumps = mutationRate * duration;
+        double expectedJumps = jukesCantorRate * duration;
 
         // map the sites whose end states differ one by one, as they need at least one jump
 
@@ -166,17 +163,17 @@ public class JukesCantorStochasticMapping implements StochasticMapping {
 
     /**
      * Computes the log probability α_mut that sampleBranchHistory proposes the given history
-     * on a branch, given the number of sites whose end states differ. This is the
-     * Jukes-Cantor density of the history, e^{-μ̃ L t} (μ̃ / (K - 1))^M for M mutations and K
-     * states, divided by the transition probabilities of all sites.
+     * on a branch. This is the Jukes-Cantor density of the history, e^{-μ̃ L t} (μ̃ / (K - 1))^M
+     * for M mutations and K states, divided by the transition probabilities of all sites.
      */
+    @Override
     public double computeLogBranchHistoryDensity(List<Mutation> branchMutations, double branchStartHeight, double branchEndHeight,
-                                                 double mutationRate, int numDifferingSites) {
+                                                 double rateScale, double jukesCantorRate, int numDifferingSites) {
         double duration = branchStartHeight - branchEndHeight;
-        double expectedJumps = mutationRate * duration;
+        double expectedJumps = jukesCantorRate * duration;
 
         double logDensity = -expectedJumps * this.numSites
-                + branchMutations.size() * Math.log(mutationRate / (this.numStates - 1.0));
+                + branchMutations.size() * Math.log(jukesCantorRate / (this.numStates - 1.0));
         return logDensity - this.computeLogEndStatesProbability(expectedJumps, this.numSites, numDifferingSites);
     }
 

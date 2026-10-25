@@ -19,7 +19,7 @@ import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
-import emat.stochasticmapping.StochasticMapping;
+import emat.stochasticmapping.SubstitutionProcess;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Deque;
@@ -313,7 +313,7 @@ public class SiteHistoryGibbsOperatorTest {
         // compare with the exact posterior
 
         double[] rateMatrix = setup.geneticPrior.computeRateMatrix();
-        double[] transitionProbabilities = StochasticMapping.computeTransitionProbabilities(hky.getEigenDecomposition(null), BRANCH_LENGTH);
+        double[] transitionProbabilities = SubstitutionProcess.computeTransitionProbabilities(hky.getEigenDecomposition(null), BRANCH_LENGTH);
         double[] stationaryFrequencies = hky.getFrequencies();
 
         double[] rootProbabilities = new double[4];
@@ -355,8 +355,8 @@ public class SiteHistoryGibbsOperatorTest {
         double integral = 0.0;
         for (int i = 0; i <= numIntervals; i++) {
             double s = i * stepSize;
-            double[] startProbabilities = StochasticMapping.computeTransitionProbabilities(substitutionModel.getEigenDecomposition(null), s);
-            double[] endProbabilities = StochasticMapping.computeTransitionProbabilities(substitutionModel.getEigenDecomposition(null), time - s);
+            double[] startProbabilities = SubstitutionProcess.computeTransitionProbabilities(substitutionModel.getEigenDecomposition(null), s);
+            double[] endProbabilities = SubstitutionProcess.computeTransitionProbabilities(substitutionModel.getEigenDecomposition(null), time - s);
 
             double integrand = 0.0;
             for (int c = 0; c < 4; c++) {
@@ -372,7 +372,7 @@ public class SiteHistoryGibbsOperatorTest {
         }
         integral *= stepSize / 3.0;
 
-        double[] transitionProbabilities = StochasticMapping.computeTransitionProbabilities(substitutionModel.getEigenDecomposition(null), time);
+        double[] transitionProbabilities = SubstitutionProcess.computeTransitionProbabilities(substitutionModel.getEigenDecomposition(null), time);
         return integral / transitionProbabilities[startState * 4 + endState];
     }
 

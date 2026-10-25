@@ -16,6 +16,7 @@ import emat.state.Mutations;
 import emat.stochasticmapping.JukesCantorStochasticMapping;
 import emat.stochasticmapping.SiteHistorySampler;
 import emat.stochasticmapping.StochasticMapping;
+import emat.stochasticmapping.SubstitutionProcess;
 import emat.stochasticmapping.UniformisedStochasticMapping;
 
 import java.util.ArrayList;
@@ -66,7 +67,8 @@ public class SiteHistoryGibbsOperator extends Operator {
         this.mutations = this.mutationsInput.get();
         this.tree = this.mutations.getTree();
         this.sampler = this.samplerInput.get();
-        this.siteHistorySampler = new SiteHistorySampler(this.mutations, this.geneticPriorInput.get(), this.createStochasticMapping());
+        SubstitutionProcess process = new SubstitutionProcess(this.geneticPriorInput.get(), this.tree, this.mutations.getAlignment().getMaxStateCount());
+        this.siteHistorySampler = new SiteHistorySampler(this.mutations, process, this.createStochasticMapping());
         this.cumulativeSiteWeights = this.computeCumulativeSiteWeights();
     }
 

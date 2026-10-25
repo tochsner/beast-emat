@@ -23,7 +23,8 @@ import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.mutations.BranchReformOperator;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
-import emat.stochasticmapping.StochasticMapping;
+import emat.stochasticmapping.HistorySampler;
+import emat.stochasticmapping.SubstitutionProcess;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -109,6 +110,20 @@ public class SubtreePruneRegraftPosteriorTest {
      */
     @Test
     public void testHkyTopologiesMatchPosterior() {
+        this.assertHkyTopologiesMatchPosterior(HistorySampler.JUKES_CANTOR);
+    }
+
+    /**
+     * Runs mdSPR under HKY like testHkyTopologiesMatchPosterior, with the hybrid history
+     * sampler, which chooses the sites with mutations under Jukes-Cantor and samples their
+     * histories exactly under HKY.
+     */
+    @Test
+    public void testHybridHkyTopologiesMatchPosterior() {
+        this.assertHkyTopologiesMatchPosterior(HistorySampler.HYBRID);
+    }
+
+    private void assertHkyTopologiesMatchPosterior(HistorySampler historySampler) {
         Randomizer.setSeed(23);
 
         Frequencies frequencies = new Frequencies();
@@ -119,7 +134,7 @@ public class SubtreePruneRegraftPosteriorTest {
 
         MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
         mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
-                "windowProbability", 0.5, "fullExplorationProbability", 0.1);
+                "windowProbability", 0.5, "fullExplorationProbability", 0.1, "historySampler", historySampler);
 
         int[] rootSequence = new int[SEQUENCES[0].length()];
         for (int site = 0; site < rootSequence.length; site++) {
@@ -196,7 +211,7 @@ public class SubtreePruneRegraftPosteriorTest {
     }
 
     private void assertSubtreeSelectionMatchesPosterior(MutationDirectedSprOperator.SubtreeSelection subtreeSelection) {
-        Randomizer.setSeed(1);
+        Randomizer.setSeed(2);
         Setup setup = this.createSetup();
 
         MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
@@ -355,7 +370,7 @@ public class SubtreePruneRegraftPosteriorTest {
         // every branch on the grid is a multiple of half a step long
         this.halfStepTransitionProbabilities = new double[2 * NUM_GRID_POINTS + 1][];
         for (int k = 0; k <= 2 * NUM_GRID_POINTS; k++) {
-            this.halfStepTransitionProbabilities[k] = StochasticMapping.computeTransitionProbabilities(
+            this.halfStepTransitionProbabilities[k] = SubstitutionProcess.computeTransitionProbabilities(
                     setup.substitutionModel().getEigenDecomposition(null), setup.clockRate() * k * 0.5 * step
             );
         }

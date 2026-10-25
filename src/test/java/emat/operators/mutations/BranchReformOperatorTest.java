@@ -14,6 +14,7 @@ import emat.helper.MutationPaths;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
+import emat.stochasticmapping.HistorySampler;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -42,6 +43,16 @@ public class BranchReformOperatorTest {
      */
     @Test
     public void testRootStateMatchesPosterior() {
+        this.assertRootStateMatchesPosterior(HistorySampler.JUKES_CANTOR);
+    }
+
+    /** Checks the root state like testRootStateMatchesPosterior, with the path resampled by the hybrid history sampler. */
+    @Test
+    public void testHybridRootStateMatchesPosterior() {
+        this.assertRootStateMatchesPosterior(HistorySampler.HYBRID);
+    }
+
+    private void assertRootStateMatchesPosterior(HistorySampler historySampler) {
         Randomizer.setSeed(1);
 
         Alignment alignment = new Alignment();
@@ -64,7 +75,7 @@ public class BranchReformOperatorTest {
 
         GeneticPrior geneticPrior = this.createGeneticPrior(alignment, tree, mutations);
         BranchReformOperator operator = new BranchReformOperator();
-        operator.initByName("weight", 1.0, "mutations", mutations, "geneticPrior", geneticPrior);
+        operator.initByName("weight", 1.0, "mutations", mutations, "geneticPrior", geneticPrior, "historySampler", historySampler);
 
         // run the chain and count the root states
 

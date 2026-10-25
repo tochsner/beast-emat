@@ -18,7 +18,7 @@ import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
-import emat.stochasticmapping.StochasticMapping;
+import emat.stochasticmapping.SubstitutionProcess;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -169,7 +169,7 @@ public class MissingCladeGibbsOperatorTest {
         }
 
         double[] getTransitionProbabilities(double time) {
-            return StochasticMapping.computeTransitionProbabilities(this.substitutionModel.getEigenDecomposition(null), time);
+            return SubstitutionProcess.computeTransitionProbabilities(this.substitutionModel.getEigenDecomposition(null), time);
         }
 
     }

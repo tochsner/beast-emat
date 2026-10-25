@@ -2,11 +2,9 @@ package emat.stochasticmapping;
 
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.datatype.DataType;
-import beast.base.evolution.substitutionmodel.EigenDecomposition;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.util.Randomizer;
-import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
 
@@ -21,18 +19,13 @@ import java.util.Map;
  * distribution under the model of the genetic prior, given the tip data (stochastic
  * mapping). Per site, the genetic prior is the density of a CTMC path on the tree, so a draw
  * consists of sampling the node states by pruning and then the path on every branch given
- * its end states. The probability of a history is its genetic prior divided by the
- * likelihood of the tip data, which computeLogLikelihood provides. The node states are
- * always sampled exactly, while the paths on the branches are sampled by the given
- * stochastic mapping, which may approximate the model.
+ * its end states. The node states are always sampled exactly, while the paths on the
+ * branches are sampled by the given stochastic mapping, which may approximate the model.
  */
 public class SiteHistorySampler {
 
-    // the product of rescaling factors below which computePartials takes its log, far above underflow
-    private static final double MIN_SCALE = 1e-200;
-
     final Mutations mutations;
-    final GeneticPrior geneticPrior;
+    final SubstitutionProcess process;
     final TreeInterface tree;
     final Alignment alignment;
     final DataType dataType;
@@ -40,11 +33,8 @@ public class SiteHistorySampler {
 
     final int numStates;
 
-    // the model of the current tree: Q, its eigen decomposition, the site rate, and the root frequencies
+    // the rate matrix Q that the stochastic mapping and the cached transition probabilities were computed for
     double[] rateMatrix;
-    EigenDecomposition eigenDecomposition;
-    double siteRate;
-    double[] frequencies;
 
     // the nodes of the current tree in post-order, so that every child precedes its parent,
     // and the stack used to collect them
@@ -70,9 +60,9 @@ public class SiteHistorySampler {
     final int[] knownStates;
     final int[] nodeStates;
 
-    public SiteHistorySampler(Mutations mutations, GeneticPrior geneticPrior, StochasticMapping stochasticMapping) {
+    public SiteHistorySampler(Mutations mutations, SubstitutionProcess process, StochasticMapping stochasticMapping) {
         this.mutations = mutations;
-        this.geneticPrior = geneticPrior;
+        this.process = process;
         this.tree = mutations.getTree();
         this.alignment = mutations.getAlignment();
         this.dataType = this.alignment.getDataType();
@@ -107,7 +97,7 @@ public class SiteHistorySampler {
     }
 
     /**
-     * Takes the current model from the genetic prior and computes the transition
+     * Takes the current model from the substitution process and computes the transition
      * probabilities of every branch of the current tree. This has to be called again
      * whenever the tree or the model changes. The transition probabilities of a branch are
      * only recomputed if Q or the scaled length of the branch has changed.
@@ -115,7 +105,12 @@ public class SiteHistorySampler {
     public void updateModel() {
         Node root = this.tree.getRoot();
 
-        this.updateRateMatrix();
+        this.process.update();
+        if (this.process.getRateMatrix() != this.rateMatrix) {
+            this.rateMatrix = this.process.getRateMatrix();
+            this.stochasticMapping.setRateMatrix(this.rateMatrix);
+            Arrays.fill(this.durations, Double.NaN);
+        }
         this.computePostOrder(root);
 
         for (Node node : this.postOrderNodes) {
@@ -123,33 +118,6 @@ public class SiteHistorySampler {
                 this.updateTransitionProbabilities(node);
             }
         }
-    }
-
-    /**
-     * Takes the current model from the genetic prior and computes the transition
-     * probabilities of the branches above the given nodes only, skipping the root. This is
-     * a cheaper alternative to updateModel for sampling the history on a part of the tree.
-     */
-    public void updateModel(List<Node> branchNodes) {
-        this.updateRateMatrix();
-
-        for (Node node : branchNodes) {
-            if (!node.isRoot()) {
-                this.updateTransitionProbabilities(node);
-            }
-        }
-    }
-
-    /**
-     * Computes the log likelihood of the tip data summed over all sites, i.e. the genetic
-     * prior marginalised over all histories that are compatible with the tips.
-     */
-    public double computeLogLikelihood() {
-        double logLikelihood = 0.0;
-        for (int patternIndex = 0; patternIndex < this.alignment.getPatternCount(); patternIndex++) {
-            logLikelihood += this.alignment.getPatternWeight(patternIndex) * this.computePatternLogLikelihood(patternIndex);
-        }
-        return logLikelihood;
     }
 
     /**
@@ -167,7 +135,7 @@ public class SiteHistorySampler {
 
         double[] rootWeights = new double[this.numStates];
         for (int state = 0; state < this.numStates; state++) {
-            rootWeights[state] = this.frequencies[state] * this.partials[root.getNr()][state];
+            rootWeights[state] = this.process.getFrequencies()[state] * this.partials[root.getNr()][state];
         }
         this.nodeStates[root.getNr()] = StochasticMapping.sampleIndex(rootWeights);
 
@@ -256,7 +224,7 @@ public class SiteHistorySampler {
         }
         this.nodeStates[root.getNr()] = rootState;
 
-        double logDensity = Math.log(this.frequencies[rootState]);
+        double logDensity = Math.log(this.process.getFrequencies()[rootState]);
 
         for (int i = this.postOrderNodes.length - 1; i >= 0; i--) {
             Node node = this.postOrderNodes[i];
@@ -284,185 +252,32 @@ public class SiteHistorySampler {
         return logDensity;
     }
 
-    /**
-     * Samples the history of the given site on a connected region of branches from its exact
-     * conditional distribution given the histories on all other branches. The region is
-     * given by the nodes below its branches, starting with its top node and listing every
-     * other node after its parent. The given start state at the top of the branch above the
-     * top node stays fixed, and is ignored if the top node is the root. A node with a
-     * non-negative fixed state keeps this state, which cuts the region off from the branches
-     * below it. Every other inner node must have all of its children in the region, and
-     * every other tip keeps a state compatible with its data. The node states are sampled by
-     * pruning within the region, then the path on every branch given its end states. The
-     * returned histories are indexed like the region nodes. updateModel must have been
-     * called for the branches of the region.
-     */
-    public List<List<Mutation>> sampleRegionHistory(int site, int startState, List<Node> regionNodes, int[] fixedStates) {
-        Node top = regionNodes.getFirst();
-        this.computeRegionPartials(site, regionNodes, fixedStates);
-
-        // sample the node states from the top down
-
-        double[] weights = new double[this.numStates];
-        for (int i = 0; i < regionNodes.size(); i++) {
-            Node node = regionNodes.get(i);
-
-            if (fixedStates[i] >= 0) {
-                this.nodeStates[node.getNr()] = fixedStates[i];
-            } else {
-                this.computeNodeStateWeights(node, node == top ? startState : this.nodeStates[node.getParent().getNr()], weights);
-                this.nodeStates[node.getNr()] = StochasticMapping.sampleIndex(weights);
-            }
-        }
-
-        // sample the path on every branch of the region given its end states
-
-        if (!top.isRoot()) {
-            this.nodeStates[top.getParent().getNr()] = startState;
-        }
-
-        List<List<Mutation>> regionMutations = new ArrayList<>();
-        for (Node node : regionNodes) {
-            regionMutations.add(node.isRoot() ? this.createRootHistory(node, site) : this.sampleBranchHistory(node, site));
-        }
-
-        return regionMutations;
-    }
-
-    /**
-     * Computes the log probability that sampleRegionHistory proposes the given history of
-     * the given site on the region, indexed like the region nodes, given the same start
-     * state and fixed states. This is the probability of the states of the nodes that are
-     * not fixed times the density of the stochastic mapping on every branch of the region.
-     * The history above the root follows from the root state, so it adds nothing.
-     */
-    public double computeLogRegionHistoryDensity(int site, int startState, List<Node> regionNodes, int[] fixedStates,
-                                                 List<List<Mutation>> regionMutations) {
-        Node top = regionNodes.getFirst();
-        this.computeRegionPartials(site, regionNodes, fixedStates);
-
-        double logDensity = 0.0;
-        double[] weights = new double[this.numStates];
-
-        for (int i = 0; i < regionNodes.size(); i++) {
-            Node node = regionNodes.get(i);
-            List<Mutation> branchMutations = regionMutations.get(i);
-
-            // the state of a node is set by the last mutation above it, or else equals the state above its branch
-
-            int branchStartState;
-            if (node.isRoot()) {
-                branchStartState = this.mutations.getReferenceSequence()[site];
-            } else {
-                branchStartState = node == top ? startState : this.nodeStates[node.getParent().getNr()];
-            }
-            int state = branchMutations.isEmpty() ? branchStartState : branchMutations.getLast().newState();
-            this.nodeStates[node.getNr()] = state;
-
-            if (fixedStates[i] < 0) {
-                this.computeNodeStateWeights(node, branchStartState, weights);
-                double totalWeight = 0.0;
-                for (double weight : weights) {
-                    totalWeight += weight;
-                }
-                logDensity += Math.log(weights[state] / totalWeight);
-            }
-
-            if (!node.isRoot()) {
-                logDensity += this.computeLogBranchHistoryDensity(node, branchMutations, branchStartState, state);
-            }
-        }
-
-        return logDensity;
-    }
-
     /* Node States */
-
-    /**
-     * Computes the partial likelihoods of the given site for every node of a region, whose
-     * nodes are given with every node after its parent. A node with a fixed state only
-     * allows this state, and a tip every state compatible with its data.
-     */
-    private void computeRegionPartials(int site, List<Node> regionNodes, int[] fixedStates) {
-        int patternIndex = this.alignment.getPatternIndex(site);
-
-        for (int i = regionNodes.size() - 1; i >= 0; i--) {
-            Node node = regionNodes.get(i);
-
-            if (fixedStates[i] >= 0) {
-                double[] partial = this.partials[node.getNr()];
-                Arrays.fill(partial, 0.0);
-                partial[fixedStates[i]] = 1.0;
-                this.knownStates[node.getNr()] = fixedStates[i];
-            } else {
-                this.computePartial(node, patternIndex);
-            }
-        }
-    }
-
-    /**
-     * Computes the unnormalised probabilities of the states of the given node given the
-     * state at the start of the branch above it and the tip data below it: the transition
-     * probability from the start state, or the root frequency if the node is the root, times
-     * the partial likelihood of the node.
-     */
-    private void computeNodeStateWeights(Node node, int startState, double[] weights) {
-        double[] partial = this.partials[node.getNr()];
-        for (int state = 0; state < this.numStates; state++) {
-            double priorProbability = node.isRoot()
-                    ? this.frequencies[state]
-                    : this.transitionProbabilities[node.getNr()][startState * this.numStates + state];
-            weights[state] = priorProbability * partial[state];
-        }
-    }
-
-    /** Computes the log likelihood of the tip data at a single site with the given pattern. */
-    private double computePatternLogLikelihood(int patternIndex) {
-        Node root = this.tree.getRoot();
-        double logScale = this.computePartials(patternIndex);
-
-        double likelihood = 0.0;
-        for (int state = 0; state < this.numStates; state++) {
-            likelihood += this.frequencies[state] * this.partials[root.getNr()][state];
-        }
-
-        return logScale + Math.log(likelihood);
-    }
 
     /**
      * Computes the partial likelihoods of every node at a site with the given pattern. A
      * tip allows every state compatible with its observed character. The partials of the
-     * inner nodes are rescaled, which does not change the sampled states, and the log of
-     * all rescaling factors is returned.
+     * inner nodes are rescaled, which does not change the sampled states.
      */
-    private double computePartials(int patternIndex) {
-        // multiply the rescaling factors and only take the log when their product gets small
-
-        double logScale = 0.0;
-        double scale = 1.0;
+    private void computePartials(int patternIndex) {
         for (Node node : this.postOrderNodes) {
-            scale *= this.computePartial(node, patternIndex);
-            if (scale < MIN_SCALE) {
-                logScale += Math.log(scale);
-                scale = 1.0;
-            }
+            this.computePartial(node, patternIndex);
         }
-        return logScale + Math.log(scale);
     }
 
     /**
      * Computes the partial likelihoods of the given node at a site with the given pattern
      * from the partial likelihoods of its children. The partials of an inner node are
-     * rescaled by their maximum, which is at most 1 and is returned. A tip returns 1.
+     * rescaled by their maximum to avoid underflow on large trees.
      */
-    private double computePartial(Node node, int patternIndex) {
+    private void computePartial(Node node, int patternIndex) {
         double[] partial = this.partials[node.getNr()];
 
         if (node.isLeaf()) {
             int code = this.alignment.getPattern(this.taxonIndices[node.getNr()], patternIndex);
             System.arraycopy(this.getTipPartial(code), 0, partial, 0, this.numStates);
             this.knownStates[node.getNr()] = this.tipStates[code];
-            return 1.0;
+            return;
         }
 
         this.knownStates[node.getNr()] = -1;
@@ -503,8 +318,6 @@ public class SiteHistorySampler {
         for (int state = 0; state < this.numStates; state++) {
             partial[state] /= maxPartial;
         }
-
-        return maxPartial;
     }
 
     /**
@@ -540,25 +353,6 @@ public class SiteHistorySampler {
         }
     }
 
-    /** Takes Q, the site rate and the root frequencies from the genetic prior. */
-    private void updateRateMatrix() {
-        Node root = this.tree.getRoot();
-
-        // the substitution model may overwrite its eigen decomposition objects in place, so
-        // they are fetched again every time and only their values are cached through Q
-
-        this.eigenDecomposition = this.geneticPrior.substitutionModel.getEigenDecomposition(root);
-
-        double[] newRateMatrix = this.geneticPrior.computeRateMatrix();
-        if (!Arrays.equals(newRateMatrix, this.rateMatrix)) {
-            this.rateMatrix = newRateMatrix;
-            this.stochasticMapping.setRateMatrix(this.rateMatrix);
-            Arrays.fill(this.durations, Double.NaN);
-        }
-        this.siteRate = this.geneticPrior.siteModel.getRateForCategory(0, root);
-        this.frequencies = this.geneticPrior.substitutionModel.getFrequencies();
-    }
-
     /**
      * Updates the scale of Q on the branch above the given node and recomputes the
      * transition probabilities P = exp(Q t) of the branch if its scaled length t has changed.
@@ -566,11 +360,11 @@ public class SiteHistorySampler {
     private void updateTransitionProbabilities(Node node) {
         int nodeNr = node.getNr();
 
-        this.rateScales[nodeNr] = this.geneticPrior.branchRateModel.getRateForBranch(node) * this.siteRate;
+        this.rateScales[nodeNr] = this.process.getRateScale(node);
         double duration = this.rateScales[nodeNr] * (node.getParent().getHeight() - node.getHeight());
 
         if (duration != this.durations[nodeNr]) {
-            StochasticMapping.computeTransitionProbabilities(this.eigenDecomposition, duration, this.transitionProbabilities[nodeNr]);
+            this.process.computeTransitionProbabilities(duration, this.transitionProbabilities[nodeNr]);
             this.durations[nodeNr] = duration;
         }
     }
@@ -593,19 +387,6 @@ public class SiteHistorySampler {
         return this.stochasticMapping.sampleSiteHistory(
                 nodeNr, site, parent.getHeight(), node.getHeight(),
                 startState, endState, this.rateScales[nodeNr], endProbability
-        );
-    }
-
-    /**
-     * Computes the log density of the stochastic mapping of the given history of a single
-     * site on the branch above the given node, given the states at both ends.
-     */
-    private double computeLogBranchHistoryDensity(Node node, List<Mutation> branchMutations, int startState, int endState) {
-        int nodeNr = node.getNr();
-        return this.stochasticMapping.computeLogSiteHistoryDensity(
-                branchMutations, node.getParent().getHeight(), node.getHeight(),
-                startState, endState, this.rateScales[nodeNr],
-                this.transitionProbabilities[nodeNr][startState * this.numStates + endState]
         );
     }
 

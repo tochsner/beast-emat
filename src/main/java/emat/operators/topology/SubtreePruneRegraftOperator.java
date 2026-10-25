@@ -5,7 +5,10 @@ import beast.base.core.Input;
 import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
+import emat.stochasticmapping.BranchHistorySampler;
+import emat.stochasticmapping.HistorySampler;
 import emat.stochasticmapping.JukesCantorStochasticMapping;
+import emat.stochasticmapping.SubstitutionProcess;
 import emat.state.Mutation;
 import emat.helper.MissingSites;
 import emat.helper.MutationPaths;
@@ -22,7 +25,8 @@ import java.util.function.IntUnaryOperator;
 
 @Description("Prunes a subtree and regrafts it elsewhere without changing the root (docs/mcmc-moves.md §3). " +
         "Only the history on the branch above the pruned subtree is resampled, by approximate Jukes-Cantor " +
-        "stochastic mapping (docs/mcmc-moves.md §3.4). If the pruned subtree is a tip, its states at the sites " +
+        "stochastic mapping (docs/mcmc-moves.md §3.4) or, optionally, by choosing the sites with mutations under " +
+        "Jukes-Cantor and drawing their histories exactly under the model of the genetic prior. If the pruned subtree is a tip, its states at the sites " +
         "where its data is missing are resampled as well, so that they follow its placement, and by default also " +
         "among the compatible states where its data is partially ambiguous. Missations are not supported. " +
         "Subclasses choose the pruned subtree and the grafting point.")
@@ -32,6 +36,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model", Input.Validate.REQUIRED);
     final public Input<Boolean> resampleAmbiguousSitesInput = new Input<>("resampleAmbiguousSites", "whether a pruned tip also resamples its states among the compatible states at the sites where its data is partially ambiguous, " +
             "so that they follow its placement. Otherwise, these states stay fixed", true);
+    final public Input<HistorySampler> historySamplerInput = new Input<>("historySampler", "how the history on the branch above the pruned subtree is resampled: JUKES_CANTOR under an approximating Jukes-Cantor model, " +
+            "HYBRID by choosing the sites with mutations under Jukes-Cantor and then sampling their histories exactly under the model of the genetic prior", HistorySampler.JUKES_CANTOR, HistorySampler.values());
 
     private static final int[] NO_SITES = new int[0];
     private static final BitSet NO_SITE_SET = new BitSet();
@@ -39,8 +45,12 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     Mutations mutations;
     GeneticPrior geneticPrior;
     Tree tree;
-    JukesCantorStochasticMapping stochasticMapping;
     BranchMutations branchMutations;
+
+    // the model, the sampler of the history on the branch above X, and the Jukes-Cantor mapping of the end states of X at its missing and ambiguous sites
+    SubstitutionProcess process;
+    BranchHistorySampler historySampler;
+    JukesCantorStochasticMapping stochasticMapping;
 
     // reusable site maps for the changes along the paths of the current proposal and the resulting differing sites
     SiteChanges subtreeChanges;
@@ -67,9 +77,10 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     BitSet subtreeAmbiguousSiteSet;
     int[] subtreeCompatibleStates;
 
-    // the model of the current proposal on the branch above X: the total mutation rate λ(R) of the root sequence times the branch rate, and the fictitious Jukes-Cantor rate μ̃
+    // the model of the current proposal on the branch above X: the total mutation rate λ(R) of the root sequence times the branch rate, the fictitious Jukes-Cantor rate μ̃, and the scale s of Q
     double subtreeTotalRate;
     double jukesCantorRate;
+    double subtreeRateScale;
 
     /**
      * A new attachment point for the pruned subtree: the branch above the new sibling S' in
@@ -86,8 +97,11 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         this.tree = this.treeInput.get();
 
         int numSites = this.mutations.getReferenceSequence().length;
-        this.stochasticMapping = new JukesCantorStochasticMapping(this.mutations.getAlignment().getMaxStateCount(), numSites);
+        int numStates = this.mutations.getAlignment().getMaxStateCount();
         this.branchMutations = new BranchMutations(numSites);
+        this.process = new SubstitutionProcess(this.geneticPrior, this.tree, numStates);
+        this.historySampler = this.historySamplerInput.get().create(this.process, numSites);
+        this.stochasticMapping = new JukesCantorStochasticMapping(numStates, numSites);
 
         this.subtreeChanges = new SiteChanges(numSites);
         this.newParentChanges = new SiteChanges(numSites);
@@ -198,7 +212,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
      * branch of the old sibling S, the branch above S' is split at t_P', and everything else
      * is kept. At the missing sites of X, the states at X are first sampled from the states
      * at P' under Jukes-Cantor, and likewise among the compatible states at the partially
-     * ambiguous sites if they are resampled. The history is then sampled given the end states. The
+     * ambiguous sites if they are resampled. The history is then sampled given the end states
+     * by the history sampler. The
      * new mutations are put into the given map in the order in which they must be applied
      * after the regraft. Returns the log of α_mut(n → o) / α_mut(o → n).
      */
@@ -253,8 +268,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         // sample the history on the new P'–X branch while the tree still holds the old sequences, where every agreeing site is in the state of P'
 
-        List<Mutation> newSubtreeMutations = this.stochasticMapping.sampleBranchHistory(
-                x.getNr(), newParentHeight, x.getHeight(), this.jukesCantorRate, this.differingSites, newParentStates
+        List<Mutation> newSubtreeMutations = this.historySampler.sampleBranchHistory(
+                x.getNr(), newParentHeight, x.getHeight(), this.subtreeRateScale, this.jukesCantorRate, this.differingSites, newParentStates
         );
 
         // rearrange the mutations: join G–P–S into G–S, then split G'–S' into G'–P'–S'
@@ -285,11 +300,11 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
                 oldExpectedJumps, this.subtreeAmbiguousSites, this.subtreeCompatibleStates, this.parentStates.resetFor(parent), this.subtreeStates
         );
 
-        logForwardDensity += this.stochasticMapping.computeLogBranchHistoryDensity(
-                newSubtreeMutations, newParentHeight, x.getHeight(), this.jukesCantorRate, this.differingSites.getSize()
+        logForwardDensity += this.historySampler.computeLogBranchHistoryDensity(
+                newSubtreeMutations, newParentHeight, x.getHeight(), this.subtreeRateScale, this.jukesCantorRate, this.differingSites.getSize()
         );
-        logBackwardDensity += this.stochasticMapping.computeLogBranchHistoryDensity(
-                oldSubtreeMutations, oldParentHeight, x.getHeight(), this.jukesCantorRate, oldNumDifferingSites
+        logBackwardDensity += this.historySampler.computeLogBranchHistoryDensity(
+                oldSubtreeMutations, oldParentHeight, x.getHeight(), this.subtreeRateScale, this.jukesCantorRate, oldNumDifferingSites
         );
 
         return logBackwardDensity - logForwardDensity;
@@ -302,7 +317,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
      * μ̃ = λ(R) / L, with λ(R) the total mutation rate of the root sequence times the branch
      * rate of X, which the genetic prior has cached for the current state. The move keeps
      * the root sequence and the branch rate of X, so the reverse move uses the same model,
-     * even though the sequence of X changes at its missing sites.
+     * even though the sequence of X changes at its missing sites. The rate matrix s Q of the
+     * branch above X, with s the branch rate times the site rate, does not change either.
      */
     private void updateModel(Node x) {
         double branchRate = this.geneticPrior.branchRateModel.getRateForBranch(x);
@@ -310,6 +326,9 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         this.subtreeTotalRate = branchRate * this.geneticPrior.getTotalMutationRate(this.tree.getRoot());
         this.jukesCantorRate = this.subtreeTotalRate / numSites;
+
+        this.process.update();
+        this.subtreeRateScale = this.process.getRateScale(x);
     }
 
     /**

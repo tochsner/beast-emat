@@ -24,7 +24,9 @@ import java.util.Map;
 @Description("Regrafts a random subtree preferably where the sequence is close to the sequence of the subtree, " +
         "using the mutations of the EMAT as a parsimony map (mutation-directed SPR, docs/mcmc-moves.md §8.3). " +
         "Most proposals only explore the neighbourhood of the current attachment point, whose extent is drawn " +
-        "from a geometric distribution, and may jump between tips with close data. The root is never changed.")
+        "from a geometric distribution, and may jump between tips with close data. The root is never changed. " +
+        "The history on the branch above the subtree is resampled under Jukes-Cantor or, with historySampler " +
+        "HYBRID, at the sites chosen under Jukes-Cantor exactly under the model of the genetic prior.")
 public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
 
     public enum SubtreeSelection {

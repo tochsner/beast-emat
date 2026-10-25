@@ -1,10 +1,8 @@
 package emat.stochasticmapping;
 
-import beast.base.evolution.substitutionmodel.EigenDecomposition;
 import beast.base.util.Randomizer;
 import emat.state.Mutation;
 
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -53,47 +51,6 @@ public interface StochasticMapping {
                                           int state, int numJumps);
 
     /* Helpers */
-
-    /**
-     * Computes the transition probabilities P = exp(Q t) from the eigen decomposition of Q,
-     * where the duration t already includes every rate scaling of the branch.
-     */
-    static double[] computeTransitionProbabilities(EigenDecomposition eigenDecomposition, double duration) {
-        int numStates = eigenDecomposition.getEigenValues().length;
-        double[] probabilities = new double[numStates * numStates];
-        computeTransitionProbabilities(eigenDecomposition, duration, probabilities);
-        return probabilities;
-    }
-
-    /**
-     * Computes the transition probabilities P = exp(Q t) like computeTransitionProbabilities,
-     * but writes them into the given array of length n², which avoids an allocation per branch.
-     */
-    static void computeTransitionProbabilities(EigenDecomposition eigenDecomposition, double duration, double[] probabilities) {
-        double[] eigenVectors = eigenDecomposition.getEigenVectors();
-        double[] inverseEigenVectors = eigenDecomposition.getInverseEigenVectors();
-        double[] eigenValues = eigenDecomposition.getEigenValues();
-        int numStates = eigenValues.length;
-
-        // add up the contribution of one eigenvalue at a time, which needs only a single exponential at hand
-        Arrays.fill(probabilities, 0.0);
-        for (int k = 0; k < numStates; k++) {
-            // a zero eigenvalue, which every rate matrix has, needs no exponential
-            double expEigenValue = eigenValues[k] == 0.0 ? 1.0 : Math.exp(eigenValues[k] * duration);
-
-            for (int from = 0; from < numStates; from++) {
-                double scaledEigenVector = eigenVectors[from * numStates + k] * expEigenValue;
-                for (int to = 0; to < numStates; to++) {
-                    probabilities[from * numStates + to] += scaledEigenVector * inverseEigenVectors[k * numStates + to];
-                }
-            }
-        }
-
-        // clamp tiny negative values caused by rounding
-        for (int i = 0; i < probabilities.length; i++) {
-            probabilities[i] = Math.max(probabilities[i], 0.0);
-        }
-    }
 
     /** Samples an index with probability proportional to the given non-negative weights. */
     static int sampleIndex(double[] weights) {

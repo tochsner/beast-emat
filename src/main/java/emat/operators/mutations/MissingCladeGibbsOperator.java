@@ -12,7 +12,7 @@ import emat.helper.NodeStateLookup;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
-import emat.stochasticmapping.ForwardSiteSimulator;
+import emat.stochasticmapping.SubstitutionProcess;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -42,7 +42,7 @@ public class MissingCladeGibbsOperator extends Operator {
     Mutations mutations;
     TreeInterface tree;
     MissingSites missingSites;
-    ForwardSiteSimulator forwardSimulator;
+    SubstitutionProcess process;
     int maxLevels;
 
     // the numbers of the tips with at least one missing site, which are the candidates of the move
@@ -68,7 +68,7 @@ public class MissingCladeGibbsOperator extends Operator {
         this.mutations = this.mutationsInput.get();
         this.tree = this.mutations.getTree();
         this.maxLevels = this.maxLevelsInput.get();
-        this.forwardSimulator = new ForwardSiteSimulator(this.geneticPriorInput.get(), this.mutations.getAlignment().getMaxStateCount());
+        this.process = new SubstitutionProcess(this.geneticPriorInput.get(), this.tree, this.mutations.getAlignment().getMaxStateCount());
 
         if (this.maxLevels < 0) {
             throw new IllegalArgumentException("The maximum number of levels must not be negative.");
@@ -113,7 +113,7 @@ public class MissingCladeGibbsOperator extends Operator {
         List<Node> coveredNodes = new ArrayList<>();
 
         this.proposalCount++;
-        this.forwardSimulator.updateModel(this.tree.getRoot());
+        this.process.update();
         for (int index = 0; index < regions.size(); index++) {
             this.simulateRegion(regions.get(index), index, newMutations, coveredNodes);
         }
@@ -201,7 +201,7 @@ public class MissingCladeGibbsOperator extends Operator {
         double[] branchStarts = new double[cladeNodes.size() + 1];
         for (int i = 0; i < cladeNodes.size(); i++) {
             Node node = cladeNodes.get(i);
-            rateScales[i] = this.forwardSimulator.getRateScale(node);
+            rateScales[i] = this.process.getRateScale(node);
             branchStarts[i + 1] = branchStarts[i] + node.getLength() * rateScales[i];
 
             // the regions come from the bottom up, so the first region to reach a branch is its lowest
@@ -228,7 +228,7 @@ public class MissingCladeGibbsOperator extends Operator {
     private void simulateSite(Node top, List<Node> cladeNodes, double[] rateScales, double[] branchStarts,
                               Map<Integer, List<Mutation>> newMutations, int site, int topState) {
         this.epoch++;
-        double eventRate = this.forwardSimulator.getMaxEscapeRate();
+        double eventRate = this.process.getMaxEscapeRate();
         double totalLength = branchStarts[cladeNodes.size()];
 
         int branch = -1;
@@ -243,7 +243,7 @@ public class MissingCladeGibbsOperator extends Operator {
                 previousHeight = Mutation.BRANCH_START;
             }
 
-            int newState = this.forwardSimulator.sampleUniformisedJump(state);
+            int newState = this.process.sampleUniformisedJump(state);
             if (newState == state) {
                 continue;
             }

@@ -61,7 +61,7 @@ public class JukesCantorStochasticMappingTest {
 
                 double numChains = numDifferingSites == 0 ? this.getNumReturningChains(numJumps) : this.getNumChangingChains(numJumps);
                 double logDensity = mapping.computeLogBranchHistoryDensity(
-                        this.getDummyMutations(numJumps), START_HEIGHT, END_HEIGHT, rate, numDifferingSites
+                        this.getDummyMutations(numJumps), START_HEIGHT, END_HEIGHT, 1.0, rate, numDifferingSites
                 );
 
                 total += Math.exp(logDensity) * numChains * timeVolume;
@@ -87,7 +87,7 @@ public class JukesCantorStochasticMappingTest {
 
         for (int i = 0; i < numSamples; i++) {
             List<Mutation> branchMutations = mapping.sampleBranchHistory(
-                    7, START_HEIGHT, END_HEIGHT, rate, differingSites, site -> site % NUM_STATES
+                    7, START_HEIGHT, END_HEIGHT, 1.0, rate, differingSites, site -> site % NUM_STATES
             );
             this.checkHistory(branchMutations, differingSites);
 
