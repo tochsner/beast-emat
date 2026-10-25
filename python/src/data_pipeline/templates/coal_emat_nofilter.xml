@@ -129,7 +129,7 @@
         <operator id="ClockIntervalScaleOperator.{{ID}}" spec="emat.operators.nodetimes.IntervalScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="5.0">
             <down idref="clockRate.c:{{ID}}"/>
         </operator>
-        <operator id="BranchReformOperator.{{ID}}" spec="emat.operators.mutations.BranchReformOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0"/>
+        <operator id="BranchReformOperator.{{ID}}" spec="emat.operators.mutations.BranchReformOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" branchSelection="UNIFORM" weight="10.0"/>
         <operator id="ePopSizeScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@ePopSize.t:{{ID}}" upper="10.0" weight="3.0"/>
         <operator id="GrowthRateRandomWalk.t:{{ID}}" spec="beast.base.spec.inference.operator.RealRandomWalkOperator" scalar="@growthRate.t:{{ID}}" scaleFactor="0.1" weight="3.0"/>
         <operator id="LinCombSliceOperator.{{ID}}" spec="slice.LinCombSliceOperator" weight="2.0">

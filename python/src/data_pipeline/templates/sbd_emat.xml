@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?><beast beautitemplate='Standard' beautistatus='' namespace="beast.core:beast.evolution.alignment:beast.evolution.tree.coalescent:beast.core.util:beast.evolution.nuc:beast.evolution.operators:beast.evolution.sitemodel:beast.evolution.substitutionmodel:beast.base.evolution.alignment:beast.pkgmgmt:beast.base.core:beast.base.inference:beast.base.evolution.tree.coalescent:beast.pkgmgmt:beast.base.core:beast.base.inference.util:beast.evolution.nuc:beast.base.evolution.operator:beast.base.inference.operator:beast.base.evolution.sitemodel:beast.base.evolution.substitutionmodel:beast.base.evolution.likelihood" required="" version="2.8">
+
+    {{ALIGNMENT}}
+
+    <data id="{{ID}}.variable" spec="emat.alignment.ConstantSiteFilteredAlignment" data="@{{ID}}" constant="false"/>
+
+    <data id="{{ID}}.constant" spec="emat.alignment.ConstantSiteFilteredAlignment" data="@{{ID}}" constant="true"/>
+
+    <map name="Uniform" >beast.base.inference.distribution.Uniform</map>
+
+    <map name="Exponential" >beast.base.inference.distribution.Exponential</map>
+
+    <map name="LogNormal" >beast.base.inference.distribution.LogNormalDistributionModel</map>
+
+    <map name="Normal" >beast.base.inference.distribution.Normal</map>
+
+    <map name="Beta" >beast.base.inference.distribution.Beta</map>
+
+    <map name="Gamma" >beast.base.inference.distribution.Gamma</map>
+
+    <map name="LaplaceDistribution" >beast.base.inference.distribution.LaplaceDistribution</map>
+
+    <map name="prior" >beast.base.inference.distribution.Prior</map>
+
+    <map name="InverseGamma" >beast.base.inference.distribution.InverseGamma</map>
+
+    <map name="OneOnX" >beast.base.inference.distribution.OneOnX</map>
+
+    <run id="mcmc" spec="mcmc.ESSStoppingMCMC" chainLength="{{CHAIN_LENGTH}}">
+        <state id="state" spec="State" storeEvery="{{STORE_EVERY}}">
+            <tree id="Tree.t:{{ID}}" spec="emat.tree.IncrementalStoreTree" name="stateNode">
+                <trait id="dateTrait.t:{{ID}}" spec="beast.base.evolution.tree.TraitSet" dateFormat="yyyy-M-dd" traitname="date">
+{{DATE_TRAIT}}
+                    <taxa id="TaxonSet.{{ID}}" spec="TaxonSet">
+                        <alignment idref="{{ID}}"/>
+                    </taxa>
+                </trait>
+                <taxonset idref="TaxonSet.{{ID}}"/>
+            </tree>
+            <stateNode id="clockRate.c:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="1.0"/>
+            <stateNode id="kappa.s:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="2.0"/>
+            <stateNode id="freqParameter.s:{{ID}}" spec="beast.base.spec.inference.parameter.SimplexParam" dimension="4" domain="UnitInterval">0.25 0.25 0.25 0.25</stateNode>
+            <stateNode id="birthRateCanonical.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealVectorParam" dimension="3" domain="NonNegativeReal">1.0 1.0 1.0</stateNode>
+            <stateNode id="deathRateCanonical.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealVectorParam" dimension="3" domain="NonNegativeReal">1.0 1.0 1.0</stateNode>
+            <stateNode id="samplingRateCanonical.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="NonNegativeReal">0.1</stateNode>
+            <stateNode id="originBDMMPrime.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="NonNegativeReal" value="10.0"/>
+            <stateNode id="mutations.{{ID}}" spec="emat.state.Mutations" tree="@Tree.t:{{ID}}" alignment="@{{ID}}.variable"/>
+        </state>
+        <init id="RandomTree.t:{{ID}}" spec="RandomTree" estimate="false" initial="@Tree.t:{{ID}}" taxa="@{{ID}}">
+            <populationModel id="ConstantPopulation0.t:{{ID}}" spec="ConstantPopulation">
+                <parameter id="randomPopSize.t:{{ID}}" spec="parameter.RealParameter" name="popSize">1.0</parameter>
+            </populationModel>
+        </init>
+        <init id="ParsimonyMutationsInitialiser.{{ID}}" spec="emat.initalisation.ParsimonyMutationsInitialiser" mutations="@mutations.{{ID}}"/>
+        <distribution id="posterior" spec="CompoundDistribution">
+            <distribution id="prior" spec="CompoundDistribution">
+                <distribution id="BDMMPrime.t:{{ID}}" spec="bdmmprime.distribution.BirthDeathMigrationDistribution" tree="@Tree.t:{{ID}}">
+                    <parameterization id="CanonicalBDMMPrimeParameterization.t:{{ID}}" spec="bdmmprime.parameterization.CanonicalParameterization">
+                        <birthRate id="birthRateSPCanonical.t:{{ID}}" spec="bdmmprime.parameterization.SkylineVectorParameter" skylineValues="@birthRateCanonical.t:{{ID}}" timesAreAges="false" timesAreRelative="true">
+                            <changeTimes id="birthRateChangeTimesCanonical.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealVectorParam" dimension="2" domain="Real" estimate="false">0.33 0.66</changeTimes>
+                            <processLength id="processLengthBDMMPrime.t:{{ID}}" spec="bdmmprime.util.ProcessLength" origin="@originBDMMPrime.t:{{ID}}"/>
+                            <typeSet id="typeSetBDMMPrime.t:{{ID}}" spec="bdmmprime.parameterization.TypeSet">
+                                <typeTraitSet id="typeTraitSet.t:{{ID}}" spec="bdmmprime.util.InitializedTraitSet" traitname="type" value="{{TYPE_TRAIT}}">
+                                    <taxa id="TaxonSet.1" spec="TaxonSet" alignment="@{{ID}}"/>
+                                </typeTraitSet>
+                            </typeSet>
+                        </birthRate>
+                        <deathRate id="deathRateSPCanonical.t:{{ID}}" spec="bdmmprime.parameterization.SkylineVectorParameter" processLength="@processLengthBDMMPrime.t:{{ID}}" skylineValues="@deathRateCanonical.t:{{ID}}" timesAreAges="false" timesAreRelative="true" typeSet="@typeSetBDMMPrime.t:{{ID}}">
+                            <changeTimes id="deathRateChangeTimesCanonical.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealVectorParam" dimension="2" domain="Real" estimate="false">0.33 0.66</changeTimes>
+                        </deathRate>
+                        <samplingRate id="samplingRateSPCanonical.t:{{ID}}" spec="bdmmprime.parameterization.SkylineVectorParameter" processLength="@processLengthBDMMPrime.t:{{ID}}" skylineValues="@samplingRateCanonical.t:{{ID}}" timesAreAges="true" typeSet="@typeSetBDMMPrime.t:{{ID}}"/>
+                        <rhoSampling id="rhoSamplingProbSPCanonical.t:{{ID}}" spec="bdmmprime.parameterization.TimedParameter" processLength="@processLengthBDMMPrime.t:{{ID}}" timesAreAges="true" typeSet="@typeSetBDMMPrime.t:{{ID}}"/>
+                        <removalProb id="removalProbSPCanonical.t:{{ID}}" spec="bdmmprime.parameterization.SkylineVectorParameter" processLength="@processLengthBDMMPrime.t:{{ID}}" timesAreAges="true" typeSet="@typeSetBDMMPrime.t:{{ID}}">
+                            <skylineValues id="removalProbCanonical.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="UnitInterval" estimate="false">1.0</skylineValues>
+                        </removalProb>
+                        <migrationRate id="migrationRateSPCanonical.t:{{ID}}" spec="bdmmprime.parameterization.SkylineMatrixParameter" processLength="@processLengthBDMMPrime.t:{{ID}}" timesAreAges="true" typeSet="@typeSetBDMMPrime.t:{{ID}}">
+                            <skylineValues id="migrationRateCanonical.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="NonNegativeReal" estimate="false">1.0</skylineValues>
+                        </migrationRate>
+                        <birthRateAmongDemes id="birthRateAmongDemesSPCanonical.t:{{ID}}" spec="bdmmprime.parameterization.SkylineMatrixParameter" processLength="@processLengthBDMMPrime.t:{{ID}}" timesAreAges="true" typeSet="@typeSetBDMMPrime.t:{{ID}}">
+                            <skylineValues id="birthRateAmongDemesCanonical.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="NonNegativeReal" estimate="false">1.0</skylineValues>
+                        </birthRateAmongDemes>
+                        <typeSet idref="typeSetBDMMPrime.t:{{ID}}"/>
+                        <processLength idref="processLengthBDMMPrime.t:{{ID}}"/>
+                    </parameterization>
+                    <startTypePriorProbs id="startTypePriorProbs.t:{{ID}}" spec="beast.base.spec.inference.parameter.SimplexParam" domain="UnitInterval" estimate="false">1.0</startTypePriorProbs>
+                    <typeTraitSet idref="typeTraitSet.t:{{ID}}"/>
+                </distribution>
+                <distribution id="ClockPrior.c:{{ID}}" spec="beast.base.spec.inference.distribution.Gamma" param="@clockRate.c:{{ID}}">
+                    <alpha id="RealScalarParam.0" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real" estimate="false" value="0.01"/>
+                    <theta id="RealScalarParam.1" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" estimate="false" value="100.0"/>
+                </distribution>
+                <distribution id="FrequenciesPrior.s:{{ID}}" spec="beast.base.spec.inference.distribution.Dirichlet" param="@freqParameter.s:{{ID}}">
+                    <alpha id="RealVectorParam.0" spec="beast.base.spec.inference.parameter.RealVectorParam" dimension="4" domain="PositiveReal" estimate="false">4.0 4.0 4.0 4.0</alpha>
+                </distribution>
+                <distribution id="KappaPrior.s:{{ID}}" spec="beast.base.spec.inference.distribution.LogNormal" param="@kappa.s:{{ID}}">
+                    <M id="RealScalarParam.15" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real" estimate="false" value="1.0"/>
+                    <S id="RealScalarParam.16" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" estimate="false" value="1.25"/>
+                </distribution>
+                <distribution id="birthRateCanonicalPrior.t:{{ID}}" spec="bdmmprime.util.priors.ZeroExcludingRealIID" param="@birthRateCanonical.t:{{ID}}">
+                    <distr id="Exponential.1" spec="beast.base.spec.inference.distribution.Exponential">
+                        <mean id="RealScalarParam.45" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="1.0"/>
+                    </distr>
+                </distribution>
+                <distribution id="deathRateCanonicalPrior.t:{{ID}}" spec="bdmmprime.util.priors.ZeroExcludingRealIID" param="@deathRateCanonical.t:{{ID}}">
+                    <distr id="Exponential.5" spec="beast.base.spec.inference.distribution.Exponential">
+                        <mean id="RealScalarParam.49" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="1.0"/>
+                    </distr>
+                </distribution>
+                <distribution id="processLengthBDMMPrimePrior.t:{{ID}}" spec="beast.base.spec.inference.distribution.Exponential" param="@processLengthBDMMPrime.t:{{ID}}">
+                    <mean id="RealScalarParam.42" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="1.0"/>
+                </distribution>
+                <distribution id="samplingRateCanonicalPrior.t:{{ID}}" spec="bdmmprime.util.priors.ZeroExcludingRealIID" param="@samplingRateCanonical.t:{{ID}}">
+                    <distr id="Exponential.9" spec="beast.base.spec.inference.distribution.Exponential">
+                        <mean id="RealScalarParam.53" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="1.0"/>
+                    </distr>
+                </distribution>
+            </distribution>
+            <distribution id="likelihood" spec="CompoundDistribution">
+                <distribution id="geneticPrior.{{ID}}" spec="emat.prior.GeneticPrior" data="@{{ID}}.variable" mutations="@mutations.{{ID}}" tree="@Tree.t:{{ID}}">
+                    <siteModel id="SiteModel.s:{{ID}}" spec="beast.base.spec.evolution.sitemodel.SiteModel" gammaCategoryCount="1">
+                        <mutationRate id="mutationRate.s:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" estimate="false" value="1.0"/>
+                        <shape id="gammaShape.s:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" estimate="false" value="1.0"/>
+                        <proportionInvariant id="proportionInvariant.s:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="UnitInterval" estimate="false"/>
+                        <substModel id="hky.s:{{ID}}" spec="beast.base.spec.evolution.substitutionmodel.HKY" kappa="@kappa.s:{{ID}}">
+                            <frequencies id="estimatedFreqs.s:{{ID}}" spec="beast.base.spec.evolution.substitutionmodel.Frequencies" frequencies="@freqParameter.s:{{ID}}"/>
+                        </substModel>
+                    </siteModel>
+                    <branchRateModel id="StrictClock.c:{{ID}}" spec="beast.base.spec.evolution.branchratemodel.StrictClockModel" clock.rate="@clockRate.c:{{ID}}"/>
+                </distribution>
+                <distribution id="constantSitesLikelihood.{{ID}}" spec="beast.base.spec.evolution.likelihood.TreeLikelihood" data="@{{ID}}.constant" tree="@Tree.t:{{ID}}" siteModel="@SiteModel.s:{{ID}}" branchRateModel="@StrictClock.c:{{ID}}" useAmbiguities="false" implementation="beast.base.spec.evolution.likelihood.TreeLikelihood"/>
+            </distribution>
+        </distribution>
+        <operator id="StrictClockRateScaler.c:{{ID}}" spec="beast.base.spec.evolution.operator.AdaptableOperatorSampler" weight="1.5">
+            <parameter idref="clockRate.c:{{ID}}"/>
+            <operator id="AVMNOperator.{{ID}}" spec="beast.base.spec.evolution.operator.AdaptableVarianceMultivariateNormalOperator" allowNonsense="true" beta="0.05" burnin="400" initial="800" weight="0.1">
+                <transformations id="AVMNSumTransform.{{ID}}" spec="beast.base.spec.inference.operator.Transform$LogConstrainedSumTransform">
+                    <f idref="freqParameter.s:{{ID}}"/>
+                </transformations>
+                <transformations id="AVMNLogTransform.{{ID}}" spec="beast.base.spec.inference.operator.Transform$LogTransform">
+                    <f idref="clockRate.c:{{ID}}"/>
+                    <f idref="kappa.s:{{ID}}"/>
+                </transformations>
+                <transformations id="AVMNNoTransform.{{ID}}" spec="beast.base.spec.inference.operator.Transform$NoTransform"/>
+            </operator>
+            <operator id="StrictClockRateScalerX.c:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@clockRate.c:{{ID}}" scaleFactor="0.1" upper="10.0" weight="0.1"/>
+        </operator>
+        <operator id="KappaScaler.s:{{ID}}" spec="beast.base.spec.evolution.operator.AdaptableOperatorSampler" weight="0.5">
+            <parameter idref="kappa.s:{{ID}}"/>
+            <operator idref="AVMNOperator.{{ID}}"/>
+            <operator id="KappaScalerX.s:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@kappa.s:{{ID}}" scaleFactor="0.1" upper="10.0" weight="0.1"/>
+        </operator>
+        <operator id="FrequenciesExchanger.s:{{ID}}" spec="beast.base.spec.evolution.operator.AdaptableOperatorSampler" weight="0.5">
+            <parameter idref="freqParameter.s:{{ID}}"/>
+            <operator idref="AVMNOperator.{{ID}}"/>
+            <operator id="FrequenciesExchangerX.s:{{ID}}" spec="beast.base.spec.inference.operator.DeltaExchangeOperator" delta="0.01" weight="0.1">
+                <parameter idref="freqParameter.s:{{ID}}"/>
+            </operator>
+        </operator>
+        <operator id="originBDMMPrimeScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@originBDMMPrime.t:{{ID}}" scaleFactor="1.0" upper="10.0" weight="3.0"/>
+        <operator id="JointBDMMPrimeSkylineScaleOperator.t:{{ID}}" spec="bdmmprime.util.operators.JointSkylineScaleOperator" weight="3.0">
+            <skylineParameter idref="birthRateSPCanonical.t:{{ID}}"/>
+            <skylineParameter idref="deathRateSPCanonical.t:{{ID}}"/>
+            <skylineParameter idref="samplingRateSPCanonical.t:{{ID}}"/>
+        </operator>
+        <operator id="birthRateCanonicalScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@birthRateCanonical.t:{{ID}}" scaleFactor="1.0" upper="10.0" weight="3.0"/>
+        <operator id="deathRateCanonicalScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@deathRateCanonical.t:{{ID}}" scaleFactor="1.0" upper="10.0" weight="3.0"/>
+        <operator id="samplingRateCanonicalScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@samplingRateCanonical.t:{{ID}}" scaleFactor="1.0" upper="10.0" weight="3.0"/>
+        <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="10.0"/>
+        <operator id="MutationDirectedSprOperator.{{ID}}" spec="emat.operators.topology.MutationDirectedSprOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" fullExplorationProbability="0.01" weight="25.0" scaleWeightByLogNumTips="true" windowProbability="0.3" subtreeSelection="BRANCH_LENGTH"/>
+        <operator id="BatchNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.batch.BatchNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0" treePriorKnots="20">
+            <adapter spec="adapters.BasicAdapter">
+                <transform spec="transforms.RealScalarLogTransform" parameter="@originBDMMPrime.t:{{ID}}"/>
+                <transform spec="transforms.RealVectorLogTransform" parameter="@birthRateCanonical.t:{{ID}}"/>
+                <transform spec="transforms.RealVectorLogTransform" parameter="@deathRateCanonical.t:{{ID}}"/>
+                <transform spec="transforms.RealVectorLogTransform" parameter="@samplingRateCanonical.t:{{ID}}"/>
+            </adapter>
+        </operator>
+        <operator id="SiteHistoryGibbsOperator.{{ID}}" spec="emat.operators.mutations.SiteHistoryGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" siteSelection="PARSIMONY" pseudoCount="0.5" weight="20.0"/>
+        <operator id="MissingCladeGibbsOperator.{{ID}}" spec="emat.operators.mutations.MissingCladeGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0"/>
+        <operator id="ClockIntervalScaleOperator.{{ID}}" spec="emat.operators.nodetimes.IntervalScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="5.0">
+            <down idref="clockRate.c:{{ID}}"/>
+        </operator>
+        <operator id="BranchReformOperator.{{ID}}" spec="emat.operators.mutations.BranchReformOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0"/>
+        <operator id="LinCombSliceOperator.{{ID}}" spec="slice.LinCombSliceOperator" weight="2.0">
+            <adapter spec="adapters.BasicAdapter">
+                <transform spec="transforms.RealScalarLogTransform" parameter="@originBDMMPrime.t:{{ID}}"/>
+                <transform spec="transforms.RealVectorLogTransform" parameter="@birthRateCanonical.t:{{ID}}"/>
+                <transform spec="transforms.RealVectorLogTransform" parameter="@deathRateCanonical.t:{{ID}}"/>
+                <transform spec="transforms.RealVectorLogTransform" parameter="@samplingRateCanonical.t:{{ID}}"/>
+            </adapter>
+        </operator>
+        <logger id="tracelog" spec="Logger" fileName="data/out/$(filebase)-$(seed).log" logEvery="1000" model="@posterior" sanitiseHeaders="true" sort="smart">
+            <log idref="posterior"/>
+            <log idref="likelihood"/>
+            <log idref="prior"/>
+            <log idref="geneticPrior.{{ID}}"/>
+            <log idref="constantSitesLikelihood.{{ID}}"/>
+            <log id="TreeHeight.t:{{ID}}" spec="beast.base.evolution.tree.TreeStatLogger" tree="@Tree.t:{{ID}}"/>
+            <log idref="clockRate.c:{{ID}}"/>
+            <log idref="kappa.s:{{ID}}"/>
+            <log idref="freqParameter.s:{{ID}}"/>
+            <log idref="BDMMPrime.t:{{ID}}"/>
+            <log idref="originBDMMPrime.t:{{ID}}"/>
+            <log idref="birthRateSPCanonical.t:{{ID}}"/>
+            <log idref="deathRateSPCanonical.t:{{ID}}"/>
+            <log idref="samplingRateSPCanonical.t:{{ID}}"/>
+            <log idref="mutations.{{ID}}"/>
+        </logger>
+        <logger id="screenlog" spec="Logger" logEvery="1000">
+            <log idref="posterior"/>
+            <log idref="likelihood"/>
+            <log idref="prior"/>
+        </logger>
+        <logger id="treelog.t:{{ID}}" spec="Logger" fileName="data/out/$(filebase)-$(tree)-$(seed).trees" logEvery="1000" mode="tree">
+            <log id="TreeWithMetaDataLogger.t:{{ID}}" spec="beast.base.spec.evolution.TreeWithMetaDataLogger" tree="@Tree.t:{{ID}}"/>
+        </logger>
+        <operatorschedule id="OperatorSchedule" spec="OperatorSchedule"/>
+    </run>
+
+</beast>
