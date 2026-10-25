@@ -6,7 +6,9 @@ import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.List;
 
 @Description("Tree that only stores and cleans the nodes changed since the last store instead of all " +
         "nodes, which makes storing and restoring independent of the tree size for operators that change " +
@@ -31,6 +33,60 @@ public class IncrementalStoreTree extends Tree {
 
     private boolean requiresFullStore = true;
     private boolean requiresFullClean = true;
+
+    @Override
+    public void initAndValidate() {
+        if (this.nodeCount < 0 && this.m_taxonset.get() != null) {
+            this.makeBalancedTree();
+        }
+        super.initAndValidate();
+    }
+
+    /**
+     * Creates a balanced tree with unit height steps between the levels. Unlike the caterpillar
+     * created by the base class, its depth grows logarithmically with the number of taxa.
+     */
+    private void makeBalancedTree() {
+        List<String> taxa = this.m_taxonset.get().asStringList();
+
+        List<Node> subtrees = new ArrayList<>();
+        for (int i = 0; i < taxa.size(); i++) {
+            Node leaf = this.newNode();
+            leaf.setNr(i);
+            leaf.setHeight(0);
+            leaf.setID(taxa.get(i));
+            subtrees.add(leaf);
+        }
+
+        // join adjacent pairs of subtrees level by level until only the root is left
+
+        int nextNodeNr = taxa.size();
+        while (subtrees.size() > 1) {
+            List<Node> parents = new ArrayList<>();
+            for (int i = 0; i + 1 < subtrees.size(); i += 2) {
+                Node left = subtrees.get(i);
+                Node right = subtrees.get(i + 1);
+
+                Node parent = this.newNode();
+                parent.setNr(nextNodeNr++);
+                parent.setHeight(Math.max(left.getHeight(), right.getHeight()) + 1);
+                parent.setLeft(left);
+                parent.setRight(right);
+                left.setParent(parent);
+                right.setParent(parent);
+                parents.add(parent);
+            }
+            if (subtrees.size() % 2 == 1) {
+                parents.add(subtrees.get(subtrees.size() - 1));
+            }
+            subtrees = parents;
+        }
+
+        this.root = subtrees.get(0);
+        this.leafNodeCount = taxa.size();
+        this.nodeCount = 2 * this.leafNodeCount - 1;
+        this.internalNodeCount = this.leafNodeCount - 1;
+    }
 
     @Override
     protected Node newNode() {

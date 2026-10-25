@@ -26,6 +26,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTimeout;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class IncrementalStoreTreeTest {
 
@@ -76,8 +77,47 @@ public class IncrementalStoreTreeTest {
     }
 
     /**
-     * Checks that the initial caterpillar of a large taxon set, whose depth is the number of
-     * taxa, can be initialised and copied without overflowing the stack.
+     * Checks that the initial tree is balanced and valid, with one leaf per taxon and the root
+     * as the last node.
+     */
+    @Test
+    public void testInitialisesBalancedTree() {
+        int numTaxa = 1001;
+        List<Taxon> taxa = new ArrayList<>();
+        for (int i = 0; i < numTaxa; i++) {
+            taxa.add(new Taxon("t" + i));
+        }
+
+        IncrementalStoreTree tree = new IncrementalStoreTree();
+        tree.initByName("taxonset", new TaxonSet(taxa));
+
+        assertEquals(2 * numTaxa - 1, tree.getNodeCount());
+        assertEquals(numTaxa, tree.getLeafNodeCount());
+        assertEquals(2 * numTaxa - 2, tree.getRoot().getNr());
+
+        int maxDepth = (int) Math.ceil(Math.log(numTaxa) / Math.log(2));
+        for (Node node : tree.getNodesAsArray()) {
+            if (node.isLeaf()) {
+                assertEquals("t" + node.getNr(), node.getID());
+                assertEquals(0.0, node.getHeight());
+
+                int depth = 0;
+                for (Node ancestor = node; !ancestor.isRoot(); ancestor = ancestor.getParent()) {
+                    depth++;
+                }
+                assertTrue(depth <= maxDepth, "leaf " + node.getNr() + " has depth " + depth);
+            } else {
+                assertEquals(2, node.getChildCount());
+                for (Node child : node.getChildren()) {
+                    assertTrue(child.getHeight() < node.getHeight());
+                }
+            }
+        }
+    }
+
+    /**
+     * Checks that a caterpillar of a large taxon set, whose depth is the number of taxa, can be
+     * initialised and copied without overflowing the stack.
      */
     @Test
     public void testCopiesDeepCaterpillar() {
@@ -89,6 +129,7 @@ public class IncrementalStoreTreeTest {
 
         IncrementalStoreTree tree = new IncrementalStoreTree();
         tree.initByName("taxonset", new TaxonSet(taxa));
+        tree.makeCaterpillar(0, 1, true);
         Node copiedRoot = tree.getRoot().copy();
 
         // walk the copy without recursion, which would overflow the stack itself
@@ -118,7 +159,13 @@ public class IncrementalStoreTreeTest {
         for (int i = 0; i < NUM_TAXA; i++) {
             taxa.add(new Taxon("t" + i));
         }
-        tree.initByName("taxonset", new TaxonSet(taxa));
+        TaxonSet taxonSet = new TaxonSet(taxa);
+        tree.initByName("taxonset", taxonSet);
+
+        // start every chain from the balanced initial tree of the incremental store tree
+        IncrementalStoreTree initialTree = new IncrementalStoreTree();
+        initialTree.initByName("taxonset", taxonSet);
+        tree.assignFrom(initialTree);
 
         State state = new State();
         state.initByName("stateNode", tree);
