@@ -158,7 +158,7 @@
         <operator id="becomeUninfectiousRateEpiScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@becomeUninfectiousRateEpi.t:{{ID}}" scaleFactor="1.0" upper="10.0" weight="3.0"/>
         <operator id="ReEpiScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@ReEpi.t:{{ID}}" scaleFactor="0.1" upper="10.0" weight="3.0"/>
         <operator id="samplingProportionEpiScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@samplingProportionEpi.t:{{ID}}" scaleFactor="0.1" upper="10.0" weight="3.0"/>
-        <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="10.0"/>
+        <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0"/>
         <operator id="MutationDirectedSprOperator.{{ID}}" spec="emat.operators.topology.MutationDirectedSprOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" fullExplorationProbability="0.01" weight="25.0" scaleWeightByLogNumTips="true" windowProbability="0.3" subtreeSelection="BRANCH_LENGTH"/>
         <operator id="BatchNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.batch.BatchNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0" treePriorKnots="20">
             <adapter spec="adapters.BasicAdapter">
@@ -170,12 +170,10 @@
         </operator>
         <operator id="SiteHistoryGibbsOperator.{{ID}}" spec="emat.operators.mutations.SiteHistoryGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" siteSelection="PARSIMONY" pseudoCount="0.5" weight="20.0"/>
         <operator id="MissingCladeGibbsOperator.{{ID}}" spec="emat.operators.mutations.MissingCladeGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0"/>
-        <operator id="InnerNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.InnerNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0"/>
         <operator id="ClockIntervalScaleOperator.{{ID}}" spec="emat.operators.nodetimes.IntervalScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="5.0">
             <down idref="clockRate.c:{{ID}}"/>
         </operator>
-        <operator id="BranchReformOperator.{{ID}}" spec="emat.operators.mutations.BranchReformOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0"/>
-        <operator id="MutationTimeOperator.{{ID}}" spec="emat.operators.mutations.MutationTimeOperator" mutations="@mutations.{{ID}}" weight="15.0"/>
+        <operator id="BranchReformOperator.{{ID}}" spec="emat.operators.mutations.BranchReformOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0"/>
         <operator id="LinCombSliceOperator.{{ID}}" spec="slice.LinCombSliceOperator" weight="2.0">
             <adapter spec="adapters.BasicAdapter">
                 <transform spec="transforms.RealScalarLogTransform" parameter="@originBDMMPrime.t:{{ID}}"/>

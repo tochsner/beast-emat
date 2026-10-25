@@ -121,7 +121,7 @@
             <up idref="ePopSize.t:{{ID}}"/>
             <up idref="growthRate.t:{{ID}}"/>
         </operator>
-        <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="10.0"/>
+        <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0"/>
         <operator id="MutationDirectedSprOperator.{{ID}}" spec="emat.operators.topology.MutationDirectedSprOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" fullExplorationProbability="0.01" weight="25.0" scaleWeightByLogNumTips="true" windowProbability="0.3" subtreeSelection="BRANCH_LENGTH"/>
         <operator id="InnerNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.InnerNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0"/>
         <operator id="SiteHistoryGibbsOperator.{{ID}}" spec="emat.operators.mutations.SiteHistoryGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" siteSelection="PARSIMONY" pseudoCount="0.5" weight="20.0"/>
@@ -129,8 +129,7 @@
         <operator id="ClockIntervalScaleOperator.{{ID}}" spec="emat.operators.nodetimes.IntervalScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="5.0">
             <down idref="clockRate.c:{{ID}}"/>
         </operator>
-        <operator id="BranchReformOperator.{{ID}}" spec="emat.operators.mutations.BranchReformOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0"/>
-        <operator id="MutationTimeOperator.{{ID}}" spec="emat.operators.mutations.MutationTimeOperator" mutations="@mutations.{{ID}}" weight="15.0"/>
+        <operator id="BranchReformOperator.{{ID}}" spec="emat.operators.mutations.BranchReformOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0"/>
         <operator id="ePopSizeScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@ePopSize.t:{{ID}}" upper="10.0" weight="3.0"/>
         <operator id="GrowthRateRandomWalk.t:{{ID}}" spec="beast.base.spec.inference.operator.RealRandomWalkOperator" scalar="@growthRate.t:{{ID}}" scaleFactor="0.1" weight="3.0"/>
         <operator id="LinCombSliceOperator.{{ID}}" spec="slice.LinCombSliceOperator" weight="2.0">
