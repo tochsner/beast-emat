@@ -39,7 +39,7 @@ public class ExcessMutationLoggerTest {
         });
 
         int nodeNr = this.getNodeNr(tree, "A");
-        assertEquals("0:2@" + nodeNr + "(1,0.0)," + nodeNr + "(1,0.0)\t-", this.logExcess(mutations));
+        assertEquals("0:2@" + nodeNr + "(1,0.0)," + nodeNr + "(1,0.0)[A>C:1,C>A:1]\t-", this.logExcess(mutations));
     }
 
     @Test
@@ -67,7 +67,7 @@ public class ExcessMutationLoggerTest {
 
         int aNr = this.getNodeNr(tree, "A");
         int bNr = this.getNodeNr(tree, "B");
-        assertEquals("1:2@" + aNr + "(1,0.0)," + aNr + "(1,0.0)\t0:1@" + bNr + "(1,0.0)", this.logExcess(mutations));
+        assertEquals("1:2@" + aNr + "(1,0.0)," + aNr + "(1,0.0)[A>C:1,C>A:1]\t0:1@" + bNr + "(1,0.0)[A>C:1]", this.logExcess(mutations));
     }
 
     /** Both tips below X are missing at site 0, so the mutation above X needs no parsimony change. */
@@ -78,7 +78,7 @@ public class ExcessMutationLoggerTest {
                 new Mutation(this.getNodeNr(tree, "X"), 1.5, Mutation.BRANCH_START, 0, A, G)
         });
 
-        assertEquals("-\t0:1@" + this.getNodeNr(tree, "X") + "(2,1.0)", this.logExcess(mutations));
+        assertEquals("-\t0:1@" + this.getNodeNr(tree, "X") + "(2,1.0)[A>G:1]", this.logExcess(mutations));
     }
 
     private TreeParser createTree() {

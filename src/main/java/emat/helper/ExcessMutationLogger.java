@@ -5,6 +5,7 @@ import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.core.Loggable;
 import beast.base.evolution.alignment.Alignment;
+import beast.base.evolution.datatype.DataType;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
 import emat.state.Mutation;
@@ -13,13 +14,16 @@ import emat.state.Mutations;
 import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 @Description("Logs the mutations that exceed the parsimony score of the current tree, split into two columns. A " +
         "branch is unconstrained at a site if all tips below it are compatible with every state there, e.g. due to " +
         "gaps or missing data. The missing column holds the mutations on unconstrained branches, which parsimony " +
         "never needs. The conflict column holds, for every site where the remaining mutations exceed the Fitch " +
         "parsimony score of the site, the number of excess mutations among them. Both columns list their sites as " +
-        "site:excess@node(leaves,height) entries over the branches carrying the counted mutations.")
+        "site:excess@node(leaves,height)[old>new:count] entries over the branches carrying the counted mutations, " +
+        "followed by the frequency of every state transition among them.")
 public class ExcessMutationLogger extends BEASTObject implements Loggable {
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "the mutations to log the excess of", Input.Validate.REQUIRED);
@@ -61,10 +65,10 @@ public class ExcessMutationLogger extends BEASTObject implements Loggable {
 
             int conflictExcess = constrainedMutations.size() - parsimonyScores[site];
             if (conflictExcess > 0) {
-                conflictEntries.add(this.formatSite(tree, site, conflictExcess, constrainedMutations));
+                conflictEntries.add(this.formatSite(tree, alignment.getDataType(), site, conflictExcess, constrainedMutations));
             }
             if (!missingMutations.isEmpty()) {
-                missingEntries.add(this.formatSite(tree, site, missingMutations.size(), missingMutations));
+                missingEntries.add(this.formatSite(tree, alignment.getDataType(), site, missingMutations.size(), missingMutations));
             }
         }
 
@@ -122,14 +126,32 @@ public class ExcessMutationLogger extends BEASTObject implements Loggable {
         return mutationsAtSite;
     }
 
-    private String formatSite(TreeInterface tree, int site, int excess, List<Mutation> siteMutations) {
+    private String formatSite(TreeInterface tree, DataType dataType, int site, int excess, List<Mutation> siteMutations) {
         List<String> branches = new ArrayList<>();
         for (Mutation mutation : siteMutations) {
             Node node = tree.getNode(mutation.nodeNr());
             branches.add(node.getNr() + "(" + node.getLeafNodeCount() + "," + node.getHeight() + ")");
         }
 
-        return site + ":" + excess + "@" + String.join(",", branches);
+        return site + ":" + excess + "@" + String.join(",", branches) + "[" + this.formatTransitions(dataType, siteMutations) + "]";
+    }
+
+    /** Returns the number of mutations per state transition as old>new:count entries, ordered by old and then new state. */
+    private String formatTransitions(DataType dataType, List<Mutation> siteMutations) {
+        int stateCount = dataType.getStateCount();
+        Map<Integer, Integer> transitionCounts = new TreeMap<>();
+        for (Mutation mutation : siteMutations) {
+            transitionCounts.merge(mutation.oldState() * stateCount + mutation.newState(), 1, Integer::sum);
+        }
+
+        List<String> transitions = new ArrayList<>();
+        for (Map.Entry<Integer, Integer> entry : transitionCounts.entrySet()) {
+            String oldState = dataType.getCharacter(entry.getKey() / stateCount);
+            String newState = dataType.getCharacter(entry.getKey() % stateCount);
+            transitions.add(oldState + ">" + newState + ":" + entry.getValue());
+        }
+
+        return String.join(",", transitions);
     }
 
     /** Returns the given entries separated by semicolons, or the placeholder if there are none. */
