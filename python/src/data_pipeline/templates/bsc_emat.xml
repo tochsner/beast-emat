@@ -110,30 +110,23 @@
             </operator>
         </operator>
         <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="10.0"/>
-        <operator id="MutationDirectedSprOperator.{{ID}}" spec="emat.operators.topology.MutationDirectedSprOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" fullExplorationProbability="0.01" weight="20.0" scaleWeightByLogNumTips="true" windowProbability="0.3" subtreeSelection="BRANCH_LENGTH"/>
-        <operator id="BatchNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.batch.BatchNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0" treePriorKnots="20">
+        <operator id="MutationDirectedSprOperator.{{ID}}" spec="emat.operators.topology.MutationDirectedSprOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" fullExplorationProbability="0.01" weight="25.0" scaleWeightByLogNumTips="true" windowProbability="0.3" subtreeSelection="BRANCH_LENGTH"/>
+        <operator id="BatchNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.batch.BatchNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0" treePriorKnots="20">
             <adapter spec="adapters.BasicAdapter">
                 <transform spec="transforms.RealVectorLogTransform" parameter="@bPopSizes.t:{{ID}}"/>
             </adapter>
             <treePriorParameter idref="bGroupSizes.t:{{ID}}"/>
         </operator>
-        <operator id="SiteHistoryGibbsOperator.{{ID}}" spec="emat.operators.mutations.SiteHistoryGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" siteSelection="PARSIMONY" pseudoCount="0.5" weight="7.0"/>
-        <operator id="MissingCladeGibbsOperator.{{ID}}" spec="emat.operators.mutations.MissingCladeGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="7.0"/>
-        <operator id="LearnedWarpOperator.{{ID}}" spec="emat.operators.nodetimes.warp.LearnedWarpOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" treePrior="@BayesianSkyline.t:{{ID}}" hazard="AUTO" numKnots="20" minObservations="400" branchRateModel="@StrictClock.c:{{ID}}" fitImmutable="false" weight="10.0">
-            <adapter spec="adapters.BasicAdapter">
-                <transform spec="transforms.RealVectorLogTransform" parameter="@bPopSizes.t:{{ID}}"/>
-            </adapter>
-            <adapter spec="adapters.BasicAdapter" immutable="true">
-                <transform spec="transforms.IntVectorIdentityTransform" parameter="@bGroupSizes.t:{{ID}}"/>
-            </adapter>
-        </operator>
+        <operator id="SiteHistoryGibbsOperator.{{ID}}" spec="emat.operators.mutations.SiteHistoryGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" siteSelection="PARSIMONY" pseudoCount="0.5" weight="20.0"/>
+        <operator id="MissingCladeGibbsOperator.{{ID}}" spec="emat.operators.mutations.MissingCladeGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0"/>
+        <operator id="InnerNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.InnerNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0"/>
         <operator id="ClockIntervalScaleOperator.{{ID}}" spec="emat.operators.nodetimes.IntervalScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="5.0">
             <down idref="clockRate.c:{{ID}}"/>
         </operator>
         <operator id="BranchReformOperator.{{ID}}" spec="emat.operators.mutations.BranchReformOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0"/>
         <operator id="MutationTimeOperator.{{ID}}" spec="emat.operators.mutations.MutationTimeOperator" mutations="@mutations.{{ID}}" weight="15.0"/>
-        <operator id="popSizesScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@bPopSizes.t:{{ID}}" weight="15.0"/>
-        <operator id="groupSizesDelta.t:{{ID}}" spec="beast.base.spec.inference.operator.DeltaExchangeOperator" integer="true" ivparameter="@bGroupSizes.t:{{ID}}" weight="6.0"/>
+        <operator id="popSizesScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@bPopSizes.t:{{ID}}" weight="30.0"/>
+        <operator id="groupSizesDelta.t:{{ID}}" spec="beast.base.spec.inference.operator.DeltaExchangeOperator" integer="true" ivparameter="@bGroupSizes.t:{{ID}}" weight="30.0"/>
         <logger id="tracelog" spec="Logger" fileName="data/out/$(filebase)-$(seed).log" logEvery="1000" model="@posterior" sanitiseHeaders="true" sort="smart">
             <log idref="posterior"/>
             <log idref="likelihood"/>
