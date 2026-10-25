@@ -56,7 +56,8 @@ public class RootScaleOperatorTest {
         Setup setup = this.createSetup(new JukesCantor(), 1.0, SEQUENCE_A, SEQUENCE_B);
 
         RootScaleOperator operator = new RootScaleOperator();
-        operator.initByName("weight", 1.0, "tree", setup.tree(), "mutations", setup.mutations(), "scaleFactor", 0.5, "optimise", false);
+        operator.initByName("weight", 1.0, "tree", setup.tree(), "mutations", setup.mutations(), "historySampler", RootScaleOperator.PathHistory.LINEAR,
+                "scaleFactor", 0.5, "optimise", false);
 
         int numSites = SEQUENCE_A.length();
         int numMutations = 2;

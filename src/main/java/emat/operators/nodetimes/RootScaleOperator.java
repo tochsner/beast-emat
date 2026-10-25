@@ -9,10 +9,10 @@ import emat.stochasticmapping.HistorySampler;
 import emat.stochasticmapping.SubstitutionProcess;
 
 @Description("Scales the shorter of the two root branches by a factor drawn from a Bactrian kernel, which " +
-        "moves the root height. By default, the mutations on the branches below the root move linearly along " +
-        "with the root. Otherwise, the history of the path between the two root children is resampled for the " +
-        "new root height by the chosen history sampler, so that the number of mutations on the root branches " +
-        "follows their length, and the root sequence changes. Missations are not supported.")
+        "moves the root height. By default, the history of the path between the two root children is resampled " +
+        "for the new root height by the hybrid history sampler, so that the number of mutations on the root " +
+        "branches follows their length, and the root sequence changes. With LINEAR, the mutations on the branches " +
+        "below the root move linearly along with the root instead. Missations are not supported.")
 public class RootScaleOperator extends ScaleTunedOperator {
 
     /** How the history on the branches below the root follows the root. */
@@ -25,7 +25,7 @@ public class RootScaleOperator extends ScaleTunedOperator {
     final public Input<Double> scaleFactorInput = new Input<>("scaleFactor", "width of the kernel in log space: close to zero is very small jumps, larger is larger jumps.", 0.1);
     final public Input<PathHistory> historySamplerInput = new Input<>("historySampler", "how the history on the branches below the root follows the root: LINEAR maps the mutations linearly along with the root, " +
             "JUKES_CANTOR and HYBRID resample the history of the path between the root children with the history sampler of that name",
-            PathHistory.LINEAR, PathHistory.values());
+            PathHistory.HYBRID, PathHistory.values());
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model, which resampling the history requires");
 
     // the model and the resampler of the path between the root children, or null if the mutations are mapped linearly
@@ -44,7 +44,7 @@ public class RootScaleOperator extends ScaleTunedOperator {
         if (pathHistory != PathHistory.LINEAR) {
             GeneticPrior geneticPrior = this.geneticPriorInput.get();
             if (geneticPrior == null) {
-                throw new IllegalArgumentException("Resampling the history requires the geneticPrior input.");
+                throw new IllegalArgumentException("Resampling the history requires the geneticPrior input, or historySampler=\"LINEAR\".");
             }
 
             int numSites = this.mutations.getReferenceSequence().length;

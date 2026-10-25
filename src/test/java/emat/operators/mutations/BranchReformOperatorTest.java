@@ -21,7 +21,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BranchReformOperatorTest {
 
@@ -94,15 +93,21 @@ public class BranchReformOperatorTest {
     }
 
     /**
-     * On the tree ((A,B)X,C)R, the branch above A carries A -> G -> T at site 0 and C -> A at
-     * site 1. Under Jukes-Cantor every state leaves at the same rate, so the genetic prior
-     * does not depend on the times on that branch and they are uniform under the ordering
-     * constraints: the two mutations at site 0 follow the order statistics of two uniform
-     * draws on the branch, and the mutation at site 1 is uniform on the branch. The other
-     * branches are resampled as well, but this does not affect the branch above A.
+     * On the tree ((A,B)X,C)R, the branch above A of length 1 runs from A to T at site 0 and from C
+     * to A at site 1, and the move keeps both ends. Under Jukes-Cantor with escape rate 1, a site
+     * jumps k times with probability e^{-1} / k! and its jump chain ends in a given other state
+     * with probability (1 - (-1/3)^k) / 4, so given its end states, the number of mutations at
+     * each site has the posterior ∝ (1 - (-1/3)^k) / k!. The choice of the branch depends on its
+     * number of mutations under MUTATION_COUNT, which the Hastings ratio must correct for.
      */
     @Test
-    public void testInternalBranchTimesAreUniform() {
+    public void testInternalBranchHistoryMatchesPosterior() {
+        for (BranchReformOperator.BranchSelection branchSelection : BranchReformOperator.BranchSelection.values()) {
+            this.assertInternalBranchHistoryMatchesPosterior(branchSelection);
+        }
+    }
+
+    private void assertInternalBranchHistoryMatchesPosterior(BranchReformOperator.BranchSelection branchSelection) {
         Randomizer.setSeed(1);
 
         // B is the first taxon, so its sequence is the reference and the root sequence
@@ -131,87 +136,39 @@ public class BranchReformOperatorTest {
 
         GeneticPrior geneticPrior = this.createGeneticPrior(alignment, tree, mutations);
         BranchReformOperator operator = new BranchReformOperator();
-        operator.initByName("weight", 1.0, "mutations", mutations, "geneticPrior", geneticPrior);
+        operator.initByName("weight", 1.0, "mutations", mutations, "geneticPrior", geneticPrior, "branchSelection", branchSelection);
 
-        // run the chain and average the times on the branch above A
+        // run the chain and count the mutations per site on the branch above A
 
-        double[] sumTimes = new double[3];
+        int maxCount = 4;
+        int[][] siteCounts = new int[2][maxCount + 1];
 
         this.runChain(tree, mutations, geneticPrior, operator, () -> {
-            List<Mutation> branchMutations = mutations.getMutations(a);
-            int siteZeroCount = 0;
-            for (Mutation mutation : branchMutations) {
-                if (mutation.site() == 0) {
-                    sumTimes[siteZeroCount++] += mutation.time();
-                } else {
-                    sumTimes[2] += mutation.time();
-                }
+            int[] numMutations = new int[2];
+            for (Mutation mutation : mutations.getMutations(a)) {
+                numMutations[mutation.site()]++;
+            }
+            for (int site = 0; site < 2; site++) {
+                siteCounts[site][Math.min(numMutations[site], maxCount)]++;
             }
         });
 
-        assertEquals(2.0 / 3.0, sumTimes[0] / NUM_SAMPLES, 0.01);
-        assertEquals(1.0 / 3.0, sumTimes[1] / NUM_SAMPLES, 0.01);
-        assertEquals(0.5, sumTimes[2] / NUM_SAMPLES, 0.01);
-    }
-
-    /**
-     * On the tree ((A,B)X,(C,D)Y)R, only the branch above A carries a mutation. Every proposal must reform a
-     * branch: one below the root, or the branch above A. The branches above B, C and D have nothing to reform
-     * and are never chosen, so no proposal is rejected for being invalid, and the branch above A is chosen in
-     * a third of the proposals.
-     */
-    @Test
-    public void testOnlyChoosesBranchesThatCanBeReformed() {
-        Randomizer.setSeed(1);
-
-        Alignment alignment = new Alignment();
-        alignment.initByName("sequence", List.of(
-                new Sequence("B", "A"), new Sequence("A", "C"), new Sequence("C", "A"), new Sequence("D", "A")
-        ), "dataType", "nucleotide");
-
-        TreeParser tree = new TreeParser();
-        tree.initByName("newick", "((A:1.0,B:1.0):1.0,(C:1.0,D:1.0):1.0);", "IsLabelledNewick", true, "adjustTipHeights", false);
-
-        Mutations mutations = new Mutations();
-        mutations.initByName("tree", tree, "alignment", alignment);
-
-        Node a = this.getNodeByTaxon(tree, "A");
-        List<List<Mutation>> history = this.createEmptyHistory(tree);
-        history.get(a.getNr()).add(new Mutation(a.getNr(), 0.5, Mutation.BRANCH_START, 0, A, C));
-        mutations.initialiseMutations(history);
-
-        GeneticPrior geneticPrior = this.createGeneticPrior(alignment, tree, mutations);
-        BranchReformOperator operator = new BranchReformOperator();
-        operator.initByName("weight", 1.0, "mutations", mutations, "geneticPrior", geneticPrior);
-
-        // the history is kept as it is, so that the same three branches can be reformed in every proposal
-
-        int numProposals = 30000;
-        int numMoved = 0;
-        geneticPrior.calculateLogP();
-
-        for (int i = 0; i < numProposals; i++) {
-            List<List<Mutation>> oldHistory = new ArrayList<>();
-            for (Node node : tree.getNodesAsArray()) {
-                oldHistory.add(new ArrayList<>(mutations.getMutations(node)));
-            }
-            double oldTime = mutations.getMutations(a).get(0).time();
-
-            double logHastingsRatio = operator.proposal();
-            assertTrue(Double.isFinite(logHastingsRatio));
-
-            List<Mutation> branchMutations = mutations.getMutations(a);
-            if (branchMutations.size() == 1 && branchMutations.get(0).time() != oldTime) {
-                numMoved++;
-            }
-
-            for (Node node : tree.getNodesAsArray()) {
-                mutations.applyMutations(node, oldHistory.get(node.getNr()), operator);
-            }
-            geneticPrior.calculateLogP();
+        double[] weights = new double[maxCount + 1];
+        double totalWeight = 0.0;
+        double factorial = 1.0;
+        for (int k = 1; k < 30; k++) {
+            factorial *= k;
+            double weight = (1.0 - Math.pow(-1.0 / 3.0, k)) / factorial;
+            weights[Math.min(k, maxCount)] += weight;
+            totalWeight += weight;
         }
 
-        assertEquals(1.0 / 3.0, (double) numMoved / numProposals, 0.02);
+        for (int site = 0; site < 2; site++) {
+            for (int k = 1; k <= maxCount; k++) {
+                assertEquals(weights[k] / totalWeight, (double) siteCounts[site][k] / NUM_SAMPLES, 0.01,
+                        branchSelection + ": frequency of " + k + " mutations at site " + site);
+            }
+        }
     }
 
     /**

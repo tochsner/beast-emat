@@ -49,6 +49,6 @@ All operators keep the mutations on the tree consistent, and are grouped by what
 | Operator                    | Description                                                                                              |
 |-----------------------------|----------------------------------------------------------------------------------------------------------|
 | `MutationTimeOperator`      | Moves a single mutation between its neighbouring events at the same site.                                |
-| `BranchReformOperator`      | Redraws the mutation history of a branch without changing the tree.                                      |
+| `BranchReformOperator`      | Resamples the mutation history of a branch without changing the tree.                                    |
 | `SiteHistoryGibbsOperator`  | Resamples the complete history of a site by stochastic mapping.                                          |
 | `MissingCladeGibbsOperator` | Resamples the history of the clades whose data is missing around a tip.                                  |

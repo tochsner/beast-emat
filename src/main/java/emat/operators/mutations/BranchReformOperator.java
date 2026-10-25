@@ -6,176 +6,218 @@ import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.inference.Operator;
 import beast.base.util.Randomizer;
+import emat.helper.MutationPaths;
+import emat.helper.NodeStateLookup;
+import emat.helper.SiteChanges;
 import emat.operators.topology.BranchMutations;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
+import emat.stochasticmapping.BranchHistorySampler;
 import emat.stochasticmapping.HistorySampler;
 import emat.stochasticmapping.SubstitutionProcess;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
-@Description("Reforms the history of a random branch that lies below the root or carries a mutation, without " +
-        "changing the tree (branch reform, " +
-        "docs/mcmc-moves.md §9.2). On a branch below an internal node, all mutation times are redrawn " +
-        "uniformly on the branch, keeping the order of the mutations at each site. On a branch below the " +
-        "root, the history of the whole path through the root to the other child is resampled by the chosen " +
-        "history sampler, which lets mutations move between the two root branches and changes the root " +
-        "sequence. Missations are not supported.")
+@Description("Resamples the history of a branch without changing the tree (branch reform, docs/mcmc-moves.md §9.2). " +
+        "On a branch below an internal node, the whole history is resampled by the chosen history sampler given the " +
+        "sequences at both ends, so mutations can appear and disappear. On a branch below a binary root, the history " +
+        "of the whole path through the root to the other child is resampled, which lets mutations move between the " +
+        "two root branches and changes the root sequence. The branch is chosen uniformly or with a weight of its " +
+        "number of mutations plus one. Missations are not supported.")
 public class BranchReformOperator extends Operator {
+
+    /** How the branch to resample is chosen. */
+    public enum BranchSelection {
+        UNIFORM, MUTATION_COUNT
+    }
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "the mutations to operate on", Input.Validate.REQUIRED);
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model", Input.Validate.REQUIRED);
-    final public Input<HistorySampler> historySamplerInput = new Input<>("historySampler", "how the history of the path between the root children is resampled: JUKES_CANTOR under an approximating Jukes-Cantor model, " +
-            "HYBRID by choosing the sites with mutations under Jukes-Cantor and then sampling their histories exactly under the model of the genetic prior", HistorySampler.JUKES_CANTOR, HistorySampler.values());
+    final public Input<HistorySampler> historySamplerInput = new Input<>("historySampler", "how the history of a branch is resampled: JUKES_CANTOR under an approximating Jukes-Cantor model, " +
+            "HYBRID by choosing the sites with mutations with one probability for all states and then sampling their histories exactly under the model of the genetic prior", HistorySampler.HYBRID, HistorySampler.values());
+    final public Input<BranchSelection> branchSelectionInput = new Input<>("branchSelection", "how the branch is chosen: UNIFORM among all branches, or MUTATION_COUNT with a weight of the number of mutations " +
+            "on the branch plus one, which resamples every mutation equally often", BranchSelection.MUTATION_COUNT, BranchSelection.values());
 
     Mutations mutations;
     TreeInterface tree;
+    GeneticPrior geneticPrior;
+    BranchSelection branchSelection;
     BranchMutations mutationLinker;
     SubstitutionProcess process;
+    BranchHistorySampler historySampler;
     RootPathResampler rootPathResampler;
 
-    // the number of uniform draws of a node before the nodes whose branch can be reformed are listed
-    private static final int MAX_SAMPLING_ATTEMPTS = 64;
+    // reusable map of the sites whose states differ between the ends of the branch, and lookup of the states at its end
+    SiteChanges branchChanges;
+    SiteChanges differingSites;
+    NodeStateLookup endStates;
 
     @Override
     public void initAndValidate() {
         this.mutations = this.mutationsInput.get();
         this.tree = this.mutations.getTree();
+        this.geneticPrior = this.geneticPriorInput.get();
+        this.branchSelection = this.branchSelectionInput.get();
 
-        GeneticPrior geneticPrior = this.geneticPriorInput.get();
         int numSites = this.mutations.getReferenceSequence().length;
         this.mutationLinker = new BranchMutations(numSites);
-        this.process = new SubstitutionProcess(geneticPrior, this.tree, this.mutations.getAlignment().getMaxStateCount());
-        this.rootPathResampler = new RootPathResampler(
-                this.mutations, geneticPrior, this.process, this.historySamplerInput.get().create(this.process, numSites)
-        );
+        this.process = new SubstitutionProcess(this.geneticPrior, this.tree, this.mutations.getAlignment().getMaxStateCount());
+        this.historySampler = this.historySamplerInput.get().create(this.process, numSites);
+        this.rootPathResampler = new RootPathResampler(this.mutations, this.geneticPrior, this.process, this.historySampler);
+
+        this.branchChanges = new SiteChanges(numSites);
+        this.differingSites = new SiteChanges(numSites);
+        this.endStates = new NodeStateLookup(this.mutations, numSites);
     }
 
     /**
-     * Picks a branch uniformly among the branches whose history can be reformed, and reforms it. These are the
-     * branches below the root and the other branches that carry a mutation. The move keeps the number of
-     * mutations on a branch below an internal node and only moves mutations between the two branches below the
-     * root, so the set of these branches does not change and the choice is symmetric.
+     * Chooses a branch and resamples its history. Both branches below a binary root resample the
+     * same path, which keeps the root height. The probability of choosing the branch changes with
+     * its number of mutations under MUTATION_COUNT, which enters the Hastings ratio.
      */
     @Override
     public double proposal() {
-        Node node = this.sampleReformableBranch();
-        if (node == null) {
+        if (this.tree.getNodeCount() < 2) {
             return Double.NEGATIVE_INFINITY;
         }
 
-        if (node.getParent().isRoot()) {
-            // both branches below the root reform the same path, which keeps the root height
-            this.process.update();
-            return this.rootPathResampler.resample(node.getParent(), node.getParent().getHeight(), this);
-        } else {
-            return this.reformBranch(node);
-        }
+        double totalWeight = this.computeTotalWeight();
+        Node node = this.selectBranch(totalWeight);
+        double oldWeight = this.computeWeight(node);
+
+        this.process.update();
+        double logHastingsRatio = this.isOnRootPath(node)
+                ? this.rootPathResampler.resample(node.getParent(), node.getParent().getHeight(), this)
+                : this.resampleBranch(node);
+
+        // only the weight of the chosen branch changes, so the new total follows from it
+
+        double newWeight = this.computeWeight(node);
+        double newTotalWeight = totalWeight - oldWeight + newWeight;
+        return logHastingsRatio + Math.log(newWeight / newTotalWeight) - Math.log(oldWeight / totalWeight);
     }
 
-    /**
-     * Returns a node drawn uniformly among the nodes whose branch can be reformed, or null if there is none.
-     * Nodes are drawn uniformly until one of them qualifies, which is a uniform draw among the nodes that do.
-     */
-    private Node sampleReformableBranch() {
-        int numNodes = this.tree.getNodeCount();
+    /* Branch Selection */
 
-        for (int attempt = 0; attempt < MAX_SAMPLING_ATTEMPTS; attempt++) {
-            Node node = this.tree.getNode(Randomizer.nextInt(numNodes));
-            if (this.isReformable(node)) {
-                return node;
+    /** Returns the sum of the weights of all branches, which is the normaliser of the branch choice. */
+    private double computeTotalWeight() {
+        double totalWeight = 0.0;
+        int rootNr = this.tree.getRoot().getNr();
+        for (int nodeNr = 0; nodeNr < this.tree.getNodeCount(); nodeNr++) {
+            if (nodeNr != rootNr) {
+                totalWeight += this.computeBranchWeight(this.tree.getNode(nodeNr));
+            }
+        }
+        return totalWeight;
+    }
+
+    /** Returns a branch below a non-root node, drawn with a probability proportional to its weight. */
+    private Node selectBranch(double totalWeight) {
+        int rootNr = this.tree.getRoot().getNr();
+
+        if (this.branchSelection == BranchSelection.UNIFORM) {
+            while (true) {
+                int nodeNr = Randomizer.nextInt(this.tree.getNodeCount());
+                if (nodeNr != rootNr) {
+                    return this.tree.getNode(nodeNr);
+                }
             }
         }
 
-        // such nodes are rare or missing, so they are listed
+        double threshold = Randomizer.nextDouble() * totalWeight;
+        Node lastNode = null;
+        for (int nodeNr = 0; nodeNr < this.tree.getNodeCount(); nodeNr++) {
+            if (nodeNr == rootNr) {
+                continue;
+            }
 
-        List<Node> reformableNodes = new ArrayList<>();
-        for (int nodeNr = 0; nodeNr < numNodes; nodeNr++) {
-            Node node = this.tree.getNode(nodeNr);
-            if (this.isReformable(node)) {
-                reformableNodes.add(node);
+            lastNode = this.tree.getNode(nodeNr);
+            threshold -= this.computeBranchWeight(lastNode);
+            if (threshold < 0.0) {
+                return lastNode;
             }
         }
 
-        if (reformableNodes.isEmpty()) {
-            return null;
-        }
-        return reformableNodes.get(Randomizer.nextInt(reformableNodes.size()));
+        // rounding can leave a tiny remainder, which belongs to the last branch
+        return lastNode;
     }
 
     /**
-     * Returns whether the history of the branch above the given node can be reformed: the branch lies below a
-     * binary root, or it carries a mutation whose time can be redrawn.
+     * Returns the weight with which the move resamples the history of the given branch: its own
+     * weight, or the weights of both root branches if the branch lies on the root path.
      */
-    private boolean isReformable(Node node) {
-        if (node.isRoot()) {
-            return false;
+    private double computeWeight(Node node) {
+        if (!this.isOnRootPath(node)) {
+            return this.computeBranchWeight(node);
         }
 
+        double weight = 0.0;
+        for (Node child : node.getParent().getChildren()) {
+            weight += this.computeBranchWeight(child);
+        }
+        return weight;
+    }
+
+    /** Returns the weight of the branch above the given node: 1, or its number of mutations plus one. */
+    private double computeBranchWeight(Node node) {
+        if (this.branchSelection == BranchSelection.UNIFORM) {
+            return 1.0;
+        }
+        return this.mutations.getMutations(node).size() + 1.0;
+    }
+
+    /** Returns whether the branch above the given node lies below a binary root, which the move resamples as one path. */
+    private boolean isOnRootPath(Node node) {
         Node parent = node.getParent();
-        if (parent.isRoot()) {
-            return parent.getChildCount() == 2;
-        }
-        return !this.mutations.getMutations(node).isEmpty();
+        return parent.isRoot() && parent.getChildCount() == 2;
     }
 
     /* Branches Below an Internal Node */
 
     /**
-     * Redraws the times of all mutations on the branch above the given node uniformly on
-     * the branch. The times drawn for the mutations at one site are sorted and assigned in
-     * the original order, so the history at every site keeps its states. For a site with k
-     * mutations, the sorted times have density k! / τ^k on a branch of length τ, which does
-     * not depend on the old times, so the proposal is symmetric.
+     * Resamples the history on the branch above the given node given the sequences at both of its
+     * ends, which stay fixed. The Jukes-Cantor rate μ̃ = r λ(N) / L only depends on the branch
+     * rate r and the sequence of the node N, so the reverse move uses the same rate. Returns the
+     * log of α_mut(n → o) / α_mut(o → n).
      */
-    private double reformBranch(Node node) {
-        List<Mutation> branchMutations = this.mutations.getMutations(node);
+    private double resampleBranch(Node node) {
+        double startHeight = node.getParent().getHeight();
+        double endHeight = node.getHeight();
+        double rateScale = this.process.getRateScale(node);
+        double jukesCantorRate = this.geneticPrior.branchRateModel.getRateForBranch(node)
+                * this.geneticPrior.getTotalMutationRate(node) / this.mutations.getReferenceSequence().length;
 
-        // evolution runs forwards in time from the parent to the node
+        // the sites whose states differ between the parent and the node
 
-        double branchStartHeight = node.getParent().getHeight();
-        double branchEndHeight = node.getHeight();
-        double branchLength = branchStartHeight - branchEndHeight;
-
-        // draw a new time per mutation, grouped by site in the order of the mutations at that site
-
-        Map<Integer, List<Integer>> mutationNrsOfSite = new HashMap<>();
-        for (int i = 0; i < branchMutations.size(); i++) {
-            mutationNrsOfSite.computeIfAbsent(branchMutations.get(i).site(), site -> new ArrayList<>()).add(i);
-        }
-
-        double[] newTimes = new double[branchMutations.size()];
-
-        for (List<Integer> mutationNrs : mutationNrsOfSite.values()) {
-            List<Double> siteTimes = new ArrayList<>(mutationNrs.size());
-            for (int i = 0; i < mutationNrs.size(); i++) {
-                siteTimes.add(branchEndHeight + Randomizer.nextDouble() * branchLength);
-            }
-
-            // the mutations are sorted by descending height, so the earliest mutation at a site gets the highest time
-            siteTimes.sort(Comparator.reverseOrder());
-            for (int i = 0; i < mutationNrs.size(); i++) {
-                newTimes[mutationNrs.get(i)] = siteTimes.get(i);
+        MutationPaths.collectChanges(this.mutations, node.getParent(), node, endHeight, this.branchChanges);
+        this.differingSites.clear();
+        for (int slot = 0; slot < this.branchChanges.getSize(); slot++) {
+            int startState = this.branchChanges.getStartState(slot);
+            int endState = this.branchChanges.getEndState(slot);
+            if (startState != endState) {
+                this.differingSites.addSite(this.branchChanges.getSite(slot), startState, endState);
             }
         }
+        int numDifferingSites = this.differingSites.getSize();
 
-        List<Mutation> newBranchMutations = new ArrayList<>(branchMutations.size());
-        for (int i = 0; i < branchMutations.size(); i++) {
-            Mutation mutation = branchMutations.get(i);
-            newBranchMutations.add(new Mutation(
-                    mutation.nodeNr(), newTimes[i], Mutation.BRANCH_START,
-                    mutation.site(), mutation.oldState(), mutation.newState()
-            ));
-        }
+        List<Mutation> oldMutations = this.mutations.getMutations(node);
+        double logBackwardDensity = this.historySampler.computeLogBranchHistoryDensity(
+                oldMutations, startHeight, endHeight, rateScale, jukesCantorRate, numDifferingSites
+        );
 
-        this.mutations.applyMutations(node, this.mutationLinker.linkMutations(newBranchMutations), this);
+        // the agreeing sites keep the state of the node, which the move does not change
 
-        return 0.0;
+        List<Mutation> newMutations = this.historySampler.sampleBranchHistory(
+                node.getNr(), startHeight, endHeight, rateScale, jukesCantorRate, this.differingSites, this.endStates.resetFor(node)
+        );
+        double logForwardDensity = this.historySampler.computeLogBranchHistoryDensity(
+                newMutations, startHeight, endHeight, rateScale, jukesCantorRate, numDifferingSites
+        );
+
+        this.mutations.applyMutations(node, this.mutationLinker.linkMutations(newMutations), this);
+
+        return logBackwardDensity - logForwardDensity;
     }
 
 }

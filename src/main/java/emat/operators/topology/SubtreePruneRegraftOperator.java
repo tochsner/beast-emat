@@ -37,7 +37,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     final public Input<Boolean> resampleAmbiguousSitesInput = new Input<>("resampleAmbiguousSites", "whether a pruned tip also resamples its states among the compatible states at the sites where its data is partially ambiguous, " +
             "so that they follow its placement. Otherwise, these states stay fixed", true);
     final public Input<HistorySampler> historySamplerInput = new Input<>("historySampler", "how the history on the branch above the pruned subtree is resampled: JUKES_CANTOR under an approximating Jukes-Cantor model, " +
-            "HYBRID by choosing the sites with mutations under Jukes-Cantor and then sampling their histories exactly under the model of the genetic prior", HistorySampler.JUKES_CANTOR, HistorySampler.values());
+            "HYBRID by choosing the sites with mutations with one probability for all states and then sampling their histories exactly under the model of the genetic prior", HistorySampler.HYBRID, HistorySampler.values());
 
     private static final int[] NO_SITES = new int[0];
     private static final BitSet NO_SITE_SET = new BitSet();
