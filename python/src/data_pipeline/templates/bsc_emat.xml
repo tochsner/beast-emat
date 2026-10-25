@@ -109,7 +109,7 @@
                 <parameter idref="freqParameter.s:{{ID}}"/>
             </operator>
         </operator>
-        <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0"/>
+        <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="10.0"/>
         <operator id="MutationDirectedSprOperator.{{ID}}" spec="emat.operators.topology.MutationDirectedSprOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" fullExplorationProbability="0.01" weight="25.0" scaleWeightByLogNumTips="true" windowProbability="0.3" subtreeSelection="BRANCH_LENGTH"/>
         <operator id="BatchNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.batch.BatchNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0" treePriorKnots="20">
             <adapter spec="adapters.BasicAdapter">
