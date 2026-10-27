@@ -4,13 +4,19 @@ The logs are named <method>_<experiment>-<seed>.log and grouped by method. Every
 Runs that have not converged yet are extrapolated from the ESS per minute of their slowest parameter. The plots of each
 method show the median over the seeds, with the spread over the seeds as uncertainty. The plots are stored in the plots
 directory at the repository root, prefixed with the method.
+
+The analysis of each log and XML is cached and only redone once the file is modified or the analysis settings change,
+so that rerunning the script mostly just redraws the plots. Deleting the cache directory forces a full reanalysis.
 """
 
 import math
+import pickle
 import re
 import warnings
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import TypeVar
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,6 +32,7 @@ REPOSITORY_PATH = Path(__file__).resolve().parents[3]
 OUT_PATH = REPOSITORY_PATH / "data" / "out"
 XMLS_PATH = REPOSITORY_PATH / "data" / "xmls"
 PLOTS_PATH = REPOSITORY_PATH / "plots"
+CACHE_PATH = REPOSITORY_PATH / "data" / "cache" / "convergence_time"
 
 LOG_PATTERN = re.compile(r"(?P<method>.+)_(?P<experiment>[^_]+)-(?P<seed>\d+)\.log")
 SEQUENCE_PATTERN = re.compile(r'<sequence\b[^>]*\bvalue="([^"]*)"')
@@ -34,6 +41,8 @@ BURNIN_FRACTION = 0.1
 NUM_POINTS = 20
 INCLUDED_METHODS = {"coal_emat", "sbd_emat", "coal_emat_nofilter"}
 EXCLUDED_EXPERIMENTS = {"sars20000", "wnv", "ncbisc2"}
+
+T = TypeVar("T")
 
 
 def set_plot_theme() -> None:
@@ -73,6 +82,41 @@ def find_log_paths() -> dict[str, dict[tuple[str, int], Path]]:
     }
 
 
+def get_cached(path: Path, analyse: Callable[[Path], T]) -> T:
+    """Returns the result of `analyse` on the file, reusing the cached result while the file and the analysis settings are unchanged."""
+    stat = path.stat()
+    key = (stat.st_mtime_ns, stat.st_size, BURNIN_FRACTION, NUM_POINTS, SEED)
+    cache_path = CACHE_PATH / f"{analyse.__name__}_{path.name}.pkl"
+
+    # a missing, outdated or unreadable cache entry is recomputed
+    try:
+        with open(cache_path, "rb") as file:
+            cached = pickle.load(file)
+        if cached["key"] == key:
+            return cached["result"]
+    except (OSError, EOFError, KeyError, pickle.UnpicklingError):
+        pass
+
+    result = analyse(path)
+    CACHE_PATH.mkdir(parents=True, exist_ok=True)
+    with open(cache_path, "wb") as file:
+        pickle.dump({"key": key, "result": result}, file)
+    return result
+
+
+def analyse_log(log_path: Path) -> dict | None:
+    """Returns the ESS trajectory and the posterior mean number of mutations of a log, or None if the log is not usable."""
+    log_df = load_log(log_path)
+    if log_df is None:
+        return None
+
+    trajectory = get_ess_trajectory(log_df)
+    if trajectory is None:
+        return None
+
+    return {"trajectory": trajectory, "num_mutations": get_mean_num_mutations(log_df)}
+
+
 def get_job_start(log_path: Path) -> float | None:
     """Returns the timestamp of the `# Started job at` comment of the log file, or None if it has none."""
     pattern = re.compile(r"^# Started job at (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
@@ -105,19 +149,15 @@ def get_seconds_per_sample(log_path: Path, last_sample: int) -> float:
     return elapsed_seconds / last_sample
 
 
-def get_alignment_stats(method: str, experiment: str) -> dict[str, float]:
-    """Returns the number of sequences and the nucleotide diversity (mean pairwise p-distance) of the alignment of the run."""
-    encoded = read_alignment(method, experiment)
+def get_alignment_stats(xml_path: Path) -> dict[str, float]:
+    """Returns the number of sequences and the nucleotide diversity (mean pairwise p-distance) of the alignment in a BEAST XML."""
+    encoded = read_alignment(xml_path)
     diversity, _ = compute_mean_pairwise_distance(encoded, np.random.default_rng(SEED))
     return {"num_sequences": len(encoded), "diversity": diversity}
 
 
-def read_alignment(method: str, experiment: str) -> list[np.ndarray]:
-    """Returns the upper-case sequences of the alignment in the BEAST XML of the run, encoded as bytes."""
-    xml_path = XMLS_PATH / f"{method}_{experiment}.xml"
-    if not xml_path.exists():
-        raise ValueError(f"no XML found for {method}_{experiment}")
-
+def read_alignment(xml_path: Path) -> list[np.ndarray]:
+    """Returns the upper-case sequences of the alignment in a BEAST XML, encoded as bytes."""
     # the alignment is the first data block of the XML, with one sequence per line
     encoded = []
     with open(xml_path) as file:
@@ -137,59 +177,49 @@ def read_alignment(method: str, experiment: str) -> list[np.ndarray]:
     return encoded
 
 
-def load_logs(
-    log_paths: dict[tuple[str, int], Path],
-) -> dict[tuple[str, int], pd.DataFrame]:
-    """Reads the MCMC log of each experiment and seed, skipping any empty log files."""
-    logs = {}
+def load_log(log_path: Path) -> pd.DataFrame | None:
+    """Reads an MCMC log, or returns None if it is empty or unreadable."""
+    # Check if the file is empty and skip if so
+    if log_path.stat().st_size == 0:
+        print(f"Skipping empty log file: {log_path.name}")
+        return None
 
-    for key, log_path in log_paths.items():
-        # Check if the file is empty and skip if so
-        if log_path.stat().st_size == 0:
-            print(f"Skipping empty log file: {log_path.name}")
-            continue
+    # corrupted lines (e.g. partially written or interleaved ones) are dropped, whether they have too many fields,
+    # too few fields or values that are not numbers
+    try:
+        log_df = pd.read_csv(
+            log_path, comment="#", delimiter="\t", on_bad_lines="skip"
+        )
+    except (pd.errors.EmptyDataError, pd.errors.ParserError) as error:
+        print(f"Skipping unreadable log file: {log_path.name} ({error})")
+        return None
+    log_df = log_df.apply(pd.to_numeric, errors="coerce").dropna()
 
-        # corrupted lines (e.g. partially written or interleaved ones) are dropped, whether they have too many fields,
-        # too few fields or values that are not numbers
-        try:
-            log_df = pd.read_csv(
-                log_path, comment="#", delimiter="\t", on_bad_lines="skip"
-            )
-        except (pd.errors.EmptyDataError, pd.errors.ParserError) as error:
-            print(f"Skipping unreadable log file: {log_path.name} ({error})")
-            continue
-        log_df = log_df.apply(pd.to_numeric, errors="coerce").dropna()
+    # two merged lines can still have the right number of fields, but then their sample exceeds the next one
+    if "Sample" in log_df.columns:
+        next_sample = log_df["Sample"].shift(-1, fill_value=np.inf)
+        log_df = log_df[log_df["Sample"] < next_sample]
 
-        # two merged lines can still have the right number of fields, but then their sample exceeds the next one
-        if "Sample" in log_df.columns:
-            next_sample = log_df["Sample"].shift(-1, fill_value=np.inf)
-            log_df = log_df[log_df["Sample"] < next_sample]
+    # Also skip if the log_df is empty after reading (empty header file, etc)
+    if (
+        log_df.empty
+        or "Sample" not in log_df.columns
+        or log_df["Sample"].iloc[-1] <= 0
+    ):
+        print(f"Skipping log file (no data after parsing): {log_path.name}")
+        return None
 
-        # Also skip if the log_df is empty after reading (empty header file, etc)
-        if (
-            log_df.empty
-            or "Sample" not in log_df.columns
-            or log_df["Sample"].iloc[-1] <= 0
-        ):
-            print(f"Skipping log file (no data after parsing): {log_path.name}")
-            continue
+    seconds_per_sample = get_seconds_per_sample(log_path, log_df["Sample"].iloc[-1])
+    log_df["minutes"] = log_df["Sample"] * seconds_per_sample / 60
 
-        seconds_per_sample = get_seconds_per_sample(log_path, log_df["Sample"].iloc[-1])
-        log_df["minutes"] = log_df["Sample"] * seconds_per_sample / 60
-
-        logs[key] = log_df
-
-    return logs
+    return log_df
 
 
-def get_mean_num_mutations(log_dfs: list[pd.DataFrame]) -> float:
-    """Returns the posterior mean number of mutations after the burn-in, averaged over the seeds, or NaN if it is not logged."""
-    means = [
-        log_df["mutations.count"].iloc[int(len(log_df) * BURNIN_FRACTION) :].mean()
-        for log_df in log_dfs
-        if "mutations.count" in log_df.columns
-    ]
-    return float(np.mean(means)) if means else float("nan")
+def get_mean_num_mutations(log_df: pd.DataFrame) -> float:
+    """Returns the posterior mean number of mutations after the burn-in, or NaN if it is not logged."""
+    if "mutations.count" not in log_df.columns:
+        return float("nan")
+    return float(log_df["mutations.count"].iloc[int(len(log_df) * BURNIN_FRACTION) :].mean())
 
 
 def get_ess_trajectory(log_df: pd.DataFrame) -> pd.DataFrame | None:
@@ -546,16 +576,20 @@ def plot_relative_convergence_time(
 
 def analyse_method(method: str, log_paths: dict[tuple[str, int], Path]) -> None:
     """Analyses all seeds of all experiments of a method and plots the results, prefixed with the method."""
-    logs = load_logs(log_paths)
+    log_results = {key: get_cached(log_path, analyse_log) for key, log_path in log_paths.items()}
+    log_results = {key: result for key, result in log_results.items() if result is not None}
+    if not log_results:
+        print(f"\n{method}: no usable runs, skipping")
+        return
 
     # experiments without a readable XML cannot be placed on the plots
     alignment_stats = {}
-    for experiment in sorted({experiment for experiment, _ in logs}):
+    for experiment in sorted({experiment for experiment, _ in log_results}):
         try:
-            alignment_stats[experiment] = get_alignment_stats(method, experiment)
+            alignment_stats[experiment] = get_cached(XMLS_PATH / f"{method}_{experiment}.xml", get_alignment_stats)
         except (ValueError, OSError) as error:
             print(f"Skipping experiment {method}_{experiment}: {error}")
-    logs = {key: log_df for key, log_df in logs.items() if key[0] in alignment_stats}
+    log_results = {key: result for key, result in log_results.items() if key[0] in alignment_stats}
     experiments = sorted(alignment_stats)
 
     # each experiment keeps the same color in all plots of the method
@@ -567,32 +601,20 @@ def analyse_method(method: str, log_paths: dict[tuple[str, int], Path]) -> None:
     )
     experiment_colors = dict(zip(experiments, palette))
 
-    ess_trajectories = {key: get_ess_trajectory(log_df) for key, log_df in logs.items()}
-    ess_trajectories = {
-        key: trajectory
-        for key, trajectory in ess_trajectories.items()
-        if trajectory is not None
-    }
-    if not ess_trajectories:
-        print(f"\n{method}: no usable runs, skipping")
-        return
-    experiments = [
-        experiment
-        for experiment in experiments
-        if any(experiment == key[0] for key in ess_trajectories)
-    ]
-    experiment_colors = {
-        experiment: experiment_colors[experiment] for experiment in experiments
-    }
-    experiment_stats = {
-        experiment: {
+    ess_trajectories = {key: result["trajectory"] for key, result in log_results.items()}
+
+    # the number of mutations is averaged over the seeds that log it
+    experiment_stats = {}
+    for experiment in experiments:
+        num_mutations = [
+            result["num_mutations"]
+            for key, result in log_results.items()
+            if key[0] == experiment and not np.isnan(result["num_mutations"])
+        ]
+        experiment_stats[experiment] = {
             **alignment_stats[experiment],
-            "num_mutations": get_mean_num_mutations(
-                [log_df for key, log_df in logs.items() if key[0] == experiment]
-            ),
+            "num_mutations": float(np.mean(num_mutations)) if num_mutations else float("nan"),
         }
-        for experiment in experiments
-    }
 
     convergence_df = get_convergence_df(ess_trajectories)
     summary_df = get_summary_df(convergence_df, experiment_stats)
