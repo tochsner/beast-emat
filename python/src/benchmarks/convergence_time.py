@@ -32,6 +32,7 @@ SEQUENCE_PATTERN = re.compile(r'<sequence\b[^>]*\bvalue="([^"]*)"')
 TARGET_ESS = 200
 BURNIN_FRACTION = 0.1
 NUM_POINTS = 20
+INCLUDED_METHODS = {"coal_emat", "sbd_emat", "coal_emat_nofilter"}
 EXCLUDED_EXPERIMENTS = {"sars20000", "wnv", "ncbisc2"}
 
 
@@ -57,7 +58,11 @@ def find_log_paths() -> dict[str, dict[tuple[str, int], Path]]:
     log_paths = {}
     for path in OUT_PATH.glob("*.log"):
         match = LOG_PATTERN.fullmatch(path.name)
-        if match and match.group("experiment") not in EXCLUDED_EXPERIMENTS:
+        if (
+            match
+            and match.group("method") in INCLUDED_METHODS
+            and match.group("experiment") not in EXCLUDED_EXPERIMENTS
+        ):
             method = match.group("method")
             key = (match.group("experiment"), int(match.group("seed")))
             log_paths.setdefault(method, {})[key] = path
@@ -144,12 +149,21 @@ def load_logs(
             print(f"Skipping empty log file: {log_path.name}")
             continue
 
-        # a run that is still in progress may have a partially written last line
+        # corrupted lines (e.g. partially written or interleaved ones) are dropped, whether they have too many fields,
+        # too few fields or values that are not numbers
         try:
-            log_df = pd.read_csv(log_path, comment="#", delimiter="\t").dropna()
+            log_df = pd.read_csv(
+                log_path, comment="#", delimiter="\t", on_bad_lines="skip"
+            )
         except (pd.errors.EmptyDataError, pd.errors.ParserError) as error:
             print(f"Skipping unreadable log file: {log_path.name} ({error})")
             continue
+        log_df = log_df.apply(pd.to_numeric, errors="coerce").dropna()
+
+        # two merged lines can still have the right number of fields, but then their sample exceeds the next one
+        if "Sample" in log_df.columns:
+            next_sample = log_df["Sample"].shift(-1, fill_value=np.inf)
+            log_df = log_df[log_df["Sample"] < next_sample]
 
         # Also skip if the log_df is empty after reading (empty header file, etc)
         if (
