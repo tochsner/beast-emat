@@ -32,6 +32,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fasta-dir", type=Path, default=REPO_ROOT / "data" / "fasta", help="directory with the FASTA files")
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "data" / "summary.md", help="markdown output file")
+    parser.add_argument("--typst-out", type=Path, default=REPO_ROOT / "data" / "summary.typ", help="typst output file")
     args = parser.parse_args()
 
     rng = np.random.default_rng(SEED)
@@ -43,6 +44,10 @@ def main():
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(format_table(rows))
     print(f"wrote {args.out}")
+
+    args.typst_out.parent.mkdir(parents=True, exist_ok=True)
+    args.typst_out.write_text(format_typst_table(rows))
+    print(f"wrote {args.typst_out}")
 
 
 def summarise_dataset(path, rng):
@@ -128,7 +133,7 @@ def count_fully_constant_sites(encoded):
 def format_table(rows):
     """Returns the summary rows as a markdown table."""
     lines = [
-        "| Dataset | Sequences | Min length | Max length | Missing fraction | Ambiguous fraction | Mean pairwise distance | Pairs compared | Fully constant sites |",
+        "| Dataset | Sequences | Min length | Max length | Missing fraction | Ambiguous fraction | Nucleotide diversity (π) | Pairs compared | Fully constant sites |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
@@ -142,6 +147,28 @@ def format_table(rows):
             f"| {row['missing_fraction']:.4f} | {row['ambiguous_fraction']:.4f} | {distance} | {pairs} | {constant} |"
         )
     return "\n".join(lines) + "\n"
+
+
+def format_typst_table(rows):
+    """Returns the dataset name, sequence count, nucleotide diversity and missing fraction of the summary rows as a typst table."""
+    lines = [
+        "#table(",
+        "  columns: 4,",
+        "  align: (left, right, right, right),",
+        "  table.header([*Dataset*], [*Sequences*], [*Nucleotide diversity ($pi$)*], [*Missing fraction*]),",
+    ]
+    for row in rows:
+        diversity = "n/a" if row["mean_distance"] is None else f"{row['mean_distance']:.4f}"
+        cells = [row["name"], str(row["sequences"]), diversity, f"{row['missing_fraction']:.4f}"]
+        lines.append("  " + ", ".join(format_typst_string(cell) for cell in cells) + ",")
+    lines.append(")")
+    return "\n".join(lines) + "\n"
+
+
+def format_typst_string(text):
+    """Returns the text as a typst string literal, so that markup characters like `_` or `*` are not interpreted."""
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 if __name__ == "__main__":

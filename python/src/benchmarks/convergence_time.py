@@ -2,7 +2,7 @@
 
 The logs are named <method>_<experiment>-<seed>.log and grouped by method. Every seed of a run is analysed separately.
 Runs that have not converged yet are extrapolated from the ESS per minute of their slowest parameter. The plots of each
-method show the mean over the seeds, with the spread over the seeds as uncertainty. The plots are stored in the plots
+method show the median over the seeds, with the spread over the seeds as uncertainty. The plots are stored in the plots
 directory at the repository root, prefixed with the method.
 """
 
@@ -18,17 +18,21 @@ import pandas as pd
 import seaborn as sns
 from adjustText import adjust_text
 
+from src.data_pipeline.summary import SEED, compute_mean_pairwise_distance
 from src.utils.ess import compute_ess
 
 # the run outputs live in the data directory at the repository root
 REPOSITORY_PATH = Path(__file__).resolve().parents[3]
 OUT_PATH = REPOSITORY_PATH / "data" / "out"
+XMLS_PATH = REPOSITORY_PATH / "data" / "xmls"
 PLOTS_PATH = REPOSITORY_PATH / "plots"
 
 LOG_PATTERN = re.compile(r"(?P<method>.+)_(?P<experiment>[^_]+)-(?P<seed>\d+)\.log")
+SEQUENCE_PATTERN = re.compile(r'<sequence\b[^>]*\bvalue="([^"]*)"')
 TARGET_ESS = 200
 BURNIN_FRACTION = 0.1
-NUM_POINTS = 200
+NUM_POINTS = 20
+EXCLUDED_EXPERIMENTS = {"sars20000", "wnv", "ncbisc2"}
 
 
 def set_plot_theme() -> None:
@@ -53,12 +57,15 @@ def find_log_paths() -> dict[str, dict[tuple[str, int], Path]]:
     log_paths = {}
     for path in OUT_PATH.glob("*.log"):
         match = LOG_PATTERN.fullmatch(path.name)
-        if match:
+        if match and match.group("experiment") not in EXCLUDED_EXPERIMENTS:
             method = match.group("method")
             key = (match.group("experiment"), int(match.group("seed")))
             log_paths.setdefault(method, {})[key] = path
 
-    return {method: dict(sorted(paths.items())) for method, paths in sorted(log_paths.items())}
+    return {
+        method: dict(sorted(paths.items()))
+        for method, paths in sorted(log_paths.items())
+    }
 
 
 def get_job_start(log_path: Path) -> float | None:
@@ -68,7 +75,9 @@ def get_job_start(log_path: Path) -> float | None:
         for line in file:
             match = pattern.match(line)
             if match:
-                return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").timestamp()
+                return datetime.strptime(
+                    match.group(1), "%Y-%m-%d %H:%M:%S"
+                ).timestamp()
     return None
 
 
@@ -79,29 +88,53 @@ def get_seconds_per_sample(log_path: Path, last_sample: int) -> float:
     start_timestamp = get_job_start(log_path)
     if start_timestamp is None:
         # st_birthtime is not available on all platforms (e.g. Linux), where the oldest known timestamp is used instead
-        start_timestamp = getattr(stat, "st_birthtime", min(stat.st_ctime, stat.st_mtime))
+        start_timestamp = getattr(
+            stat, "st_birthtime", min(stat.st_ctime, stat.st_mtime)
+        )
 
     # the log file is last modified when the last sample was logged
     elapsed_seconds = max(stat.st_mtime - start_timestamp, 1.0)
-    print(f"{log_path.name}: estimated {elapsed_seconds / last_sample * 1e6:.0f}s per million samples from the file timestamps")
+    print(
+        f"{log_path.name}: estimated {elapsed_seconds / last_sample * 1e6:.0f}s per million samples from the file timestamps"
+    )
     return elapsed_seconds / last_sample
 
 
-def get_num_sequences(method: str, experiment: str) -> int:
-    """Returns the number of sequences, read from the header of a tree file of the run."""
-    tree_path = next(OUT_PATH.glob(f"{method}_{experiment}-*.trees"), None)
-    if tree_path is None:
-        raise ValueError(f"no tree file found for {method}_{experiment}")
+def get_alignment_stats(method: str, experiment: str) -> dict[str, float]:
+    """Returns the number of sequences and the nucleotide diversity (mean pairwise p-distance) of the alignment of the run."""
+    encoded = read_alignment(method, experiment)
+    diversity, _ = compute_mean_pairwise_distance(encoded, np.random.default_rng(SEED))
+    return {"num_sequences": len(encoded), "diversity": diversity}
 
-    with open(tree_path) as file:
+
+def read_alignment(method: str, experiment: str) -> list[np.ndarray]:
+    """Returns the upper-case sequences of the alignment in the BEAST XML of the run, encoded as bytes."""
+    xml_path = XMLS_PATH / f"{method}_{experiment}.xml"
+    if not xml_path.exists():
+        raise ValueError(f"no XML found for {method}_{experiment}")
+
+    # the alignment is the first data block of the XML, with one sequence per line
+    encoded = []
+    with open(xml_path) as file:
         for line in file:
-            match = re.search(r"ntax\s*=\s*(\d+)", line, re.IGNORECASE)
+            match = SEQUENCE_PATTERN.search(line)
             if match:
-                return int(match.group(1))
-    raise ValueError(f"no ntax found in {tree_path}")
+                encoded.append(
+                    np.frombuffer(
+                        match.group(1).upper().encode("ascii"), dtype=np.uint8
+                    )
+                )
+            if "</data>" in line:
+                break
+
+    if not encoded:
+        raise ValueError(f"no sequences found in {xml_path}")
+    return encoded
 
 
-def load_logs(log_paths: dict[tuple[str, int], Path]) -> dict[tuple[str, int], pd.DataFrame]:
+def load_logs(
+    log_paths: dict[tuple[str, int], Path],
+) -> dict[tuple[str, int], pd.DataFrame]:
     """Reads the MCMC log of each experiment and seed, skipping any empty log files."""
     logs = {}
 
@@ -119,7 +152,11 @@ def load_logs(log_paths: dict[tuple[str, int], Path]) -> dict[tuple[str, int], p
             continue
 
         # Also skip if the log_df is empty after reading (empty header file, etc)
-        if log_df.empty or "Sample" not in log_df.columns or log_df["Sample"].iloc[-1] <= 0:
+        if (
+            log_df.empty
+            or "Sample" not in log_df.columns
+            or log_df["Sample"].iloc[-1] <= 0
+        ):
             print(f"Skipping log file (no data after parsing): {log_path.name}")
             continue
 
@@ -131,6 +168,16 @@ def load_logs(log_paths: dict[tuple[str, int], Path]) -> dict[tuple[str, int], p
     return logs
 
 
+def get_mean_num_mutations(log_dfs: list[pd.DataFrame]) -> float:
+    """Returns the posterior mean number of mutations after the burn-in, averaged over the seeds, or NaN if it is not logged."""
+    means = [
+        log_df["mutations.count"].iloc[int(len(log_df) * BURNIN_FRACTION) :].mean()
+        for log_df in log_dfs
+        if "mutations.count" in log_df.columns
+    ]
+    return float(np.mean(means)) if means else float("nan")
+
+
 def get_ess_trajectory(log_df: pd.DataFrame) -> pd.DataFrame | None:
     """Computes the ESS of each parameter at evenly spaced points in time, as if the run were stopped there.
 
@@ -138,9 +185,11 @@ def get_ess_trajectory(log_df: pd.DataFrame) -> pd.DataFrame | None:
     """
     # constant and non-numeric columns are left out, as their ESS is undefined
     columns = [
-        column for column in log_df.columns
+        column
+        for column in log_df.columns
         if column not in ["Sample", "minutes", "mutations.excessCount"]
-        and pd.api.types.is_numeric_dtype(log_df[column]) and log_df[column].std() > 0
+        and pd.api.types.is_numeric_dtype(log_df[column])
+        and log_df[column].std() > 0
     ]
     if len(log_df) < 20 or not columns:
         print("Skipping run with too few samples or no varying parameters")
@@ -163,7 +212,9 @@ def get_ess_trajectory(log_df: pd.DataFrame) -> pd.DataFrame | None:
     return pd.DataFrame(rows).set_index("minutes")
 
 
-def get_convergence_df(ess_trajectories: dict[tuple[str, int], pd.DataFrame]) -> pd.DataFrame:
+def get_convergence_df(
+    ess_trajectories: dict[tuple[str, int], pd.DataFrame],
+) -> pd.DataFrame:
     """Returns the time at which each parameter of each seed reaches the target ESS, projected if it has not yet."""
     convergence_rows = []
 
@@ -178,24 +229,31 @@ def get_convergence_df(ess_trajectories: dict[tuple[str, int], pd.DataFrame]) ->
                 minutes, projected = trajectory.index[0], False
             elif not below_target[-1]:
                 # the first point after the last drop below the target
-                minutes, projected = trajectory.index[len(below_target) - np.argmax(below_target[::-1])], False
+                minutes, projected = (
+                    trajectory.index[len(below_target) - np.argmax(below_target[::-1])],
+                    False,
+                )
             else:
                 minutes, projected = TARGET_ESS / (final_ess / end_minutes), True
 
-            convergence_rows.append({
-                "experiment": experiment,
-                "seed": seed,
-                "parameter": column,
-                "minutes": minutes,
-                "projected": projected,
-                "ess_per_minute": final_ess / end_minutes,
-            })
+            convergence_rows.append(
+                {
+                    "experiment": experiment,
+                    "seed": seed,
+                    "parameter": column,
+                    "minutes": minutes,
+                    "projected": projected,
+                    "ess_per_minute": final_ess / end_minutes,
+                }
+            )
 
     return pd.DataFrame(convergence_rows)
 
 
-def get_summary_df(convergence_df: pd.DataFrame, num_sequences: dict[str, int]) -> pd.DataFrame:
-    """Returns the running time of each run, averaged over its seeds, with the range over the seeds.
+def get_summary_df(
+    convergence_df: pd.DataFrame, experiment_stats: dict[str, dict[str, float]]
+) -> pd.DataFrame:
+    """Returns the median running time of each run over its seeds, with the range over the seeds.
 
     The status is projected if any seed of the run has not converged yet.
     """
@@ -211,15 +269,19 @@ def get_summary_df(convergence_df: pd.DataFrame, num_sequences: dict[str, int]) 
         slowest_df.groupby("experiment")
         .agg(
             num_seeds=("seed", "count"),
-            minutes=("minutes", "mean"),
+            minutes=("minutes", "median"),
             min_minutes=("minutes", "min"),
             max_minutes=("minutes", "max"),
             projected=("projected", "any"),
-            slowest_parameter=("parameter", lambda parameters: parameters.mode().iloc[0]),
+            slowest_parameter=(
+                "parameter",
+                lambda parameters: parameters.mode().iloc[0],
+            ),
         )
         .reset_index()
     )
-    summary_df["num_sequences"] = summary_df["experiment"].map(num_sequences)
+    stats_df = pd.DataFrame.from_dict(experiment_stats, orient="index")
+    summary_df = summary_df.join(stats_df, on="experiment")
     summary_df["status"] = np.where(summary_df["projected"], "projected", "observed")
 
     return summary_df
@@ -235,24 +297,97 @@ def format_minutes(minutes: float) -> str:
     return f"{minutes // 60}h{minutes % 60}min"
 
 
-def plot_convergence_time(method: str, summary_df: pd.DataFrame, experiment_colors: dict[str, tuple]) -> None:
-    """Plots the mean running time of each run against its number of sequences, with the range over its seeds."""
+def plot_convergence_time(
+    method: str, summary_df: pd.DataFrame, experiment_colors: dict[str, tuple]
+) -> None:
+    """Plots the median running time of each run against its number of sequences, with the range over its seeds."""
+    plot_running_time_against(
+        method,
+        summary_df,
+        experiment_colors,
+        x_column="num_sequences",
+        x_label="number of sequences",
+        x_format="d",
+        file_suffix="convergence_time",
+    )
+
+
+def plot_diversity_convergence_time(
+    method: str, summary_df: pd.DataFrame, experiment_colors: dict[str, tuple]
+) -> None:
+    """Plots the median running time of each run against its nucleotide diversity, with the range over its seeds."""
+    plot_running_time_against(
+        method,
+        summary_df,
+        experiment_colors,
+        x_column="diversity",
+        x_label="nucleotide diversity (π)",
+        x_format=".4f",
+        file_suffix="diversity_convergence_time",
+    )
+
+
+def plot_mutations_convergence_time(
+    method: str, summary_df: pd.DataFrame, experiment_colors: dict[str, tuple]
+) -> None:
+    """Plots the median running time of each run against its posterior mean number of mutations, with the range over its seeds."""
+    plot_running_time_against(
+        method,
+        summary_df,
+        experiment_colors,
+        x_column="num_mutations",
+        x_label="number of mutations (posterior mean)",
+        x_format=".0f",
+        file_suffix="mutations_convergence_time",
+    )
+
+
+def plot_running_time_against(
+    method: str,
+    summary_df: pd.DataFrame,
+    experiment_colors: dict[str, tuple],
+    x_column: str,
+    x_label: str,
+    x_format: str,
+    file_suffix: str,
+) -> None:
+    """Plots the median running time of each run against a column of the summary, with the range over its seeds."""
+    # runs that do not log the column cannot be placed on the plot
+    summary_df = summary_df.dropna(subset=[x_column])
+    if summary_df.empty:
+        print(f"{method}: no runs with {x_column}, skipping the {file_suffix} plot")
+        return
+
     fig, ax = plt.subplots(figsize=(9, 5))
 
     for _, row in summary_df.iterrows():
         ax.errorbar(
-            row["num_sequences"], row["minutes"],
-            yerr=[[row["minutes"] - row["min_minutes"]], [row["max_minutes"] - row["minutes"]]],
-            fmt="X" if row["status"] == "projected" else "o", color=experiment_colors[row["experiment"]],
-            markersize=10.5, markeredgecolor="white", markeredgewidth=1.5, elinewidth=1.2, capsize=3,
+            row[x_column],
+            row["minutes"],
+            yerr=[
+                [row["minutes"] - row["min_minutes"]],
+                [row["max_minutes"] - row["minutes"]],
+            ],
+            fmt="X" if row["status"] == "projected" else "o",
+            color=experiment_colors[row["experiment"]],
+            markersize=10.5,
+            markeredgecolor="white",
+            markeredgewidth=1.5,
+            elinewidth=1.2,
+            capsize=3,
         )
 
     # the axes start slightly below zero, so that points close to zero are not cut off
     ax.set_yscale("log")
     ax.set_xscale("log")
-    ax.set_xlim(-0.03 * summary_df["num_sequences"].max(), summary_df["num_sequences"].max() * 1.25)
-    ax.set_ylim(-0.03 * summary_df["min_minutes"].max(), summary_df["max_minutes"].max() * 1.2)
-    ax.set_xlabel("number of sequences")
+    ax.set_xlim(
+        -0.03 * summary_df[x_column].max(),
+        summary_df[x_column].max() * 1.25,
+    )
+    ax.set_ylim(
+        -0.03 * summary_df["min_minutes"].max(), summary_df["max_minutes"].max() * 1.2
+    )
+    ax.set_xlabel(x_label)
     ax.set_ylabel("running time (min)")
     ax.set_title(f"{method}: running time until ESS ≥ 200 on all parameters")
 
@@ -261,33 +396,55 @@ def plot_convergence_time(method: str, summary_df: pd.DataFrame, experiment_colo
     # labels are pushed apart iteratively until they overlap neither each other nor the points
     texts = [
         ax.text(
-            row["num_sequences"], row["minutes"],
-            f"{row['experiment']} ({row['num_sequences']}, {format_minutes(row['minutes'])})",
-            fontsize=10, color="#444444",
+            row[x_column],
+            row["minutes"],
+            f"{row['experiment']} ({row[x_column]:{x_format}}, {format_minutes(row['minutes'])})",
+            fontsize=10,
+            color="#444444",
         )
         for _, row in summary_df.iterrows()
     ]
     adjust_text(
-        texts, x=summary_df["num_sequences"], y=summary_df["minutes"], ax=ax,
-        arrowprops={"arrowstyle": "-", "color": "#bbbbbb", "linewidth": 0.8, "shrinkB": 6},
-        expand=(0.8, 0.8),
+        texts,
+        x=summary_df[x_column],
+        y=summary_df["minutes"],
+        ax=ax,
+        arrowprops={
+            "arrowstyle": "-",
+            "color": "#bbbbbb",
+            "linewidth": 0.8,
+            "shrinkB": 6,
+        },
+        expand=(0.5, 1.5),
     )
 
-    fig.savefig(PLOTS_PATH / f"{method}_convergence_time.png", dpi=200, bbox_inches="tight")
+    fig.savefig(
+        PLOTS_PATH / f"{method}_{file_suffix}.png", dpi=200, bbox_inches="tight"
+    )
     plt.close(fig)
 
 
-def plot_min_ess_trajectories(method: str, ess_trajectories: dict[tuple[str, int], pd.DataFrame], experiment_colors: dict[str, tuple]) -> None:
+def plot_min_ess_trajectories(
+    method: str,
+    ess_trajectories: dict[tuple[str, int], pd.DataFrame],
+    experiment_colors: dict[str, tuple],
+) -> None:
     """Plots the ESS of the slowest parameter over running time, with one line per seed."""
     experiments = list(experiment_colors)
     ncols = 3
     nrows = math.ceil(len(experiments) / ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(3.64 * ncols, 2.8 * nrows), squeeze=False)
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(3.64 * ncols, 2.8 * nrows), squeeze=False
+    )
     axes_by_experiment = dict(zip(experiments, axes.flat))
 
     for (experiment, _), trajectory in ess_trajectories.items():
         axes_by_experiment[experiment].plot(
-            trajectory.index, trajectory.min(axis=1), color=experiment_colors[experiment], linewidth=2, alpha=0.6,
+            trajectory.index,
+            trajectory.min(axis=1),
+            color=experiment_colors[experiment],
+            linewidth=2,
+            alpha=0.6,
         )
 
     for experiment, ax in axes_by_experiment.items():
@@ -296,26 +453,37 @@ def plot_min_ess_trajectories(method: str, ess_trajectories: dict[tuple[str, int
         ax.set_xlabel("running time (min)")
         ax.set_ylabel("minimum ESS")
 
-    for ax in axes.flat[len(experiments):]:
+    for ax in axes.flat[len(experiments) :]:
         ax.set_visible(False)
 
-    fig.suptitle(f"{method}: minimum ESS over running time", x=0.01, ha="left", fontweight="bold")
+    fig.suptitle(
+        f"{method}: minimum ESS over running time", x=0.01, ha="left", fontweight="bold"
+    )
     fig.tight_layout()
-    fig.savefig(PLOTS_PATH / f"{method}_ess_trajectories.png", dpi=200, bbox_inches="tight")
+    fig.savefig(
+        PLOTS_PATH / f"{method}_ess_trajectories.png", dpi=200, bbox_inches="tight"
+    )
     plt.close(fig)
 
 
-def plot_relative_convergence_time(method: str, convergence_df: pd.DataFrame, experiments: list[str]) -> None:
+def plot_relative_convergence_time(
+    method: str, convergence_df: pd.DataFrame, experiments: list[str]
+) -> None:
     """Plots the mean time until each parameter reaches the target ESS, relative to the slowest parameter of each seed."""
     relative_df = convergence_df.assign(
-        relative=convergence_df["minutes"] / convergence_df.groupby(["experiment", "seed"])["minutes"].transform("max"),
+        relative=convergence_df["minutes"]
+        / convergence_df.groupby(["experiment", "seed"])["minutes"].transform("max"),
     )
-    stats_df = relative_df.groupby(["parameter", "experiment"])["relative"].agg(["mean", "std"])
+    stats_df = relative_df.groupby(["parameter", "experiment"])["relative"].agg(
+        ["mean", "std"]
+    )
     mean_df = stats_df["mean"].unstack("experiment")[experiments]
     std_df = stats_df["std"].unstack("experiment")[experiments].fillna(0)
 
     # parameters shared by more experiments are listed first
-    order_df = pd.DataFrame({"count": mean_df.notna().sum(axis=1), "mean": mean_df.mean(axis=1)})
+    order_df = pd.DataFrame(
+        {"count": mean_df.notna().sum(axis=1), "mean": mean_df.mean(axis=1)}
+    )
     order = order_df.sort_values(["count", "mean"], ascending=False).index
     mean_df = mean_df.loc[order]
     std_df = std_df.loc[order]
@@ -323,7 +491,10 @@ def plot_relative_convergence_time(method: str, convergence_df: pd.DataFrame, ex
     # each cell shows the mean and the standard deviation over the seeds
     annot_df = pd.DataFrame(
         [
-            [f"{mean:.2f}±{std:.2f}" if pd.notna(mean) else "" for mean, std in zip(mean_row, std_row)]
+            [
+                f"{mean:.2f}±{std:.2f}" if pd.notna(mean) else ""
+                for mean, std in zip(mean_row, std_row)
+            ]
             for mean_row, std_row in zip(mean_df.to_numpy(), std_df.to_numpy())
         ],
         index=mean_df.index,
@@ -333,8 +504,17 @@ def plot_relative_convergence_time(method: str, convergence_df: pd.DataFrame, ex
     fig, ax = plt.subplots(figsize=(10, 0.5 * len(mean_df) + 1))
 
     sns.heatmap(
-        mean_df, cmap="Blues", vmin=0, vmax=1, annot=annot_df, fmt="", annot_kws={"fontsize": 7},
-        linewidths=1, linecolor="white", ax=ax, cbar_kws={"label": "relative time until ESS ≥ 200 (mean ± sd over seeds)"},
+        mean_df,
+        cmap="Blues",
+        vmin=0,
+        vmax=1,
+        annot=annot_df,
+        fmt="",
+        annot_kws={"fontsize": 7},
+        linewidths=1,
+        linecolor="white",
+        ax=ax,
+        cbar_kws={"label": "relative time until ESS ≥ 200 (mean ± sd over seeds)"},
     )
     ax.grid(False)
     ax.set_xlabel("")
@@ -342,7 +522,11 @@ def plot_relative_convergence_time(method: str, convergence_df: pd.DataFrame, ex
     ax.set_title(f"{method}: time until ESS ≥ 200 per parameter", loc="left")
 
     fig.tight_layout()
-    fig.savefig(PLOTS_PATH / f"{method}_relative_convergence_time.png", dpi=200, bbox_inches="tight")
+    fig.savefig(
+        PLOTS_PATH / f"{method}_relative_convergence_time.png",
+        dpi=200,
+        bbox_inches="tight",
+    )
     plt.close(fig)
 
 
@@ -350,37 +534,76 @@ def analyse_method(method: str, log_paths: dict[tuple[str, int], Path]) -> None:
     """Analyses all seeds of all experiments of a method and plots the results, prefixed with the method."""
     logs = load_logs(log_paths)
 
-    # experiments without a readable tree file cannot be placed on the plots
-    num_sequences = {}
+    # experiments without a readable XML cannot be placed on the plots
+    alignment_stats = {}
     for experiment in sorted({experiment for experiment, _ in logs}):
         try:
-            num_sequences[experiment] = get_num_sequences(method, experiment)
-        except (StopIteration, ValueError, OSError) as error:
+            alignment_stats[experiment] = get_alignment_stats(method, experiment)
+        except (ValueError, OSError) as error:
             print(f"Skipping experiment {method}_{experiment}: {error}")
-    logs = {key: log_df for key, log_df in logs.items() if key[0] in num_sequences}
-    experiments = sorted(num_sequences)
+    logs = {key: log_df for key, log_df in logs.items() if key[0] in alignment_stats}
+    experiments = sorted(alignment_stats)
 
     # each experiment keeps the same color in all plots of the method
     # (the palette is sized to the experiments, as zip would silently drop experiments beyond the palette length)
-    palette = sns.color_palette("deep") if len(experiments) <= 10 else sns.color_palette("husl", len(experiments))
+    palette = (
+        sns.color_palette("deep")
+        if len(experiments) <= 10
+        else sns.color_palette("husl", len(experiments))
+    )
     experiment_colors = dict(zip(experiments, palette))
 
     ess_trajectories = {key: get_ess_trajectory(log_df) for key, log_df in logs.items()}
-    ess_trajectories = {key: trajectory for key, trajectory in ess_trajectories.items() if trajectory is not None}
+    ess_trajectories = {
+        key: trajectory
+        for key, trajectory in ess_trajectories.items()
+        if trajectory is not None
+    }
     if not ess_trajectories:
         print(f"\n{method}: no usable runs, skipping")
         return
-    experiments = [experiment for experiment in experiments if any(experiment == key[0] for key in ess_trajectories)]
-    experiment_colors = {experiment: experiment_colors[experiment] for experiment in experiments}
-    num_sequences = {experiment: num_sequences[experiment] for experiment in experiments}
+    experiments = [
+        experiment
+        for experiment in experiments
+        if any(experiment == key[0] for key in ess_trajectories)
+    ]
+    experiment_colors = {
+        experiment: experiment_colors[experiment] for experiment in experiments
+    }
+    experiment_stats = {
+        experiment: {
+            **alignment_stats[experiment],
+            "num_mutations": get_mean_num_mutations(
+                [log_df for key, log_df in logs.items() if key[0] == experiment]
+            ),
+        }
+        for experiment in experiments
+    }
 
     convergence_df = get_convergence_df(ess_trajectories)
-    summary_df = get_summary_df(convergence_df, num_sequences)
+    summary_df = get_summary_df(convergence_df, experiment_stats)
 
     print(f"\n{method}")
-    print(summary_df[["experiment", "num_sequences", "num_seeds", "minutes", "min_minutes", "max_minutes", "status", "slowest_parameter"]].to_string(index=False))
+    print(
+        summary_df[
+            [
+                "experiment",
+                "num_sequences",
+                "diversity",
+                "num_mutations",
+                "num_seeds",
+                "minutes",
+                "min_minutes",
+                "max_minutes",
+                "status",
+                "slowest_parameter",
+            ]
+        ].to_string(index=False)
+    )
 
     plot_convergence_time(method, summary_df, experiment_colors)
+    plot_diversity_convergence_time(method, summary_df, experiment_colors)
+    plot_mutations_convergence_time(method, summary_df, experiment_colors)
     plot_min_ess_trajectories(method, ess_trajectories, experiment_colors)
     plot_relative_convergence_time(method, convergence_df, experiments)
 
