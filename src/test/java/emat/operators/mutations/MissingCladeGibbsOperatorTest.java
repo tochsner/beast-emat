@@ -16,10 +16,12 @@ import beast.base.util.Randomizer;
 import emat.helper.MutationPaths;
 import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.prior.GeneticPrior;
+import emat.state.Mutation;
 import emat.state.Mutations;
 import emat.stochasticmapping.SubstitutionProcess;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -148,6 +150,54 @@ public class MissingCladeGibbsOperatorTest {
         assertEquals(true, numChangedInnerStates > 0, "The operator never changed the state of the attachment node X.");
     }
 
+    /**
+     * With A and B missing at both sites and C observed as G and C, the clade (A,B)X attaches
+     * to the root R at both sites. With a single site per clade, every proposal resamples one
+     * of the two sites uniformly and leaves the other untouched, and the root state at each
+     * site still follows its posterior π_r·P_rC(0.9).
+     */
+    @Test
+    public void testMaxSitesResamplesRandomSubsetExactly() {
+        Randomizer.setSeed(3);
+        TestSetup setup = new TestSetup(Integer.MAX_VALUE, 1, List.of(new Sequence("A", "NN"), new Sequence("B", "NN"), new Sequence("C", "GC")));
+
+        Node root = setup.tree.getRoot();
+        int numSamples = 400000;
+        int[] numChanged = new int[2];
+        int numBothChanged = 0;
+        double[][] rootCounts = new double[2][4];
+
+        for (int i = 0; i < numSamples; i++) {
+            List<List<Mutation>> before = List.of(setup.collectSiteMutations(0), setup.collectSiteMutations(1));
+            setup.operator.proposal();
+            setup.mutations.setEverythingDirty(false);
+
+            boolean[] hasChanged = new boolean[2];
+            for (int site = 0; site < 2; site++) {
+                hasChanged[site] = !before.get(site).equals(setup.collectSiteMutations(site));
+                numChanged[site] += hasChanged[site] ? 1 : 0;
+                rootCounts[site][MutationPaths.getState(setup.mutations, root, site)]++;
+            }
+            numBothChanged += hasChanged[0] && hasChanged[1] ? 1 : 0;
+        }
+
+        assertEquals(0, numBothChanged, "Both sites changed in one proposal.");
+        assertEquals(true, numChanged[0] > 0 && numChanged[1] > 0, "A site was never resampled.");
+
+        int[] observedStates = {G, C};
+        double[] frequencies = setup.substitutionModel.getFrequencies();
+        for (int site = 0; site < 2; site++) {
+            double[] posterior = new double[4];
+            for (int state = 0; state < 4; state++) {
+                posterior[state] = frequencies[state] * setup.getTransitionProbabilities(0.9)[state * 4 + observedStates[site]];
+            }
+            normalise(posterior);
+            for (int state = 0; state < 4; state++) {
+                assertEquals(posterior[state], rootCounts[site][state] / numSamples, 0.005, "R at site " + site + ", state " + state + ".");
+            }
+        }
+    }
+
     /* Test Setup */
 
     /**
@@ -162,8 +212,12 @@ public class MissingCladeGibbsOperatorTest {
         final MissingCladeGibbsOperator operator;
 
         TestSetup(int maxLevels) {
+            this(maxLevels, Integer.MAX_VALUE, SEQUENCES);
+        }
+
+        TestSetup(int maxLevels, int maxSites, List<Sequence> sequences) {
             Alignment alignment = new Alignment();
-            alignment.initByName("sequence", SEQUENCES, "dataType", "nucleotide");
+            alignment.initByName("sequence", sequences, "dataType", "nucleotide");
 
             this.tree = new TreeParser();
             this.tree.initByName("newick", NEWICK, "IsLabelledNewick", true, "adjustTipHeights", false);
@@ -197,7 +251,16 @@ public class MissingCladeGibbsOperatorTest {
             );
 
             this.operator = new MissingCladeGibbsOperator();
-            this.operator.initByName("weight", 1.0, "mutations", this.mutations, "geneticPrior", geneticPrior, "maxLevels", maxLevels);
+            this.operator.initByName("weight", 1.0, "mutations", this.mutations, "geneticPrior", geneticPrior, "maxLevels", maxLevels, "maxSites", maxSites);
+        }
+
+        /** Collects the mutations at the given site on all branches. */
+        List<Mutation> collectSiteMutations(int site) {
+            List<Mutation> siteMutations = new ArrayList<>();
+            for (Node node : this.tree.getNodesAsArray()) {
+                siteMutations.addAll(SiteMutations.collect(this.mutations, node, site));
+            }
+            return siteMutations;
         }
 
         Node getNode(String taxon) {

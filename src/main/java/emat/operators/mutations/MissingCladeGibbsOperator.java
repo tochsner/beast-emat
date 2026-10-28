@@ -28,12 +28,16 @@ import java.util.List;
         "the branches at this node and the history of the clade are drawn jointly from their exact conditional " +
         "distribution, given the states at the parent of the node and at its other children, which stay fixed. The " +
         "clades only depend on the tree and the data, which the move does not change, so the move is a Gibbs move that " +
-        "is always accepted. Missations are not supported.")
+        "is always accepted. If a clade has more than maxSites sites, a uniformly random subset of maxSites of them is " +
+        "resampled, which bounds the cost of a proposal and is exact as the sites are independent given the tree. " +
+        "Missations are not supported.")
 public class MissingCladeGibbsOperator extends Operator {
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "the mutations to operate on", Input.Validate.REQUIRED);
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model", Input.Validate.REQUIRED);
     final public Input<Integer> maxLevelsInput = new Input<>("maxLevels", "the maximum number of levels a clade grows above the picked tip. With 0, only the branch above the tip is resampled", Integer.MAX_VALUE);
+
+    final public Input<Integer> maxSitesInput = new Input<>("maxSites", "the maximum number of sites resampled per clade, drawn uniformly without replacement from its sites if there are more", Integer.MAX_VALUE);
 
     /** The top of a clade and the sites at which its history is resampled. */
     private record Region(Node top, BitSet sites) {
@@ -44,6 +48,7 @@ public class MissingCladeGibbsOperator extends Operator {
     MissingSites missingSites;
     SiteHistorySampler sampler;
     int maxLevels;
+    int maxSites;
 
     // the numbers of the tips with at least one missing site, which are the candidates of the move
     int[] missingTipNrs;
@@ -53,9 +58,13 @@ public class MissingCladeGibbsOperator extends Operator {
         this.mutations = this.mutationsInput.get();
         this.tree = this.mutations.getTree();
         this.maxLevels = this.maxLevelsInput.get();
+        this.maxSites = this.maxSitesInput.get();
 
         if (this.maxLevels < 0) {
             throw new IllegalArgumentException("The maximum number of levels must not be negative.");
+        }
+        if (this.maxSites < 1) {
+            throw new IllegalArgumentException("The maximum number of sites must be positive.");
         }
 
         int numStates = this.mutations.getAlignment().getMaxStateCount();
@@ -154,8 +163,8 @@ public class MissingCladeGibbsOperator extends Operator {
     /* Resampling */
 
     /**
-     * Replaces the history of the given region at its sites by a draw from its exact
-     * conditional distribution. The region of the sampler has the node the clade attaches to
+     * Replaces the history of the given region at its sites, or at a uniformly random subset
+     * of at most maxSites of them, by a draw from its exact conditional distribution. The region of the sampler has the node the clade attaches to
      * at the top, the other children of this node on the boundary, and the clade as its
      * data-free clade, as the clade is missing at these sites.
      */
@@ -164,12 +173,33 @@ public class MissingCladeGibbsOperator extends Operator {
         this.sampler.setUpRegion(top.getParent(), node -> false, top);
 
         List<List<Mutation>> newMutations = this.sampler.createEmptyHistory();
-        BitSet sites = region.sites();
+        BitSet sites = this.chooseSites(region.sites());
         for (int site = sites.nextSetBit(0); site >= 0; site = sites.nextSetBit(site + 1)) {
             this.sampler.sampleRegionSiteHistory(site, newMutations);
         }
 
         SiteMutations.replaceRegion(this.mutations, this.sampler, sites::get, newMutations, this);
+    }
+
+    /**
+     * Returns the given sites if there are at most maxSites of them, and otherwise a
+     * uniformly random subset of maxSites of them, drawn by a partial shuffle.
+     */
+    private BitSet chooseSites(BitSet sites) {
+        if (sites.cardinality() <= this.maxSites) {
+            return sites;
+        }
+
+        int[] candidates = sites.stream().toArray();
+        BitSet chosenSites = new BitSet();
+        for (int i = 0; i < this.maxSites; i++) {
+            int j = i + Randomizer.nextInt(candidates.length - i);
+            int site = candidates[j];
+            candidates[j] = candidates[i];
+            candidates[i] = site;
+            chosenSites.set(site);
+        }
+        return chosenSites;
     }
 
 }
