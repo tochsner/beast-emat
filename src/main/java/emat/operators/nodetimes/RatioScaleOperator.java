@@ -24,6 +24,10 @@ public class RatioScaleOperator extends ScaleTunedOperator {
     final public Input<Double> scaleUpperLimit = new Input<>("upper", "upper limit of the scale factor", 10.0);
     final public Input<Double> scaleLowerLimit = new Input<>("lower", "lower limit of the scale factor", 1e-8);
     final public Input<Double> scaleFactorInput = new Input<>("scaleFactor", "initial width of the kernel in log space of every clade size class: close to zero is very small jumps, larger is larger jumps.", 0.1);
+    final public Input<Boolean> scaleWeightByLogNumTipsInput = new Input<>("scaleWeightByLogNumTips", "whether to scale the weight by the natural logarithm of the number of tips n, so that the operator is selected with weight * ln(n). Otherwise, the weight is used as given", false);
+
+    // the factor ln(n) or one by which the weight of the operator is scaled
+    private double weightFactor;
 
     // per node number, the height of the oldest tip below the node, its ratio, and its old and new height
     private double[] oldestTipHeights;
@@ -57,6 +61,17 @@ public class RatioScaleOperator extends ScaleTunedOperator {
         this.classScaleFactors = new double[numSizeClasses];
         this.classTuningSteps = new long[numSizeClasses];
         Arrays.fill(this.classScaleFactors, this.scaleFactor);
+
+        this.weightFactor = this.scaleWeightByLogNumTipsInput.get() ? Math.log(this.tree.getLeafNodeCount()) : 1.0;
+    }
+
+    /**
+     * Returns the weight, scaled by the logarithm of the number of tips if requested, which
+     * lets the share of the proposals grow with the size of the tree.
+     */
+    @Override
+    public double getWeight() {
+        return super.getWeight() * this.weightFactor;
     }
 
     /**
