@@ -193,7 +193,7 @@
             <log idref="likelihood"/>
             <log idref="prior"/>
         </logger>
-        <logger id="treelog.t:{{ID}}" spec="Logger" fileName="data/out/$(filebase)-$(tree)-$(seed).trees" logEvery="1000" mode="tree">
+        <logger id="treelog.t:{{ID}}" spec="Logger" fileName="data/out/$(filebase)-$(tree)-$(seed).trees" logEvery="10000" mode="tree">
             <log id="TreeWithMetaDataLogger.t:{{ID}}" spec="beast.base.spec.evolution.TreeWithMetaDataLogger" tree="@Tree.t:{{ID}}"/>
         </logger>
         <operatorschedule id="OperatorSchedule" spec="schedule.ESSWeightOperatorSchedule"/>
