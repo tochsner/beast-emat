@@ -1,5 +1,4 @@
 import emat.adapters.MutationCountAdapter;
-import emat.alignment.ConstantSiteFilteredAlignment;
 import emat.alignment.FitchFilteredAlignment;
 import emat.alignment.MissingSiteFilteredAlignment;
 import emat.benchmark.ExactHistoryInitialiser;
@@ -51,7 +50,6 @@ open module my.beast.example {
 
     provides beast.base.core.BEASTInterface with
             Mutations,
-            ConstantSiteFilteredAlignment,
             FitchFilteredAlignment,
             MissingSiteFilteredAlignment,
             GeneticPrior,

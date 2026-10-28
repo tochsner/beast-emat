@@ -2,9 +2,7 @@
 
     {{ALIGNMENT}}
 
-    <data id="{{ID}}.variable" spec="emat.alignment.ConstantSiteFilteredAlignment" data="@{{ID}}" constant="false"/>
-
-    <data id="{{ID}}.constant" spec="emat.alignment.ConstantSiteFilteredAlignment" data="@{{ID}}" constant="true"/>
+    <data id="{{ID}}.observed" spec="emat.alignment.MissingSiteFilteredAlignment" data="@{{ID}}"/>
 
     <map name="Uniform" >beast.base.inference.distribution.Uniform</map>
 
@@ -42,7 +40,7 @@
             <stateNode id="freqParameter.s:{{ID}}" spec="beast.base.spec.inference.parameter.SimplexParam" dimension="4" domain="UnitInterval">0.25 0.25 0.25 0.25</stateNode>
             <stateNode id="bPopSizes.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealVectorParam" dimension="5" domain="PositiveReal">380.0</stateNode>
             <stateNode id="bGroupSizes.t:{{ID}}" spec="beast.base.spec.inference.parameter.IntSimplexParam" dimension="5" domain="PositiveInt">1</stateNode>
-            <stateNode id="mutations.{{ID}}" spec="emat.state.Mutations" tree="@Tree.t:{{ID}}" alignment="@{{ID}}.variable"/>
+            <stateNode id="mutations.{{ID}}" spec="emat.state.Mutations" tree="@Tree.t:{{ID}}" alignment="@{{ID}}.observed"/>
         </state>
         <init id="RandomTree.t:{{ID}}" spec="RandomTree" estimate="false" initial="@Tree.t:{{ID}}" taxa="@{{ID}}">
             <populationModel id="ConstantPopulation0.t:{{ID}}" spec="ConstantPopulation">
@@ -69,7 +67,7 @@
                 </distribution>
             </distribution>
             <distribution id="likelihood" spec="CompoundDistribution">
-                <distribution id="geneticPrior.{{ID}}" spec="emat.prior.GeneticPrior" data="@{{ID}}.variable" mutations="@mutations.{{ID}}" tree="@Tree.t:{{ID}}">
+                <distribution id="geneticPrior.{{ID}}" spec="emat.prior.GeneticPrior" data="@{{ID}}.observed" mutations="@mutations.{{ID}}" tree="@Tree.t:{{ID}}">
                     <siteModel id="SiteModel.s:{{ID}}" spec="beast.base.spec.evolution.sitemodel.SiteModel" gammaCategoryCount="1">
                         <mutationRate id="mutationRate.s:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" estimate="false" value="1.0"/>
                         <shape id="gammaShape.s:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" estimate="false" value="1.0"/>
@@ -80,7 +78,6 @@
                     </siteModel>
                     <branchRateModel id="StrictClock.c:{{ID}}" spec="beast.base.spec.evolution.branchratemodel.StrictClockModel" clock.rate="@clockRate.c:{{ID}}"/>
                 </distribution>
-                <distribution id="constantSitesLikelihood.{{ID}}" spec="beast.base.spec.evolution.likelihood.TreeLikelihood" data="@{{ID}}.constant" tree="@Tree.t:{{ID}}" siteModel="@SiteModel.s:{{ID}}" branchRateModel="@StrictClock.c:{{ID}}" useAmbiguities="false" implementation="beast.base.spec.evolution.likelihood.TreeLikelihood"/>
             </distribution>
         </distribution>
         <operator id="StrictClockRateScaler.c:{{ID}}" spec="beast.base.spec.evolution.operator.AdaptableOperatorSampler" weight="1.5">
@@ -125,7 +122,6 @@
             <log idref="likelihood"/>
             <log idref="prior"/>
             <log idref="geneticPrior.{{ID}}"/>
-            <log idref="constantSitesLikelihood.{{ID}}"/>
             <log id="TreeHeight.t:{{ID}}" spec="beast.base.evolution.tree.TreeStatLogger" tree="@Tree.t:{{ID}}"/>
             <log idref="clockRate.c:{{ID}}"/>
             <log idref="kappa.s:{{ID}}"/>
