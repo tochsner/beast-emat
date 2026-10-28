@@ -41,6 +41,7 @@ All operators keep the mutations on the tree consistent, and are grouped by what
 | `InnerNodeDisplacementOperator` | Moves an internal node within the range allowed by the mutations on its adjacent branches.               |
 | `BatchNodeDisplacementOperator` | Displaces a batch of internal nodes at once, using a learned approximation of the tree prior.            |
 | `RootScaleOperator`             | Scales the shorter root branch, which moves the root height.                                             |
+| `RatioScaleOperator`            | Scales the height ratio of a random internal node to its parent, both above its oldest tip, and rescales the subtree below so that all other ratios stay the same. Tunes a separate step for every clade size class. |
 | `IntervalScaleOperator`         | Scales all intervals between nodes and their older children, keeping the tree valid for serial samples.  |
 | `LearnedWarpOperator`           | Jointly moves the tree prior parameters, all internal node heights and the clock rate, using a time change learned from the chain. |
 

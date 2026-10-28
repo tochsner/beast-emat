@@ -16,6 +16,7 @@
         <provider classname="emat.operators.CarrierGuidedSprOperator"/>
         <provider classname="emat.operators.nodetimes.InnerNodeDisplacementOperator"/>
         <provider classname="emat.operators.nodetimes.RootScaleOperator"/>
+        <provider classname="emat.operators.nodetimes.RatioScaleOperator"/>
         <provider classname="emat.operators.mutations.BranchReformOperator"/>
         <provider classname="emat.operators.mutations.MissingCladeGibbsOperator"/>
         <provider classname="emat.operators.nodetimes.batch.BatchNodeDisplacementOperator"/>
