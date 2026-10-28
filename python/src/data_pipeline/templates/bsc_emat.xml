@@ -104,7 +104,7 @@
         </operator>
         <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="10.0"/>
         <operator id="MutationDirectedSprOperator.{{ID}}" spec="emat.operators.topology.MutationDirectedSprOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" fullExplorationProbability="0.01" weight="25.0" scaleWeightByLogNumTips="true" windowProbability="0.3" subtreeSelection="BRANCH_LENGTH"/>
-        <operator id="RatioScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RatioScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="25.0" scaleWeightByLogNumTips="true"/>
+        <operator id="RatioScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RatioScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="40.0" scaleWeightByLogNumTips="true"/>
         <operator id="GroupESSWeightAdaptationOperator.{{ID}}" spec="weightoptimization.GroupESSWeightAdaptationOperator" weight="45.0" maxWeightFactor="3.0">
             <operatorAdapter id="MutationCountAdapter.{{ID}}" spec="emat.adapters.MutationCountAdapter" mutations="@mutations.{{ID}}"/>
             <referenceAdapter id="TreeLengthAdapter.{{ID}}" spec="adapters.TreeLengthAdapter" tree="@Tree.t:{{ID}}"/>
