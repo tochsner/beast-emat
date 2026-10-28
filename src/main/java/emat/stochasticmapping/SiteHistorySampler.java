@@ -432,25 +432,6 @@ public class SiteHistorySampler {
     }
 
     /**
-     * Collects the current history of the given site on the region, indexed like the
-     * branches of the region, in the same form as a sampled history.
-     */
-    public List<List<Mutation>> collectRegionSiteHistory(int site) {
-        List<List<Mutation>> regionHistory = new ArrayList<>(this.getNumBranches());
-        for (int i = 0; i < this.getNumBranches(); i++) {
-            List<Mutation> branchMutations = this.mutations.getMutations(this.getBranchNode(i));
-            List<Mutation> siteMutations = new ArrayList<>();
-            for (int j = 0; j < branchMutations.size(); j++) {
-                if (branchMutations.get(j).site() == site) {
-                    siteMutations.add(branchMutations.get(j));
-                }
-            }
-            regionHistory.add(siteMutations);
-        }
-        return regionHistory;
-    }
-
-    /**
      * Computes the log probability that sampleRegionSiteHistory proposes the given history of
      * the given site on the region, indexed like its result, up to the likelihood of the data
      * and the fixed states, which is the same for every history. This is the frequency of the
@@ -459,7 +440,7 @@ public class SiteHistorySampler {
      * every branch. In the data-free clade, this is the density of the simulated paths if the
      * stochastic mapping is exact.
      */
-    public double computeLogRegionSiteHistoryDensity(int site, List<List<Mutation>> regionHistory) {
+    private double computeLogRegionSiteHistoryDensity(int site, List<List<Mutation>> regionHistory) {
         Node top = this.regionNodes[this.numRegionNodes - 1];
 
         // replay the history from the top downwards to find the state of every node

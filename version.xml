@@ -18,7 +18,6 @@
         <provider classname="emat.operators.nodetimes.RootScaleOperator"/>
         <provider classname="emat.operators.nodetimes.RatioScaleOperator"/>
         <provider classname="emat.operators.mutations.BranchReformOperator"/>
-        <provider classname="emat.operators.mutations.StarReformOperator"/>
         <provider classname="emat.benchmark.HistoryDistanceLogger"/>
         <provider classname="emat.benchmark.ExactHistoryInitialiser"/>
         <provider classname="emat.operators.mutations.MissingCladeGibbsOperator"/>
