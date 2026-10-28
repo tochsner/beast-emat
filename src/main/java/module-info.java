@@ -1,9 +1,13 @@
 import emat.adapters.MutationCountAdapter;
 import emat.alignment.ConstantSiteFilteredAlignment;
 import emat.alignment.FitchFilteredAlignment;
+import emat.alignment.MissingSiteFilteredAlignment;
+import emat.benchmark.ExactHistoryInitialiser;
+import emat.benchmark.HistoryDistanceLogger;
 import emat.benchmark.TimedMCMC;
 import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.mutations.BranchReformOperator;
+import emat.operators.mutations.StarReformOperator;
 import emat.operators.nodetimes.warp.LearnedWarpOperator;
 import emat.operators.nodetimes.IntervalScaleOperator;
 import emat.operators.topology.MutationDirectedSprOperator;
@@ -49,6 +53,7 @@ open module my.beast.example {
             Mutations,
             ConstantSiteFilteredAlignment,
             FitchFilteredAlignment,
+            MissingSiteFilteredAlignment,
             GeneticPrior,
             ParsimonyMutationsInitialiser,
             MutationTimeOperator,
@@ -62,9 +67,12 @@ open module my.beast.example {
             LearnedWarpOperator,
             MutationDirectedSprOperator,
             BranchReformOperator,
+            StarReformOperator,
             ExcessMutationLogger,
             InsertionSortTreeIntervals,
             IncrementalStoreTree,
             MutationCountAdapter,
-            TimedMCMC;
+            TimedMCMC,
+            HistoryDistanceLogger,
+            ExactHistoryInitialiser;
 }

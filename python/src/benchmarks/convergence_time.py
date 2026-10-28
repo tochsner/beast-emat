@@ -39,7 +39,7 @@ SEQUENCE_PATTERN = re.compile(r'<sequence\b[^>]*\bvalue="([^"]*)"')
 TARGET_ESS = 200
 BURNIN_FRACTION = 0.1
 NUM_POINTS = 20
-INCLUDED_METHODS = {"coal_emat", "sbd_emat", "coal_emat_nofilter"}
+INCLUDED_METHODS = {"coal_emat", "sbd_emat", "coal_emat_uniform_reform"}
 EXCLUDED_EXPERIMENTS = {"sars20000", "wnv", "ncbisc2"}
 
 T = TypeVar("T")
