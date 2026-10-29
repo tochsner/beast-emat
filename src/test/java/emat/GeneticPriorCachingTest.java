@@ -2,6 +2,9 @@ package emat;
 
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;
+import beast.base.evolution.alignment.Taxon;
+import beast.base.evolution.alignment.TaxonSet;
+import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeParser;
 import beast.base.inference.Operator;
 import beast.base.inference.State;
@@ -20,6 +23,7 @@ import emat.operators.mutations.MutationTimeOperator;
 import emat.operators.mutations.SiteHistoryGibbsOperator;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
+import emat.tree.IncrementalStoreTree;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -28,6 +32,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class GeneticPriorCachingTest {
 
+    private static final String NEWICK = "(((A:0.3,B:0.3):0.4,(C:0.5,D:0.5):0.2):0.3,(E:0.6,F:0.6):0.4);";
+
     /**
      * Runs a Metropolis-Hastings chain with every operator, driving the state through the
      * same store, accept and restore cycle as EmatMCMC, and checks after every step that
@@ -35,9 +41,39 @@ public class GeneticPriorCachingTest {
      */
     @Test
     public void testIncrementalMatchesFullComputation() {
+        TreeParser tree = new TreeParser();
+        tree.initByName(
+                "newick", NEWICK,
+                "IsLabelledNewick", true,
+                "adjustTipHeights", false
+        );
+        this.runChain(tree);
+    }
+
+    /**
+     * Runs the same chain on an incremental store tree, for which the genetic prior only
+     * visits the nodes flagged by the tree and the branches marked dirty by the mutations.
+     */
+    @Test
+    public void testIncrementalMatchesFullComputationOnIncrementalStoreTree() {
+        TreeParser parsedTree = new TreeParser();
+        parsedTree.initByName(
+                "newick", NEWICK,
+                "IsLabelledNewick", true,
+                "adjustTipHeights", false
+        );
+
+        List<Taxon> taxa = parsedTree.getTaxonset().asStringList().stream().map(Taxon::new).toList();
+        IncrementalStoreTree tree = new IncrementalStoreTree();
+        tree.initByName("taxonset", new TaxonSet(taxa));
+        tree.assignFrom(parsedTree);
+        this.runChain(tree);
+    }
+
+    private void runChain(Tree tree) {
         Randomizer.setSeed(3);
 
-        // set up the tree, the alignment and the mutations
+        // set up the alignment and the mutations
 
         Alignment alignment = new Alignment();
         alignment.initByName(
@@ -50,13 +86,6 @@ public class GeneticPriorCachingTest {
                         new Sequence("F", "GCGTTCGAAC")
                 ),
                 "dataType", "nucleotide"
-        );
-
-        TreeParser tree = new TreeParser();
-        tree.initByName(
-                "newick", "(((A:0.3,B:0.3):0.4,(C:0.5,D:0.5):0.2):0.3,(E:0.6,F:0.6):0.4);",
-                "IsLabelledNewick", true,
-                "adjustTipHeights", false
         );
 
         Mutations mutations = new Mutations();

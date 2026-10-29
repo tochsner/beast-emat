@@ -36,7 +36,22 @@ public final class SiteMutations {
      * after are left untouched.
      */
     public static void replace(Mutations mutations, Node node, int site, List<Mutation> newSiteMutations, Operator operator) {
+        // most branches have no mutations at the site before or after, so check this without creating a predicate
+        if (newSiteMutations.isEmpty() && !hasSiteMutation(mutations.getMutations(node), site)) {
+            return;
+        }
+
         replace(mutations, node, otherSite -> otherSite == site, newSiteMutations, operator);
+    }
+
+    /** Returns whether any of the given mutations is at the given site. */
+    private static boolean hasSiteMutation(List<Mutation> branchMutations, int site) {
+        for (int i = 0; i < branchMutations.size(); i++) {
+            if (branchMutations.get(i).site() == site) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

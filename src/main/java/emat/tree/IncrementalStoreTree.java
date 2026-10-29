@@ -180,6 +180,25 @@ public class IncrementalStoreTree extends Tree {
         }
     }
 
+    /**
+     * Returns whether every node whose dirtiness flags might be set is among the flagged nodes.
+     * Otherwise, any node might be dirty.
+     */
+    public boolean areFlaggedNodesComplete() {
+        return !this.requiresFullClean;
+    }
+
+    /**
+     * Returns the numbers of the flagged nodes in the first getFlaggedNodeCount() entries.
+     */
+    public int[] getFlaggedNodeNrs() {
+        return this.flaggedNodeNrs;
+    }
+
+    public int getFlaggedNodeCount() {
+        return this.numFlaggedNodes;
+    }
+
     void markNodeChanged(int nodeNr) {
         if (this.isNodeChanged == null || nodeNr < 0 || nodeNr >= this.isNodeChanged.length) {
             this.requireFullStore();

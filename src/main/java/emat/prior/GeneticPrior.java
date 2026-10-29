@@ -14,8 +14,10 @@ import beast.base.spec.evolution.branchratemodel.StrictClockModel;
 import beast.base.spec.evolution.likelihood.GenericTreeLikelihood;
 import beast.base.spec.evolution.sitemodel.SiteModel;
 import emat.state.Mutation;
+import emat.tree.IncrementalStoreTree;
 import emat.state.Mutations;
 
+import java.util.Arrays;
 import java.util.List;
 
 @Description("Implements the genetic prior for EMATs. Missations and varying site rates are not yet supported.")
@@ -35,6 +37,9 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
     double[] rateMatrix;
     double siteRate;
+
+    // the log rates of mutating from one state to another, including the site rate
+    double[] logMutationRates;
 
     // relative changes of a total mutation rate below this are rounding from summing along a different path
     private static final double RATE_TOLERANCE = 1e-12;
@@ -61,6 +66,10 @@ public class GeneticPrior extends GenericTreeLikelihood {
     // per node, the last calculation in which its branch was dirty
     private int[] dirtyCalculations;
     private int calculationNr = 0;
+
+    // the nodes marked dirty in the current calculation
+    private int[] dirtyNodeNrs;
+    private int numDirtyNodes = 0;
 
     int[] referenceSequence;
 
@@ -102,6 +111,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
         this.storedBranchLogPs = new double[numNodes];
 
         this.dirtyCalculations = new int[numNodes];
+        this.dirtyNodeNrs = new int[numNodes];
     }
 
     /**
@@ -115,11 +125,16 @@ public class GeneticPrior extends GenericTreeLikelihood {
     public double calculateLogP() {
         Node root = this.tree.getRoot();
 
-        // fetch and cache rates
+        // fetch and cache rates, and recompute their logs only if they changed
 
-        this.rateMatrix = this.computeRateMatrix();
+        double[] rateMatrix = this.computeRateMatrix();
         // category 0 because we don't support site-rate variation yet
-        this.siteRate = this.siteModel.getRateForCategory(0, root);
+        double siteRate = this.siteModel.getRateForCategory(0, root);
+        if (siteRate != this.siteRate || !Arrays.equals(rateMatrix, this.rateMatrix)) {
+            this.rateMatrix = rateMatrix;
+            this.siteRate = siteRate;
+            this.logMutationRates = this.computeLogMutationRates();
+        }
 
         // check if we need to recompute everything
 
@@ -128,20 +143,29 @@ public class GeneticPrior extends GenericTreeLikelihood {
                 || (this.substitutionModel instanceof CalculationNode calculationNode && calculationNode.somethingIsDirty())
                 || this.branchRateModel.somethingIsDirty();
 
-        // mark the dirty nodes with the current iteration number
+        // mark the dirty nodes with the current calculation number
 
         this.calculationNr++;
-        Node[] nodes = this.tree.getNodesAsArray();
-        for (Node node : nodes) {
-            if (isEverythingDirty || node.isDirty() != Tree.IS_CLEAN || this.mutations.isDirty(node)) {
-                this.dirtyCalculations[node.getNr()] = this.calculationNr;
+        this.numDirtyNodes = 0;
+
+        if (!isEverythingDirty && this.tree instanceof IncrementalStoreTree incrementalTree
+                && incrementalTree.areFlaggedNodesComplete() && !this.mutations.isEveryBranchDirty()) {
+            // only the flagged nodes of the tree and the dirty branches of the mutations can be dirty
+            this.markDirtyNodes(incrementalTree.getFlaggedNodeNrs(), incrementalTree.getFlaggedNodeCount());
+            this.markDirtyNodes(this.mutations.getDirtyNodeNrs(), this.mutations.getDirtyNodeCount());
+        } else {
+            for (Node node : this.tree.getNodesAsArray()) {
+                if (isEverythingDirty || this.isChanged(node)) {
+                    this.markDirty(node);
+                }
             }
         }
 
         // start at every dirty branch below a clean one, so that parents are recomputed before their children
 
-        for (Node node : nodes) {
-            if (this.isDirty(node) && (node.isRoot() || !this.isDirty(node.getParent()))) {
+        for (int i = 0; i < this.numDirtyNodes; i++) {
+            Node node = this.tree.getNode(this.dirtyNodeNrs[i]);
+            if (node.isRoot() || !this.isDirty(node.getParent())) {
                 this.updateBranches(node);
             }
         }
@@ -161,6 +185,31 @@ public class GeneticPrior extends GenericTreeLikelihood {
         return this.logP;
     }
 
+    /** Marks those of the given nodes as dirty whose branch changed since the last calculation. */
+    private void markDirtyNodes(int[] nodeNrs, int numNodes) {
+        for (int i = 0; i < numNodes; i++) {
+            Node node = this.tree.getNode(nodeNrs[i]);
+            if (this.isChanged(node)) {
+                this.markDirty(node);
+            }
+        }
+    }
+
+    private boolean isChanged(Node node) {
+        return node.isDirty() != Tree.IS_CLEAN || this.mutations.isDirty(node);
+    }
+
+    private void markDirty(Node node) {
+        if (!this.isDirty(node)) {
+            this.dirtyCalculations[node.getNr()] = this.calculationNr;
+            this.dirtyNodeNrs[this.numDirtyNodes++] = node.getNr();
+        }
+    }
+
+    private boolean isDirty(Node node) {
+        return this.dirtyCalculations[node.getNr()] == this.calculationNr;
+    }
+
     /**
      * Recomputes the given branch and the branches below it that are dirty or whose parent's
      * total mutation rate changed.
@@ -172,10 +221,6 @@ public class GeneticPrior extends GenericTreeLikelihood {
                 this.updateBranches(child);
             }
         }
-    }
-
-    private boolean isDirty(Node node) {
-        return this.dirtyCalculations[node.getNr()] == this.calculationNr;
     }
 
     /**
@@ -258,12 +303,14 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
         double branchLogP = 0.0;
 
-        // add the contribution of the explicit mutations
+        // add the contribution of the explicit mutations, with the log branch rate once per mutation
 
+        if (!mutations.isEmpty()) {
+            branchLogP += mutations.size() * Math.log(branchRate);
+        }
         for (int i = 0; i < mutations.size(); i++) {
             Mutation mutation = mutations.get(i);
-            double mutationRate = this.getMutationRate(node, mutation.oldState(), mutation.newState(), mutation.site());
-            branchLogP += Math.log(branchRate * mutationRate);
+            branchLogP += this.logMutationRates[mutation.oldState() * this.numStates + mutation.newState()];
         }
 
         // add the contribution for no change between mutations
@@ -312,6 +359,18 @@ public class GeneticPrior extends GenericTreeLikelihood {
         }
 
         return rateMatrix;
+    }
+
+    /**
+     * Computes the log rates of mutating from one state to another, including the site rate.
+     * The entries of the diagonal are not defined, as their rates are negative.
+     */
+    private double[] computeLogMutationRates() {
+        double[] logMutationRates = new double[this.numStates * this.numStates];
+        for (int i = 0; i < logMutationRates.length; i++) {
+            logMutationRates[i] = Math.log(this.rateMatrix[i] * this.siteRate);
+        }
+        return logMutationRates;
     }
 
     /** Returns the rate of leaving the state on the given branch and site. */

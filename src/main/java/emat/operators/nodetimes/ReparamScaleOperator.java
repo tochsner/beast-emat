@@ -103,7 +103,8 @@ public abstract class ReparamScaleOperator extends ScaleTunedOperator {
             return Double.NEGATIVE_INFINITY;
         }
 
-        for (Node affectedNode : this.affectedNodes) {
+        for (int i = 0; i < this.affectedNodes.size(); i++) {
+            Node affectedNode = this.affectedNodes.get(i);
             affectedNode.setHeight(this.newHeights[affectedNode.getNr()]);
         }
 
@@ -122,7 +123,8 @@ public abstract class ReparamScaleOperator extends ScaleTunedOperator {
      * scaled. By default, these are all internal nodes of the subtree of the selected node.
      */
     protected void selectAffectedNodes(Node selectedNode) {
-        for (Node node : this.subtreeNodes) {
+        for (int i = 0; i < this.subtreeNodes.size(); i++) {
+            Node node = this.subtreeNodes.get(i);
             if (!node.isLeaf()) {
                 this.addAffectedNode(node);
             }
@@ -135,8 +137,8 @@ public abstract class ReparamScaleOperator extends ScaleTunedOperator {
     }
 
     private void clearAffectedNodes() {
-        for (Node node : this.affectedNodes) {
-            this.isAffected[node.getNr()] = false;
+        for (int i = 0; i < this.affectedNodes.size(); i++) {
+            this.isAffected[this.affectedNodes.get(i).getNr()] = false;
         }
         this.affectedNodes.clear();
     }
@@ -169,7 +171,8 @@ public abstract class ReparamScaleOperator extends ScaleTunedOperator {
 
         double oldestTipHeight = Double.NEGATIVE_INFINITY;
         double youngestTipHeight = Double.POSITIVE_INFINITY;
-        for (Node child : node.getChildren()) {
+        for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
+            Node child = node.getChild(childIndex);
             this.collectSubtree(child);
             oldestTipHeight = Math.max(oldestTipHeight, this.oldestTipHeights[child.getNr()]);
             youngestTipHeight = Math.min(youngestTipHeight, this.youngestTipHeights[child.getNr()]);
@@ -181,8 +184,8 @@ public abstract class ReparamScaleOperator extends ScaleTunedOperator {
     /** Returns the number of tips in the subtree of the last proposal. */
     private int countTips() {
         int numTips = 0;
-        for (Node node : this.subtreeNodes) {
-            if (node.isLeaf()) {
+        for (int i = 0; i < this.subtreeNodes.size(); i++) {
+            if (this.subtreeNodes.get(i).isLeaf()) {
                 numTips++;
             }
         }
@@ -196,13 +199,14 @@ public abstract class ReparamScaleOperator extends ScaleTunedOperator {
 
     /** Returns whether every affected node is strictly below its parent and strictly above its children. */
     private boolean isOrdered() {
-        for (Node node : this.affectedNodes) {
+        for (int i = 0; i < this.affectedNodes.size(); i++) {
+            Node node = this.affectedNodes.get(i);
             double height = this.newHeights[node.getNr()];
             if (!node.isRoot() && !(height < this.getNewHeight(node.getParent()))) {
                 return false;
             }
-            for (Node child : node.getChildren()) {
-                if (!(this.getNewHeight(child) < height)) {
+            for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
+                if (!(this.getNewHeight(node.getChild(childIndex)) < height)) {
                     return false;
                 }
             }
@@ -217,9 +221,12 @@ public abstract class ReparamScaleOperator extends ScaleTunedOperator {
     private double mapMutations() {
         double logJacobian = 0.0;
 
-        for (Node node : this.affectedNodes) {
+        // index-based loops avoid allocating an iterator or a view of the children per node
+        for (int i = 0; i < this.affectedNodes.size(); i++) {
+            Node node = this.affectedNodes.get(i);
             logJacobian += this.mapBranch(node);
-            for (Node child : node.getChildren()) {
+            for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
+                Node child = node.getChild(childIndex);
                 // the branch between two affected nodes is mapped once, from its lower end
                 if (!this.isAffected[child.getNr()]) {
                     logJacobian += this.mapBranch(child);

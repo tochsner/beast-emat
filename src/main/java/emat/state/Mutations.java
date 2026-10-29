@@ -34,6 +34,11 @@ public class Mutations extends StateNode {
     // whether the mutations above a node changed since the mutations were last marked clean
     private boolean[] isBranchDirty;
 
+    // the nodes whose branch is dirty, which is only complete if not every branch is dirty
+    private int[] dirtyNodeNrs;
+    private int numDirtyNodes;
+    private boolean isEveryBranchDirty;
+
     // whether the stored mutations hold a snapshot that the current proposal has not restored yet
     private boolean hasStoredMutations = false;
 
@@ -56,7 +61,8 @@ public class Mutations extends StateNode {
         this.setReferenceSequence();
 
         this.isBranchDirty = new boolean[this.numNodes];
-        Arrays.fill(this.isBranchDirty, true);
+        this.dirtyNodeNrs = new int[this.numNodes];
+        this.markEveryBranchDirty();
 
         this.storedMutationsAboveNode = new List[this.numNodes];
         this.storeMutations();
@@ -70,7 +76,7 @@ public class Mutations extends StateNode {
     public void applyMutations(Node node, List<Mutation> mutations, Operator operator) {
         this.startEditing(operator);
         this.mutationsAboveNode[node.getNr()] = List.copyOf(mutations);
-        this.isBranchDirty[node.getNr()] = true;
+        this.markBranchDirty(node.getNr());
 
         // perform sanity checks from time to time
         if (Randomizer.nextDouble() < 0.01) {
@@ -84,7 +90,14 @@ public class Mutations extends StateNode {
      */
     public void markBranchChanged(Node node, Operator operator) {
         this.startEditing(operator);
-        this.isBranchDirty[node.getNr()] = true;
+        this.markBranchDirty(node.getNr());
+    }
+
+    private void markBranchDirty(int nodeNr) {
+        if (!this.isBranchDirty[nodeNr]) {
+            this.isBranchDirty[nodeNr] = true;
+            this.dirtyNodeNrs[this.numDirtyNodes++] = nodeNr;
+        }
     }
 
     /**
@@ -100,7 +113,7 @@ public class Mutations extends StateNode {
             this.mutationsAboveNode[nodeNr] = List.copyOf(mutationsAboveNode.get(nodeNr));
             this.performSanityChecks(nodeNr);
         }
-        Arrays.fill(this.isBranchDirty, true);
+        this.markEveryBranchDirty();
 
         this.storeMutations();
     }
@@ -126,7 +139,7 @@ public class Mutations extends StateNode {
 
         this.mutationsAboveNode[rootNr] = List.of();
         this.storedMutationsAboveNode[rootNr] = List.of();
-        this.isBranchDirty[rootNr] = true;
+        this.markBranchDirty(rootNr);
         this.setSomethingIsDirty(true);
     }
 
@@ -292,6 +305,26 @@ public class Mutations extends StateNode {
     }
 
     /**
+     * Returns whether every branch may be dirty, in which case the dirty node numbers are not
+     * tracked individually.
+     */
+    public boolean isEveryBranchDirty() {
+        return this.isEveryBranchDirty;
+    }
+
+    /**
+     * Returns the numbers of the nodes whose branch is dirty in the first getDirtyNodeCount()
+     * entries. They are only complete if not every branch is dirty.
+     */
+    public int[] getDirtyNodeNrs() {
+        return this.dirtyNodeNrs;
+    }
+
+    public int getDirtyNodeCount() {
+        return this.numDirtyNodes;
+    }
+
+    /**
      * Returns the total number of mutations on the tree. Mutations above the root are
      * excluded, as they only encode the difference between the reference sequence and the
      * root sequence.
@@ -325,10 +358,30 @@ public class Mutations extends StateNode {
     @Override
     public void setEverythingDirty(boolean isDirty) {
         this.setSomethingIsDirty(isDirty);
-        Arrays.fill(this.isBranchDirty, isDirty);
-        if (!isDirty) {
+        if (isDirty) {
+            this.markEveryBranchDirty();
+        } else {
+            this.cleanBranches();
             this.hasStoredMutations = false;
         }
+    }
+
+    private void markEveryBranchDirty() {
+        Arrays.fill(this.isBranchDirty, true);
+        this.isEveryBranchDirty = true;
+        this.numDirtyNodes = 0;
+    }
+
+    private void cleanBranches() {
+        if (this.isEveryBranchDirty) {
+            Arrays.fill(this.isBranchDirty, false);
+        } else {
+            for (int i = 0; i < this.numDirtyNodes; i++) {
+                this.isBranchDirty[this.dirtyNodeNrs[i]] = false;
+            }
+        }
+        this.isEveryBranchDirty = false;
+        this.numDirtyNodes = 0;
     }
 
     /**
@@ -374,6 +427,7 @@ public class Mutations extends StateNode {
             copy.mutationsAboveNode = this.mutationsAboveNode.clone();
             copy.storedMutationsAboveNode = this.storedMutationsAboveNode.clone();
             copy.isBranchDirty = this.isBranchDirty.clone();
+            copy.dirtyNodeNrs = this.dirtyNodeNrs.clone();
             return copy;
         } catch (CloneNotSupportedException e) {
             throw new RuntimeException(e);
@@ -402,7 +456,7 @@ public class Mutations extends StateNode {
     public void assignFromFragile(StateNode other) {
         Mutations source = (Mutations) other;
         System.arraycopy(source.mutationsAboveNode, 0, this.mutationsAboveNode, 0, this.numNodes);
-        Arrays.fill(this.isBranchDirty, true);
+        this.markEveryBranchDirty();
         this.setSomethingIsDirty(false);
     }
 
@@ -421,7 +475,8 @@ public class Mutations extends StateNode {
         this.storedMutationsAboveNode = source.storedMutationsAboveNode.clone();
 
         this.isBranchDirty = new boolean[this.numNodes];
-        Arrays.fill(this.isBranchDirty, true);
+        this.dirtyNodeNrs = new int[this.numNodes];
+        this.markEveryBranchDirty();
     }
 
     /* Loggable methods */

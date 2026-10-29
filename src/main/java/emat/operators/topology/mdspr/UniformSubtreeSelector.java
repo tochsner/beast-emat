@@ -11,7 +11,7 @@ public class UniformSubtreeSelector extends SubtreeSelector {
     }
 
     @Override
-    protected double computeWeight(Node node) {
+    protected double computeWeight(Node node, Node parent) {
         return 1.0;
     }
 

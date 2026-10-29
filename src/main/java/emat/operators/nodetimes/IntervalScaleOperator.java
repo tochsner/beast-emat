@@ -39,15 +39,16 @@ public class IntervalScaleOperator extends ScaleTunedOperator {
     public double proposal() {
         double scaler = this.kernelDistribution.getScaler(0, this.getCoercableParameterValue());
 
-        // remember the old heights to map the mutations of every branch
+        // remember the old heights to map the mutations of every branch, and the old tree length
 
         Node[] nodes = this.tree.getNodesAsArray();
         double[] oldHeights = new double[nodes.length];
+        double lengthBefore = 0.0;
         for (Node node : nodes) {
             oldHeights[node.getNr()] = node.getHeight();
+            lengthBefore += node.getLength();
         }
 
-        double lengthBefore = NodeTimes.computeTreeLength(this.tree);
         int numScaledNodes = this.scaleIntervals(this.tree.getRoot(), scaler);
         double lengthAfter = NodeTimes.computeTreeLength(this.tree);
 

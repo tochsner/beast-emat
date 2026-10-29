@@ -11,6 +11,9 @@ import beast.base.evolution.tree.TreeIntervals;
         "not recorded.")
 public class InsertionSortTreeIntervals extends TreeIntervals {
 
+    // the times in the order of the sorted indices, so that sorting and walking the intervals read them in sequence
+    protected double[] sortedTimes;
+
     @Override
     protected void calculateIntervals() {
         Tree tree = this.treeInput.get();
@@ -20,6 +23,7 @@ public class InsertionSortTreeIntervals extends TreeIntervals {
         if (this.times == null || this.times.length != nodeCount) {
             this.times = new double[nodeCount];
             this.indices = new int[nodeCount];
+            this.sortedTimes = new double[nodeCount];
             for (int i = 0; i < nodeCount; i++) {
                 this.indices[i] = i;
             }
@@ -38,7 +42,7 @@ public class InsertionSortTreeIntervals extends TreeIntervals {
         this.sortIndices();
 
         // leaves are numbered below leafCount, and every internal node merges two lineages into one
-        double start = this.times[this.indices[0]];
+        double start = this.sortedTimes[0];
         int numLines = 0;
         int nodeNo = 0;
         this.intervalCount = 0;
@@ -46,7 +50,7 @@ public class InsertionSortTreeIntervals extends TreeIntervals {
             int lineagesRemoved = 0;
             int lineagesAdded = 0;
 
-            final double finish = this.times[this.indices[nodeNo]];
+            final double finish = this.sortedTimes[nodeNo];
             double next;
 
             do {
@@ -63,7 +67,7 @@ public class InsertionSortTreeIntervals extends TreeIntervals {
                 }
 
                 if (nodeNo < nodeCount) {
-                    next = this.times[this.indices[nodeNo]];
+                    next = this.sortedTimes[nodeNo];
                 } else {
                     break;
                 }
@@ -95,21 +99,27 @@ public class InsertionSortTreeIntervals extends TreeIntervals {
 
     /**
      * Sorts the indices by ascending time with insertion sort, starting from their current
-     * order. This takes time linear in the number of indices plus the number of pairs that are
-     * out of order, so it is fast if the indices are already nearly sorted.
+     * order, and fills the sorted times. This takes time linear in the number of indices plus
+     * the number of pairs that are out of order, so it is fast if the indices are already
+     * nearly sorted.
      */
     protected void sortIndices() {
         final double[] times = this.times;
         final int[] indices = this.indices;
-        for (int i = 1; i < indices.length; i++) {
+        final double[] sortedTimes = this.sortedTimes;
+        for (int i = 0; i < indices.length; i++) {
             final int index = indices[i];
             final double time = times[index];
+
+            // the indices before i are sorted already, with their times in the sorted times
             int j = i - 1;
-            while (j >= 0 && times[indices[j]] > time) {
+            while (j >= 0 && sortedTimes[j] > time) {
                 indices[j + 1] = indices[j];
+                sortedTimes[j + 1] = sortedTimes[j];
                 j--;
             }
             indices[j + 1] = index;
+            sortedTimes[j + 1] = time;
         }
     }
 

@@ -27,15 +27,16 @@ public abstract class SubtreeSelector {
     public Node pick() {
         double threshold = Randomizer.nextDouble() * this.computeWeights();
 
-        Node lastCandidate = null;
+        // the weights are indexed by node number, so the nodes are only looked up once picked
+        int lastCandidateNr = -1;
         double cumulativeWeight = 0.0;
-        for (Node node : this.tree.getNodesAsArray()) {
-            double weight = this.weights[node.getNr()];
+        for (int nodeNr = 0; nodeNr < this.weights.length; nodeNr++) {
+            double weight = this.weights[nodeNr];
             if (weight <= 0.0) {
                 continue;
             }
 
-            lastCandidate = node;
+            lastCandidateNr = nodeNr;
             cumulativeWeight += weight;
             if (threshold < cumulativeWeight) {
                 break;
@@ -43,7 +44,7 @@ public abstract class SubtreeSelector {
         }
 
         // without a break, the last candidate is only picked through rounding
-        return lastCandidate;
+        return lastCandidateNr < 0 ? null : this.tree.getNode(lastCandidateNr);
     }
 
     /** Returns the log of the selection weight of X over the total weight of the candidates in the current state. */
@@ -52,14 +53,15 @@ public abstract class SubtreeSelector {
         return Math.log(this.weights[x.getNr()] / totalWeight);
     }
 
-    /** Computes the unnormalised probability of picking the given node as X. */
-    protected abstract double computeWeight(Node node);
+    /** Computes the unnormalised probability of picking the given node with the given parent as X. */
+    protected abstract double computeWeight(Node node, Node parent);
 
     /** Fills the selection weights of all nodes for the current state and returns their total. */
     private double computeWeights() {
         double totalWeight = 0.0;
         for (Node node : this.tree.getNodesAsArray()) {
-            double weight = node.isRoot() || node.getParent().isRoot() ? 0.0 : this.computeWeight(node);
+            Node parent = node.getParent();
+            double weight = parent == null || parent.isRoot() ? 0.0 : this.computeWeight(node, parent);
             this.weights[node.getNr()] = weight;
             totalWeight += weight;
         }

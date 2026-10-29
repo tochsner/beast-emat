@@ -14,7 +14,7 @@ public class BranchLengthSubtreeSelector extends SubtreeSelector {
     }
 
     @Override
-    protected double computeWeight(Node node) {
-        return node.getLength();
+    protected double computeWeight(Node node, Node parent) {
+        return parent.getHeight() - node.getHeight();
     }
 }
