@@ -136,12 +136,12 @@
             </operator>
             <operator id="StrictClockRateScalerX.c:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@clockRate.c:{{ID}}" scaleFactor="0.1" upper="10.0" weight="0.1"/>
         </operator>
-        <operator id="KappaScaler.s:{{ID}}" spec="beast.base.spec.evolution.operator.AdaptableOperatorSampler" weight="0.5">
+        <operator id="KappaScaler.s:{{ID}}" spec="beast.base.spec.evolution.operator.AdaptableOperatorSampler" weight="0.2">
             <parameter idref="kappa.s:{{ID}}"/>
             <operator idref="AVMNOperator.{{ID}}"/>
             <operator id="KappaScalerX.s:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@kappa.s:{{ID}}" scaleFactor="0.1" upper="10.0" weight="0.1"/>
         </operator>
-        <operator id="FrequenciesExchangerX.s:{{ID}}" spec="beast.base.spec.inference.operator.DeltaExchangeOperator" delta="0.01" weight="0.5">
+        <operator id="FrequenciesExchangerX.s:{{ID}}" spec="beast.base.spec.inference.operator.DeltaExchangeOperator" delta="0.01" weight="0.2">
             <parameter idref="freqParameter.s:{{ID}}"/>
         </operator>
         <operator id="originBDMMPrimeScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@originBDMMPrime.t:{{ID}}" scaleFactor="1.0" upper="10.0" weight="3.0"/>
@@ -153,13 +153,13 @@
         <operator id="samplingProportionEpiScaler.t:{{ID}}" spec="beast.base.spec.inference.operator.ScaleOperator" parameter="@samplingProportionEpi.t:{{ID}}" scaleFactor="0.1" upper="10.0" weight="3.0"/>
         <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="10.0"/>
         <operator id="MutationDirectedSprOperator.{{ID}}" spec="emat.operators.topology.MutationDirectedSprOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" fullExplorationProbability="0.01" weight="25.0" scaleWeightByLogNumTips="true" windowProbability="0.3" subtreeSelection="BRANCH_LENGTH"/>
-        <operator id="RatioScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RatioScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="40.0" scaleWeightByLogNumTips="true"/>
+        <operator id="MutationRatioScaleOperator.{{ID}}" spec="emat.operators.nodetimes.MutationRatioScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="40.0" scaleWeightByLogNumTips="true"/>
         <operator id="GroupESSWeightAdaptationOperator.{{ID}}" spec="weightoptimization.GroupESSWeightAdaptationOperator" weight="45.0" maxWeightFactor="3.0">
             <operatorAdapter id="MutationCountAdapter.{{ID}}" spec="emat.adapters.MutationCountAdapter" mutations="@mutations.{{ID}}"/>
             <referenceAdapter id="TreeLengthAdapter.{{ID}}" spec="adapters.TreeLengthAdapter" tree="@Tree.t:{{ID}}"/>
             <operator id="SiteHistoryGibbsOperator.{{ID}}" spec="emat.operators.mutations.SiteHistoryGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" siteSelection="PARSIMONY" pseudoCount="0.5" weight="15.0"/>
-            <operator id="MissingCladeGibbsOperator.{{ID}}" spec="emat.operators.mutations.MissingCladeGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" maxSites="100" weight="15.0"/>
-            <operator id="BranchReformOperator.{{ID}}" spec="emat.operators.mutations.BranchReformOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="15.0"/>
+            <operator id="MissingCladeGibbsOperator.{{ID}}" spec="emat.operators.mutations.MissingCladeGibbsOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" maxSites="100" weight="10.0"/>
+            <operator id="BranchReformOperator.{{ID}}" spec="emat.operators.mutations.BranchReformOperator" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="20.0"/>
         </operator>
         <operator id="ClockIntervalScaleOperator.{{ID}}" spec="emat.operators.nodetimes.IntervalScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="5.0">
             <down idref="clockRate.c:{{ID}}"/>

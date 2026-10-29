@@ -17,6 +17,7 @@
         <provider classname="emat.operators.nodetimes.InnerNodeDisplacementOperator"/>
         <provider classname="emat.operators.nodetimes.RootScaleOperator"/>
         <provider classname="emat.operators.nodetimes.RatioScaleOperator"/>
+        <provider classname="emat.operators.nodetimes.MutationRatioScaleOperator"/>
         <provider classname="emat.operators.nodetimes.GammaRegressionRatioScaleOperator"/>
         <provider classname="emat.operators.nodetimes.GammaTransportRatioScaleOperator"/>
         <provider classname="emat.operators.nodetimes.TipOffsetScaleOperator"/>
