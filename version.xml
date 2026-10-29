@@ -17,6 +17,13 @@
         <provider classname="emat.operators.nodetimes.InnerNodeDisplacementOperator"/>
         <provider classname="emat.operators.nodetimes.RootScaleOperator"/>
         <provider classname="emat.operators.nodetimes.RatioScaleOperator"/>
+        <provider classname="emat.operators.nodetimes.GammaRegressionRatioScaleOperator"/>
+        <provider classname="emat.operators.nodetimes.GammaTransportRatioScaleOperator"/>
+        <provider classname="emat.operators.nodetimes.TipOffsetScaleOperator"/>
+        <provider classname="emat.operators.nodetimes.GapShiftScaleOperator"/>
+        <provider classname="emat.operators.nodetimes.PresentRatioScaleOperator"/>
+        <provider classname="emat.operators.nodetimes.YoungestTipRatioScaleOperator"/>
+        <provider classname="emat.operators.nodetimes.RootAnchoredRatioScaleOperator"/>
         <provider classname="emat.operators.mutations.BranchReformOperator"/>
         <provider classname="emat.benchmark.HistoryDistanceLogger"/>
         <provider classname="emat.benchmark.ExactHistoryInitialiser"/>

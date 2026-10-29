@@ -64,7 +64,7 @@ public class RatioScaleOperatorTest {
      * relative positions contributes len_b^m_b. The internal node heights then follow
      * exp(-h_root - L T) Π_b len_b^m_b, whose means are integrated on a grid.
      */
-    private void assertFixedHistoryMatchesExactPosterior(ScaleTunedOperator operator, Object... inputs) {
+    void assertFixedHistoryMatchesExactPosterior(ScaleTunedOperator operator, Object... inputs) {
         Randomizer.setSeed(1);
 
         Alignment alignment = new Alignment();

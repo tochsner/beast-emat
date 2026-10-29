@@ -16,6 +16,13 @@ import emat.operators.mutations.SiteHistoryGibbsOperator;
 import emat.operators.mutations.MissingCladeGibbsOperator;
 import emat.operators.nodetimes.RootScaleOperator;
 import emat.operators.nodetimes.RatioScaleOperator;
+import emat.operators.nodetimes.GammaRegressionRatioScaleOperator;
+import emat.operators.nodetimes.GammaTransportRatioScaleOperator;
+import emat.operators.nodetimes.TipOffsetScaleOperator;
+import emat.operators.nodetimes.GapShiftScaleOperator;
+import emat.operators.nodetimes.PresentRatioScaleOperator;
+import emat.operators.nodetimes.YoungestTipRatioScaleOperator;
+import emat.operators.nodetimes.RootAnchoredRatioScaleOperator;
 import emat.helper.ExcessMutationLogger;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
@@ -60,6 +67,13 @@ open module my.beast.example {
             MissingCladeGibbsOperator,
             RootScaleOperator,
             RatioScaleOperator,
+            GammaRegressionRatioScaleOperator,
+            GammaTransportRatioScaleOperator,
+            TipOffsetScaleOperator,
+            GapShiftScaleOperator,
+            PresentRatioScaleOperator,
+            YoungestTipRatioScaleOperator,
+            RootAnchoredRatioScaleOperator,
             IntervalScaleOperator,
             LearnedWarpOperator,
             MutationDirectedSprOperator,
