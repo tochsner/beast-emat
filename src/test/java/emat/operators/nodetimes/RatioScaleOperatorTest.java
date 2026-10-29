@@ -56,6 +56,16 @@ public class RatioScaleOperatorTest {
     }
 
     /**
+     * The step of a proposal depends only on the number of mutations of the picked subtree,
+     * which the move keeps, so tuning the step of every mutation count class still targets
+     * the exact posterior.
+     */
+    @Test
+    public void testMutationClassesMatchExactPosterior() {
+        this.assertFixedHistoryMatchesExactPosterior(new MutationRatioScaleOperator(), "optimise", true);
+    }
+
+    /**
      * On a four-tip caterpillar with serially sampled tips and an exponential prior on the
      * root height, runs a Metropolis-Hastings chain with only the given operator, which
      * keeps the parsimony history and the relative positions of its mutations. Under

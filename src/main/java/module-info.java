@@ -23,6 +23,7 @@ import emat.operators.nodetimes.GapShiftScaleOperator;
 import emat.operators.nodetimes.PresentRatioScaleOperator;
 import emat.operators.nodetimes.YoungestTipRatioScaleOperator;
 import emat.operators.nodetimes.RootAnchoredRatioScaleOperator;
+import emat.operators.nodetimes.MutationRatioScaleOperator;
 import emat.helper.ExcessMutationLogger;
 import emat.prior.GeneticPrior;
 import emat.state.Mutations;
@@ -74,6 +75,7 @@ open module my.beast.example {
             PresentRatioScaleOperator,
             YoungestTipRatioScaleOperator,
             RootAnchoredRatioScaleOperator,
+            MutationRatioScaleOperator,
             IntervalScaleOperator,
             LearnedWarpOperator,
             MutationDirectedSprOperator,

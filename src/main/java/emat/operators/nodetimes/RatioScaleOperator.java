@@ -7,7 +7,6 @@ import beast.base.util.Randomizer;
 
 import java.text.DecimalFormat;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 @Description("Moves a random internal node in the ratio parameterisation of the node heights. The root is " +
@@ -38,10 +37,14 @@ public class RatioScaleOperator extends ScaleTunedOperator {
     // the nodes of the subtree of the last proposal in pre-order, starting with the selected node
     private final List<Node> subtreeNodes = new ArrayList<>();
 
-    // the scale factor and the number of tuning steps of every clade size class, and the class of the last proposal
+    // the number of tips and the number of mutations on the branches of the subtree of the last proposal
+    protected int subtreeNumTips;
+    protected int subtreeNumMutations;
+
+    // the scale factor and the number of tuning steps of every step class, and the class of the last proposal
     private double[] classScaleFactors;
     private long[] classTuningSteps;
-    private int lastSizeClass;
+    private int lastClass;
 
     @Override
     public void initAndValidate() {
@@ -57,12 +60,24 @@ public class RatioScaleOperator extends ScaleTunedOperator {
         this.oldHeights = new double[numNodes];
         this.newHeights = new double[numNodes];
 
-        int numSizeClasses = this.computeSizeClass(this.tree.getLeafNodeCount()) + 1;
-        this.classScaleFactors = new double[numSizeClasses];
-        this.classTuningSteps = new long[numSizeClasses];
-        Arrays.fill(this.classScaleFactors, this.scaleFactor);
+        int numClasses = this.computeNumClasses();
+        this.classScaleFactors = new double[numClasses];
+        this.classTuningSteps = new long[numClasses];
+        for (int stepClass = 0; stepClass < numClasses; stepClass++) {
+            this.classScaleFactors[stepClass] = this.computeInitialScaleFactor(stepClass);
+        }
 
         this.weightFactor = this.scaleWeightByLogNumTipsInput.get() ? Math.log(this.tree.getLeafNodeCount()) : 1.0;
+    }
+
+    /** Returns the number of step classes, by default the number of clade size classes. */
+    protected int computeNumClasses() {
+        return this.computeSizeClass(this.tree.getLeafNodeCount()) + 1;
+    }
+
+    /** Returns the initial scale factor of the given step class, by default the given scale factor. */
+    protected double computeInitialScaleFactor(int stepClass) {
+        return this.scaleFactor;
     }
 
     /**
@@ -95,11 +110,13 @@ public class RatioScaleOperator extends ScaleTunedOperator {
         Node node = this.tree.getNode(numLeaves + Randomizer.nextInt(numInternalNodes));
 
         this.subtreeNodes.clear();
+        this.subtreeNumTips = 0;
+        this.subtreeNumMutations = 0;
         this.collectSubtree(node);
         this.computeRatios();
 
-        this.lastSizeClass = this.computeSizeClass(this.countTips());
-        double scaler = this.kernelDistribution.getScaler(node.getNr(), node.getHeight(), this.classScaleFactors[this.lastSizeClass]);
+        this.lastClass = this.computeStepClass();
+        double scaler = this.kernelDistribution.getScaler(node.getNr(), node.getHeight(), this.classScaleFactors[this.lastClass]);
         double logHastingsRatio = node.isRoot()
                 ? this.proposeRootHeight(node, scaler)
                 : this.proposeInnerHeight(node, scaler);
@@ -137,17 +154,22 @@ public class RatioScaleOperator extends ScaleTunedOperator {
     }
 
     /**
-     * Adds the subtree of the given node to the subtree nodes in pre-order, and records the
-     * old height and the height of the oldest tip below every node of it.
+     * Adds the subtree of the given node to the subtree nodes in pre-order, records the old
+     * height and the height of the oldest tip below every node of it, and counts its tips and
+     * the mutations on its branches, including the branch above the given node.
      */
     private void collectSubtree(Node node) {
         int nodeNr = node.getNr();
         this.subtreeNodes.add(node);
         this.oldHeights[nodeNr] = node.getHeight();
         this.newHeights[nodeNr] = node.getHeight();
+        if (!node.isRoot()) {
+            this.subtreeNumMutations += this.mutations.getMutations(node).size();
+        }
 
         if (node.isLeaf()) {
             this.oldestTipHeights[nodeNr] = node.getHeight();
+            this.subtreeNumTips++;
             return;
         }
 
@@ -180,15 +202,13 @@ public class RatioScaleOperator extends ScaleTunedOperator {
         }
     }
 
-    /** Returns the number of tips in the subtree of the last proposal. */
-    private int countTips() {
-        int numTips = 0;
-        for (Node node : this.subtreeNodes) {
-            if (node.isLeaf()) {
-                numTips++;
-            }
-        }
-        return numTips;
+    /**
+     * Returns the step class of the subtree of the last proposal, by default its clade size
+     * class. It may only depend on what the move keeps, so that the reverse move uses the
+     * same step.
+     */
+    protected int computeStepClass() {
+        return this.computeSizeClass(this.subtreeNumTips);
     }
 
     /** Returns the clade size class of a clade with the given number of tips, ⌊log₂ n⌋. */
@@ -269,9 +289,9 @@ public class RatioScaleOperator extends ScaleTunedOperator {
     /* Tuning */
 
     /**
-     * Tunes the scale factor of the clade size class of the last proposal by the Robbins-Monro
-     * rule of the operator schedule, log s += (α - α*) / √(n + 1), where n counts the tuning
-     * steps of that class only.
+     * Tunes the scale factor of the step class of the last proposal by the Robbins-Monro rule
+     * of the operator schedule, log s += (α - α*) / √(n + 1), where n counts the tuning steps
+     * of that class only.
      */
     @Override
     public void optimize(double logAlpha) {
@@ -279,27 +299,37 @@ public class RatioScaleOperator extends ScaleTunedOperator {
             return;
         }
 
-        int sizeClass = this.lastSizeClass;
-        double gain = 1.0 / Math.sqrt(this.classTuningSteps[sizeClass] + 1.0);
+        int stepClass = this.lastClass;
+        double gain = 1.0 / Math.sqrt(this.classTuningSteps[stepClass] + 1.0);
         double delta = gain * (Math.exp(Math.min(logAlpha, 0.0)) - this.getTargetAcceptanceProbability());
         if (Double.isFinite(delta)) {
-            double scaleFactor = Math.exp(Math.log(this.classScaleFactors[sizeClass]) + delta);
-            this.classScaleFactors[sizeClass] = Math.max(Math.min(scaleFactor, this.upper), this.lower);
+            double scaleFactor = Math.exp(Math.log(this.classScaleFactors[stepClass]) + delta);
+            this.classScaleFactors[stepClass] = Math.max(Math.min(scaleFactor, this.upper), this.lower);
         }
-        this.classTuningSteps[sizeClass]++;
+        this.classTuningSteps[stepClass]++;
     }
 
-    /** Lists the tuned scale factor of every clade size class that was proposed. */
+    /** Lists the tuned scale factor of every step class that was proposed. */
     @Override
     public String getPerformanceSuggestion() {
         DecimalFormat formatter = new DecimalFormat("#.###");
-        StringBuilder suggestion = new StringBuilder("scale factors by clade size class:");
-        for (int sizeClass = 0; sizeClass < this.classScaleFactors.length; sizeClass++) {
-            if (this.classTuningSteps[sizeClass] > 0) {
-                suggestion.append(" ").append(1 << sizeClass).append("+ tips ").append(formatter.format(this.classScaleFactors[sizeClass]));
+        StringBuilder suggestion = new StringBuilder("scale factors by " + this.describeStepClasses() + ":");
+        for (int stepClass = 0; stepClass < this.classScaleFactors.length; stepClass++) {
+            if (this.classTuningSteps[stepClass] > 0) {
+                suggestion.append(" ").append(this.describeStepClass(stepClass)).append(" ").append(formatter.format(this.classScaleFactors[stepClass]));
             }
         }
         return suggestion.toString();
+    }
+
+    /** Returns the name of the step classes for the performance suggestion. */
+    protected String describeStepClasses() {
+        return "clade size class";
+    }
+
+    /** Returns the label of the given step class for the performance suggestion. */
+    protected String describeStepClass(int stepClass) {
+        return (1 << stepClass) + "+ tips";
     }
 
 }
