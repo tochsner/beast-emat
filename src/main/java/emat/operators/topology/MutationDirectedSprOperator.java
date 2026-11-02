@@ -4,6 +4,7 @@ import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.tree.Node;
 import beast.base.util.Randomizer;
+import emat.diagnostics.StepAnnotations;
 import emat.helper.MutationPaths;
 import emat.helper.SiteChanges;
 import emat.operators.topology.mdspr.BranchLengthSubtreeSelector;
@@ -233,6 +234,8 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
             this.numLocalRegions += this.regions.size();
         }
         double logTotalWeight = this.regions.normaliseWeights();
+        StepAnnotations.set(8, isFullExploration ? 1.0 : 0.0);
+        StepAnnotations.set(9, this.regions.size());
 
         Region newRegion = this.regions.sample();
         double newParentHeight = newRegion.lowerHeight() + Randomizer.nextDouble() * (newRegion.upperHeight() - newRegion.lowerHeight());
@@ -713,6 +716,15 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     }
 
     /* Diagnostics */
+
+    @Override
+    public String[] getAnnotationNames() {
+        String[] base = super.getAnnotationNames();
+        String[] names = Arrays.copyOf(base, base.length + 2);
+        names[base.length] = "fullExploration";
+        names[base.length + 1] = "numRegions";
+        return names;
+    }
 
     /**
      * Returns the diagnostics of the proposals so far by name: the mean number of candidate

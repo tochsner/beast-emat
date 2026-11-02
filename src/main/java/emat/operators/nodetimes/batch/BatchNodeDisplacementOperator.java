@@ -7,9 +7,6 @@ import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.StateNode;
-import beast.base.spec.type.IntVector;
-import beast.base.spec.type.RealScalar;
-import beast.base.spec.type.RealVector;
 import beast.base.util.Randomizer;
 import emat.operators.nodetimes.NodeTimes;
 import emat.prior.GeneticPrior;
@@ -36,9 +33,6 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     final public Input<Integer> treePriorWarmUpInput = new Input<>("treePriorWarmUp", "the number of proposals after which the approximation of the tree prior is fitted for the first time", 500);
     final public Input<Boolean> scaleWeightByLogNumTipsInput = new Input<>("scaleWeightByLogNumTips", "whether to scale the weight by the natural logarithm of the number of tips n, so that the operator is selected with weight * ln(n). Otherwise, the weight is used as given", false);
 
-    // the adapters have no use for the node, as the parameters of the tree prior do not belong to one
-    private static final int NO_NODE = -1;
-
     private Tree tree;
     private Mutations mutations;
     private GeneticPrior geneticPrior;
@@ -61,8 +55,8 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
     // the approximation of the tree prior, or null to draw from the genetic prior only
     private LearnedTreePrior treePriorApproximation;
 
-    // the values of the parameters of the tree prior at the start of the last proposal
-    private double[] treePriorParameterValues;
+    // the values of the parameters of the tree prior, read at the start of each proposal
+    private TreePriorParameterValues treePriorParameterValues;
 
     // the number of proposals the batch size was tuned on
     private long numTuningSteps;
@@ -92,33 +86,10 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         this.weightFactor = this.scaleWeightByLogNumTipsInput.get() ? Math.log(this.tree.getLeafNodeCount()) : 1.0;
 
         if (this.learnTreePriorInput.get()) {
-            this.treePriorParameterValues = new double[this.countTreePriorParameterValues()];
+            this.treePriorParameterValues = new TreePriorParameterValues(this.treePriorParametersInput.get(), this.adaptersInput.get());
             this.treePriorApproximation = new GlobalSplineTreePriorApproximation(
-                    this.treePriorKnotsInput.get(), this.treePriorParameterValues.length, this.treePriorWarmUpInput.get());
+                    this.treePriorKnotsInput.get(), this.treePriorParameterValues.getValues().length, this.treePriorWarmUpInput.get());
         }
-    }
-
-    /**
-     * Returns the number of values of the parameters of the tree prior, and checks that they are real or integer
-     * vectors. The values of the adapters follow those of the parameters.
-     */
-    private int countTreePriorParameterValues() {
-        int numValues = 0;
-        for (Adapter adapter : this.adaptersInput.get()) {
-            numValues += adapter.getNumMutable() + adapter.getNumImmutable();
-        }
-        for (StateNode parameter : this.treePriorParametersInput.get()) {
-            if (parameter instanceof RealScalar<?>) {
-                numValues++;
-            } else if (parameter instanceof RealVector<?> vector) {
-                numValues += vector.size();
-            } else if (parameter instanceof IntVector<?> vector) {
-                numValues += vector.size();
-            } else {
-                throw new IllegalArgumentException("The tree prior parameter " + parameter.getID() + " is neither a real scalar nor a real or integer vector.");
-            }
-        }
-        return numValues;
     }
 
     /**
@@ -136,7 +107,7 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
 
         this.approximateTreePriorChange = 0.0;
         if (this.treePriorApproximation != null) {
-            this.readTreePriorParameterValues();
+            this.treePriorParameterValues.read();
             this.treePriorApproximation.startObservation();
         }
 
@@ -155,36 +126,6 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         }
 
         return logHastingsRatio;
-    }
-
-    /**
-     * Reads the current values of the parameters of the tree prior, and then the mutable and immutable values of the
-     * adapters, into the array that is handed to the approximation.
-     */
-    private void readTreePriorParameterValues() {
-        int index = 0;
-        for (StateNode parameter : this.treePriorParametersInput.get()) {
-            if (parameter instanceof RealScalar<?> scalar) {
-                this.treePriorParameterValues[index++] = scalar.get();
-            } else if (parameter instanceof RealVector<?> vector) {
-                for (int i = 0; i < vector.size(); i++) {
-                    this.treePriorParameterValues[index++] = vector.get(i);
-                }
-            } else if (parameter instanceof IntVector<?> vector) {
-                for (int i = 0; i < vector.size(); i++) {
-                    this.treePriorParameterValues[index++] = vector.get(i);
-                }
-            }
-        }
-
-        for (Adapter adapter : this.adaptersInput.get()) {
-            for (double value : adapter.getMutable(NO_NODE)) {
-                this.treePriorParameterValues[index++] = value;
-            }
-            for (double value : adapter.getImmutable(NO_NODE)) {
-                this.treePriorParameterValues[index++] = value;
-            }
-        }
     }
 
     /**
@@ -234,8 +175,8 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         if (this.treePriorApproximation == null) {
             newHeight = TruncatedDensitySampler.sampleExponential(geneticDecayRate, minHeight, maxHeight);
         } else {
-            newHeight = this.treePriorApproximation.sampleHeight(geneticDecayRate, minHeight, maxHeight, this.treePriorParameterValues);
-            approximateChange = this.treePriorApproximation.getChange(minHeight, maxHeight, oldHeight, newHeight, this.treePriorParameterValues);
+            newHeight = this.treePriorApproximation.sampleHeight(geneticDecayRate, minHeight, maxHeight, this.treePriorParameterValues.getValues());
+            approximateChange = this.treePriorApproximation.getChange(minHeight, maxHeight, oldHeight, newHeight, this.treePriorParameterValues.getValues());
         }
 
         double logHastingsRatio = geneticDecayRate * (newHeight - oldHeight) - approximateChange;
@@ -254,7 +195,7 @@ public class BatchNodeDisplacementOperator extends TreeOperator {
         // remember the move for the fit of the approximation
 
         if (this.treePriorApproximation != null) {
-            this.treePriorApproximation.addNode(midpoint, this.treePriorParameterValues, oldHeight - midpoint, newHeight - midpoint);
+            this.treePriorApproximation.addNode(midpoint, this.treePriorParameterValues.getValues(), oldHeight - midpoint, newHeight - midpoint);
             this.approximateTreePriorChange += approximateChange;
         }
 

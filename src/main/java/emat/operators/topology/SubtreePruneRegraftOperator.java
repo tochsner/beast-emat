@@ -5,6 +5,8 @@ import beast.base.core.Input;
 import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
+import emat.diagnostics.DiagnosedOperator;
+import emat.diagnostics.StepAnnotations;
 import emat.stochasticmapping.BranchHistorySampler;
 import emat.stochasticmapping.HistorySampler;
 import emat.stochasticmapping.JukesCantorStochasticMapping;
@@ -30,7 +32,7 @@ import java.util.function.IntUnaryOperator;
         "where its data is missing are resampled as well, so that they follow its placement, and by default also " +
         "among the compatible states where its data is partially ambiguous. Missations are not supported. " +
         "Subclasses choose the pruned subtree and the grafting point.")
-public abstract class SubtreePruneRegraftOperator extends TreeOperator {
+public abstract class SubtreePruneRegraftOperator extends TreeOperator implements DiagnosedOperator {
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "the mutations to operate on", Input.Validate.REQUIRED);
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model", Input.Validate.REQUIRED);
@@ -143,6 +145,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
             return Double.NEGATIVE_INFINITY;
         }
 
+        this.annotateGraft(x, graftingPoint);
+
         // resample the history above the subtree, then regraft and apply the new histories
 
         Map<Node, List<Mutation>> newBranchMutations = new LinkedHashMap<>();
@@ -232,6 +236,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         List<Mutation> oldSubtreeMutations = this.mutations.getMutations(x);
         MutationPaths.collectChanges(this.mutations, parent, x, x.getHeight(), this.subtreeChanges);
         int oldNumDifferingSites = MutationPaths.countDifferingSites(this.subtreeChanges);
+        StepAnnotations.set(6, oldNumDifferingSites);
         int oldNumDifferingMissingSites = this.countDifferingMissingSites(this.subtreeChanges);
 
         // P' lies on the branch above this node in the current tree, which is the old P branch if P shifts upwards
@@ -265,6 +270,8 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         double logAmbiguousForwardDensity = this.stochasticMapping.sampleCompatibleEndStates(
                 newExpectedJumps, this.subtreeAmbiguousSites, this.subtreeCompatibleStates, newParentStates, this.differingSites
         );
+
+        StepAnnotations.set(7, this.differingSites.getSize());
 
         // sample the history on the new P'–X branch while the tree still holds the old sequences, where every agreeing site is in the state of P'
 
@@ -308,6 +315,57 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         );
 
         return logBackwardDensity - logForwardDensity;
+    }
+
+    /* Diagnostics */
+
+    @Override
+    public String[] getAnnotationNames() {
+        return new String[]{"prunedTips", "oldBranchLength", "newBranchLength", "isHeightShift", "graftDistance", "parentHeightChange", "oldDifferingSites", "newDifferingSites"};
+    }
+
+    /** Records the size of the pruned subtree, its branch length before and after, and how far the move takes it. */
+    private void annotateGraft(Node x, GraftingPoint graftingPoint) {
+        Node parent = x.getParent();
+        Node sibling = this.getOtherChild(parent, x);
+
+        StepAnnotations.set(0, x.getLeafNodeCount());
+        StepAnnotations.set(1, parent.getHeight() - x.getHeight());
+        StepAnnotations.set(2, graftingPoint.newParentHeight() - x.getHeight());
+        StepAnnotations.set(3, graftingPoint.newSibling() == sibling ? 1.0 : 0.0);
+        StepAnnotations.set(4, this.computeEdgeDistance(sibling, graftingPoint.newSibling()));
+        StepAnnotations.set(5, graftingPoint.newParentHeight() - parent.getHeight());
+    }
+
+    /** Returns the number of edges on the path between two nodes of the current tree. */
+    private int computeEdgeDistance(Node a, Node b) {
+        int depthA = this.computeDepth(a);
+        int depthB = this.computeDepth(b);
+        int distance = 0;
+        while (depthA > depthB) {
+            a = a.getParent();
+            depthA--;
+            distance++;
+        }
+        while (depthB > depthA) {
+            b = b.getParent();
+            depthB--;
+            distance++;
+        }
+        while (a != b) {
+            a = a.getParent();
+            b = b.getParent();
+            distance += 2;
+        }
+        return distance;
+    }
+
+    private int computeDepth(Node node) {
+        int depth = 0;
+        for (Node ancestor = node.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
+            depth++;
+        }
+        return depth;
     }
 
     /* Stochastic Mapping */

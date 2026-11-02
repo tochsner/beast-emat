@@ -3,22 +3,18 @@ package emat.operators.nodetimes;
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.tree.Node;
-import beast.base.inference.Scalable;
-
-import java.util.ArrayList;
-import java.util.List;
+import emat.diagnostics.DiagnosedOperator;
+import emat.diagnostics.StepAnnotations;
 
 @Description("Scales the intervals between every internal node and its older child by a common factor, " +
         "and maps every mutation linearly within its branch. Unlike scaling all heights, this keeps the tree " +
         "and its mutations valid even for tips sampled through time " +
         "(https://www.biorxiv.org/content/10.1101/2025.06.18.660471v1).")
-public class IntervalScaleOperator extends ScaleTunedOperator {
+public class IntervalScaleOperator extends CompensatedScaleOperator implements DiagnosedOperator {
 
     final public Input<Double> scaleUpperLimit = new Input<>("upper", "upper limit of the scale factor", 1.0 - 1e-8);
     final public Input<Double> scaleLowerLimit = new Input<>("lower", "lower limit of the scale factor", 1e-8);
     final public Input<Double> scaleFactorInput = new Input<>("scaleFactor", "scaling factor: range from 0 to 1. Close to zero is very large jumps, close to 1.0 is very small jumps.", 0.1);
-    final public Input<List<Scalable>> downInput = new Input<>("down", "parameters to scale inversely to the tree length", new ArrayList<>());
-    final public Input<List<Scalable>> upInput = new Input<>("up", "parameters to scale with the tree length", new ArrayList<>());
 
     @Override
     public void initAndValidate() {
@@ -37,7 +33,7 @@ public class IntervalScaleOperator extends ScaleTunedOperator {
      */
     @Override
     public double proposal() {
-        double scaler = this.kernelDistribution.getScaler(0, this.getCoercableParameterValue());
+        double scaler = this.drawScaler();
 
         // remember the old heights to map the mutations of every branch, and the old tree length
 
@@ -51,8 +47,16 @@ public class IntervalScaleOperator extends ScaleTunedOperator {
 
         int numScaledNodes = this.scaleIntervals(this.tree.getRoot(), scaler);
         double lengthAfter = NodeTimes.computeTreeLength(this.tree);
+        if (!this.isTreeLengthAllowed(lengthAfter)) {
+            return Double.NEGATIVE_INFINITY;
+        }
 
         double logHastingsRatio = numScaledNodes * Math.log(scaler);
+        StepAnnotations.set(0, Math.log(scaler));
+        StepAnnotations.set(1, numScaledNodes);
+        StepAnnotations.set(2, Math.log(lengthAfter / lengthBefore));
+        StepAnnotations.set(3, lengthBefore);
+        StepAnnotations.set(4, this.getCoercableParameterValue());
 
         // move the mutations of every non-root branch along with its ends
 
@@ -60,23 +64,28 @@ public class IntervalScaleOperator extends ScaleTunedOperator {
 
         // scale the other parameters with the tree length
 
-        double actualScaler = lengthAfter / lengthBefore;
-
-        // scale returns the log Jacobian, i.e. dimension * log(factor)
-
-        try {
-            for (Scalable down : this.downInput.get()) {
-                logHastingsRatio += down.scale(1.0 / actualScaler);
-            }
-            for (Scalable up : this.upInput.get()) {
-                logHastingsRatio += up.scale(actualScaler);
-            }
-        } catch (IllegalArgumentException e) {
-            // a scalable rejected the move
+        double logJacobian = this.scaleCompensatedParameters(lengthBefore, lengthAfter);
+        if (logJacobian == Double.NEGATIVE_INFINITY) {
             return Double.NEGATIVE_INFINITY;
         }
+        logHastingsRatio += logJacobian;
 
         return logHastingsRatio;
+    }
+
+    /** Draws the factor by which the intervals are scaled; its logarithm is symmetric around zero. */
+    protected double drawScaler() {
+        return this.kernelDistribution.getScaler(0, this.getCoercableParameterValue());
+    }
+
+    /** Returns whether the tree length after the scaling lies in the support of the move; the proposal is rejected otherwise. */
+    protected boolean isTreeLengthAllowed(double treeLength) {
+        return true;
+    }
+
+    @Override
+    public String[] getAnnotationNames() {
+        return new String[]{"logScaler", "numScaledNodes", "logTreeLengthScaler", "treeLengthBefore", "width"};
     }
 
     /**

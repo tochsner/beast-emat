@@ -4,6 +4,7 @@ import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeParser;
+import beast.base.inference.OperatorSchedule;
 import beast.base.spec.domain.PositiveReal;
 import beast.base.spec.evolution.branchratemodel.StrictClockModel;
 import beast.base.spec.evolution.sitemodel.SiteModel;
@@ -46,12 +47,38 @@ public class IntervalScaleOperatorTest {
     @Test
     public void testTwoTipsMatchExactPosterior() {
         Randomizer.setSeed(1);
-        TwoTipChain chain = this.createTwoTipChain();
+        TwoTipChain chain = this.createTwoTipChain(new IntervalScaleOperator());
 
         double meanRootHeight = this.runChain(chain, true);
 
-        // compare with the exact posterior mean, integrated with Simpson's rule
+        assertEquals(this.computeExactMeanRootHeight(), meanRootHeight, 0.03);
+    }
 
+    /**
+     * Runs the same chain with only the interval scale operator, which keeps the parsimony
+     * history: one mutation at each of the two differing sites. Under Jukes-Cantor with
+     * rate 1, every site leaves its state at rate 1, so the genetic prior is
+     * exp(-L 2h) (1/3)^M up to the mutation times. The operator scales the M mutation times
+     * with the branches, whose Jacobian contributes h^M, so the root height follows
+     * p(h) ∝ exp(-h) exp(-2Lh) h^M, a Gamma(M + 1, 1 + 2L) distribution with mean
+     * (M + 1) / (1 + 2L) = 3/7.
+     */
+    @Test
+    public void testFixedHistoryMatchesGammaPosterior() {
+        Randomizer.setSeed(1);
+        TwoTipChain chain = this.createTwoTipChain(new IntervalScaleOperator());
+
+        double meanRootHeight = this.runChain(chain, false);
+
+        int numSites = SEQUENCE_A.length();
+        int numMutations = 2;
+        double expectedRootHeight = (numMutations + 1.0) / (1.0 + 2.0 * numSites);
+
+        assertEquals(expectedRootHeight, meanRootHeight, 0.01);
+    }
+
+    /** Returns the exact posterior mean of the root height, integrated with Simpson's rule. */
+    private double computeExactMeanRootHeight() {
         int numIntervals = 20000;
         double maxHeight = 40.0;
         double stepSize = maxHeight / numIntervals;
@@ -74,34 +101,70 @@ public class IntervalScaleOperatorTest {
         }
         expectedRootHeight /= normalisation;
 
-        assertEquals(expectedRootHeight, meanRootHeight, 0.03);
+        return expectedRootHeight;
+    }
+
+    /** The lifted operator with a small softness targets the same posterior as the plain one, with resampled histories. */
+    @Test
+    public void testLiftedTwoTipsMatchExactPosterior() {
+        Randomizer.setSeed(2);
+        TwoTipChain chain = this.createTwoTipChain(new LiftedIntervalScaleOperator(), "softness", 0.1, "refreshProbability", 0.01);
+
+        double meanRootHeight = this.runChain(chain, true);
+
+        assertEquals(this.computeExactMeanRootHeight(), meanRootHeight, 0.03);
+    }
+
+    /** With a fixed history the lifted operator keeps the Gamma posterior, for a pure lifting and for a soft one. */
+    @Test
+    public void testLiftedFixedHistoryMatchesGammaPosterior() {
+        double expectedRootHeight = 3.0 / 7.0;
+
+        for (double softness : new double[]{0.0, 0.3, 0.5}) {
+            Randomizer.setSeed(3);
+            TwoTipChain chain = this.createTwoTipChain(new LiftedIntervalScaleOperator(), "softness", softness, "refreshProbability", 0.01);
+
+            assertEquals(expectedRootHeight, this.runChain(chain, false), 0.01, "softness " + softness);
+        }
     }
 
     /**
-     * Runs the same chain with only the interval scale operator, which keeps the parsimony
-     * history: one mutation at each of the two differing sites. Under Jukes-Cantor with
-     * rate 1, every site leaves its state at rate 1, so the genetic prior is
-     * exp(-L 2h) (1/3)^M up to the mutation times. The operator scales the M mutation times
-     * with the branches, whose Jacobian contributes h^M, so the root height follows
-     * p(h) ∝ exp(-h) exp(-2Lh) h^M, a Gamma(M + 1, 1 + 2L) distribution with mean
-     * (M + 1) / (1 + 2L) = 3/7.
+     * With a range of the tree length, which is twice the root height on this tree, the lifted operator rejects
+     * proposals outside the range without evaluating them and reverses its direction, which has to leave the
+     * Gamma posterior truncated to the range.
      */
     @Test
-    public void testFixedHistoryMatchesGammaPosterior() {
-        Randomizer.setSeed(1);
-        TwoTipChain chain = this.createTwoTipChain();
+    public void testLiftedRangeMatchesTruncatedGammaPosterior() {
+        double minRootHeight = 0.5;
+        double maxRootHeight = 0.8;
+
+        Randomizer.setSeed(4);
+        TwoTipChain chain = this.createTwoTipChain(new LiftedIntervalScaleOperator(), "softness", 0.0, "refreshProbability", 0.0,
+                "minTreeLength", 2.0 * minRootHeight, "maxTreeLength", 2.0 * maxRootHeight);
+
+        // the chain starts at a root height of 1, outside of the range, and enters it during the burn-in
 
         double meanRootHeight = this.runChain(chain, false);
 
-        int numSites = SEQUENCE_A.length();
-        int numMutations = 2;
-        double expectedRootHeight = (numMutations + 1.0) / (1.0 + 2.0 * numSites);
+        // the unnormalised density is h^2 exp(-7h), the Gamma(3, 7) kernel of the fixed history, integrated by the midpoint rule
 
-        assertEquals(expectedRootHeight, meanRootHeight, 0.01);
+        int numIntervals = 100000;
+        double stepSize = (maxRootHeight - minRootHeight) / numIntervals;
+        double normalisation = 0.0;
+        double expectedRootHeight = 0.0;
+        for (int i = 0; i < numIntervals; i++) {
+            double height = minRootHeight + (i + 0.5) * stepSize;
+            double density = Math.pow(height, 2) * Math.exp(-7.0 * height);
+            normalisation += density;
+            expectedRootHeight += height * density;
+        }
+        expectedRootHeight /= normalisation;
+
+        assertEquals(expectedRootHeight, meanRootHeight, 0.005);
     }
 
-    /** Sets up the two-tip tree with its parsimony history under Jukes-Cantor with rate 1. */
-    private TwoTipChain createTwoTipChain() {
+    /** Sets up the two-tip tree with its parsimony history under Jukes-Cantor with rate 1, to be scaled by the given operator. */
+    private TwoTipChain createTwoTipChain(IntervalScaleOperator intervalScaleOperator, Object... operatorInputs) {
         Alignment alignment = new Alignment();
         alignment.initByName("sequence", List.of(new Sequence("A", SEQUENCE_A), new Sequence("B", SEQUENCE_B)), "dataType", "nucleotide");
 
@@ -124,8 +187,10 @@ public class IntervalScaleOperatorTest {
         GeneticPrior geneticPrior = new GeneticPrior();
         geneticPrior.initByName("data", alignment, "tree", tree, "siteModel", siteModel, "branchRateModel", clockModel, "mutations", mutations);
 
-        IntervalScaleOperator intervalScaleOperator = new IntervalScaleOperator();
-        intervalScaleOperator.initByName("weight", 1.0, "tree", tree, "mutations", mutations, "scaleFactor", 0.5, "optimise", false);
+        Object[] inputs = new Object[]{"weight", 1.0, "tree", tree, "mutations", mutations, "scaleFactor", 0.5, "optimise", false};
+        Object[] allInputs = java.util.stream.Stream.concat(java.util.Arrays.stream(inputs), java.util.Arrays.stream(operatorInputs)).toArray();
+        intervalScaleOperator.initByName(allInputs);
+        intervalScaleOperator.setOperatorSchedule(new OperatorSchedule());
 
         SiteHistoryGibbsOperator gibbsOperator = new SiteHistoryGibbsOperator();
         gibbsOperator.initByName("weight", 1.0, "mutations", mutations, "geneticPrior", geneticPrior);
@@ -169,7 +234,9 @@ public class IntervalScaleOperatorTest {
 
             if (Math.log(Randomizer.nextDouble()) < newLogTarget - logTarget + logHastingsRatio) {
                 logTarget = newLogTarget;
+                operator.accept();
             } else {
+                operator.reject(logHastingsRatio == Double.NEGATIVE_INFINITY ? -2 : 0);
                 root.setHeight(oldRootHeight);
                 for (Node node : tree.getNodesAsArray()) {
                     mutations.applyMutations(node, oldMutations.get(node.getNr()), operator);

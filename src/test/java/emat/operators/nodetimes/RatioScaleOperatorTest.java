@@ -66,6 +66,73 @@ public class RatioScaleOperatorTest {
     }
 
     /**
+     * The move of the root rescales every height below it from the unchanged ratios. Picking
+     * the root in most proposals tests this branch of the move, which the root operator
+     * uses alone, against the exact posterior.
+     */
+    @Test
+    public void testRootHeavySelectionMatchesExactPosterior() {
+        RatioScaleOperator operator = new RatioScaleOperator() {
+            @Override
+            protected Node selectNode() {
+                return Randomizer.nextDouble() < 0.8 ? this.tree.getRoot() : super.selectNode();
+            }
+        };
+        this.assertFixedHistoryMatchesExactPosterior(operator, "optimise", false);
+    }
+
+    /**
+     * The Gamma kernel of the root move is skewed in log s, so its Hastings ratio is not log s. Picking the
+     * root in most proposals, with a wide kernel, tests it against the exact posterior.
+     */
+    @Test
+    public void testGammaKernelOfRootMatchesExactPosterior() {
+        RatioScaleOperator operator = new GammaRootRatioScaleOperator() {
+            @Override
+            protected Node selectNode() {
+                return Randomizer.nextDouble() < 0.8 ? this.tree.getRoot() : this.tree.getNode(this.tree.getLeafNodeCount() + Randomizer.nextInt(this.tree.getInternalNodeCount()));
+            }
+        };
+        this.assertFixedHistoryMatchesExactPosterior(operator, "optimise", false, "scaleFactor", 0.7);
+    }
+
+    /**
+     * The power move keeps the root and, with one power for all ratios, also the direction of the vector of the log
+     * ratios, so it alone cannot reach the posterior. Mixed with the move of the root and a move of a single ratio,
+     * it tests the Jacobians of the power move against the exact posterior.
+     */
+    @Test
+    public void testPowerMoveMixedWithRatioMovesMatchesExactPosterior() {
+        this.assertFixedHistoryMatchesExactPosterior(this.createMixedPowerOperator(), "optimise", false, "scaleFactor", 0.5);
+    }
+
+    /** Returns a power operator that proposes a third of its moves with the move of the root and a third with the move of a random node. */
+    private PowerRatioScaleOperator createMixedPowerOperator() {
+        return new PowerRatioScaleOperator() {
+            private RootRatioScaleOperator rootOperator;
+            private RatioScaleOperator ratioOperator;
+
+            @Override
+            public void initAndValidate() {
+                super.initAndValidate();
+                this.rootOperator = new RootRatioScaleOperator();
+                this.rootOperator.initByName("tree", this.tree, "mutations", this.mutations, "weight", 1.0, "scaleFactor", 0.5, "optimise", false);
+                this.ratioOperator = new RatioScaleOperator();
+                this.ratioOperator.initByName("tree", this.tree, "mutations", this.mutations, "weight", 1.0, "scaleFactor", 0.5, "optimise", false);
+            }
+
+            @Override
+            public double proposal() {
+                double choice = Randomizer.nextDouble();
+                if (choice < 1.0 / 3.0) {
+                    return this.rootOperator.proposal();
+                }
+                return choice < 2.0 / 3.0 ? this.ratioOperator.proposal() : super.proposal();
+            }
+        };
+    }
+
+    /**
      * On a four-tip caterpillar with serially sampled tips and an exponential prior on the
      * root height, runs a Metropolis-Hastings chain with only the given operator, which
      * keeps the parsimony history and the relative positions of its mutations. Under

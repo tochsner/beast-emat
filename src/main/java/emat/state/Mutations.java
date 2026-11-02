@@ -26,6 +26,8 @@ public class Mutations extends StateNode {
     int numNodes;
     int numSites;
 
+    private boolean isSanityCheckingEnabled = true;
+
     int[] referenceSequence;
 
     private List<Mutation>[] mutationsAboveNode;
@@ -79,9 +81,17 @@ public class Mutations extends StateNode {
         this.markBranchDirty(node.getNr());
 
         // perform sanity checks from time to time
-        if (Randomizer.nextDouble() < 0.01) {
+        if (this.isSanityCheckingEnabled && Randomizer.nextDouble() < 0.01) {
             this.performSanityChecks(node.getNr());
         }
+    }
+
+    /**
+     * Switches the random sanity checks of applyMutations on or off. Switching them off keeps a step from drawing
+     * random numbers, so that a diagnostic proposal leaves the random stream of the chain untouched.
+     */
+    public void setSanityCheckingEnabled(boolean isEnabled) {
+        this.isSanityCheckingEnabled = isEnabled;
     }
 
     /**

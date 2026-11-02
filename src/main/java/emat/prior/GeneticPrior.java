@@ -195,6 +195,11 @@ public class GeneticPrior extends GenericTreeLikelihood {
         }
     }
 
+    /** Returns the contribution of every branch to the log probability, indexed by the number of the node below it. */
+    public double[] getBranchLogPs() {
+        return this.branchLogPs.clone();
+    }
+
     private boolean isChanged(Node node) {
         return node.isDirty() != Tree.IS_CLEAN || this.mutations.isDirty(node);
     }
@@ -389,6 +394,35 @@ public class GeneticPrior extends GenericTreeLikelihood {
      */
     public double getTotalMutationRate(Node node) {
         return this.totalMutationRatesPerNode[node.getNr()];
+    }
+
+    /**
+     * Returns the hazard per unit of length of the branch above the given non-root node, as of the last calculation:
+     * the branch rate times the total mutation rate averaged over the length of the branch. If the mutations on the
+     * branch keep their relative positions while the branch is stretched, the no-change part of the genetic prior of the
+     * branch is minus this hazard times the length of the branch. Returns zero for a branch of length zero.
+     */
+    public double getMutationHazardPerLength(Node node) {
+        double branchLength = node.getParent().getHeight() - node.getHeight();
+        if (branchLength <= 0.0) {
+            return 0.0;
+        }
+
+        List<Mutation> mutations = this.mutations.getMutations(node);
+        double totalMutationRate = this.getTotalMutationRate(node.getParent());
+        double previousHeight = node.getParent().getHeight();
+        double integratedRate = 0.0;
+
+        for (int i = 0; i < mutations.size(); i++) {
+            Mutation mutation = mutations.get(i);
+            integratedRate += totalMutationRate * (previousHeight - mutation.time());
+            totalMutationRate += this.getEscapeRate(node, mutation.newState(), mutation.site())
+                    - this.getEscapeRate(node, mutation.oldState(), mutation.site());
+            previousHeight = mutation.time();
+        }
+        integratedRate += totalMutationRate * (previousHeight - node.getHeight());
+
+        return this.branchRateModel.getRateForBranch(node) * integratedRate / branchLength;
     }
 
     /* CalculationNode methods */

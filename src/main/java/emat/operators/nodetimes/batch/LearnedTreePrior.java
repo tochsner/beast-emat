@@ -57,7 +57,7 @@ public interface LearnedTreePrior {
      * Returns the curvature that the default proposal uses between the bounds: zero if it is not negative, and
      * zero if it is negligible over the range, so that sampling and density agree.
      */
-    private double getUsableCurvature(double lower, double upper, double[] parameters) {
+    default double getUsableCurvature(double lower, double upper, double[] parameters) {
         double curvature = Math.min(this.getCurvature((lower + upper) / 2.0, parameters), 0.0);
         double halfWidth = (upper - lower) / 2.0;
         return -curvature * halfWidth * halfWidth < 1e-9 ? 0.0 : curvature;
