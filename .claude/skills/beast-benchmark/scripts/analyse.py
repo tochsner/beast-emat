@@ -1,9 +1,11 @@
-"""Summarises the finished and running chains of a benchmark directory: ESS per million samples after 10% burn-in.
+"""Summarises the finished and running chains of a benchmark directory: ESS, ESS per minute and ESS per million samples after 10% burn-in.
 
 Usage, from the python/ directory of the repo: uv run python <skill>/scripts/analyse.py <benchmark dir> [baseline variant]
 """
 
+import re
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -33,15 +35,24 @@ for run in sorted((bench / "runs").iterdir()):
     slowest = min(ess, key=ess.get)
     stdout = (run / "stdout.txt").read_text(errors="ignore")
     variant, rest = run.name.split("_", 1)
+
+    # the wall time of the whole chain, until now for a chain that is still running
+    timing = re.search(r"start=(\d+) end=(\d+)", (run / "timing.txt").read_text()) if (run / "timing.txt").exists() else None
+    start = int(timing.group(1)) if timing else run.stat().st_birthtime
+    wall_minutes = ((int(timing.group(2)) if timing else time.time()) - start) / 60
+    # the share of the samples after the burn-in, assuming a constant speed
+    sampling_minutes = wall_minutes * len(post) / len(df)
+
     rows.append(dict(
         variant=variant,
         run=rest,
         finished=(run / "timing.txt").exists(),
         converged="All logged parameters reached" in stdout,
-        samples_M=df.iloc[-1, 0] / 1e6,
+        minutes=wall_minutes,
+        min_ess=ess[slowest],
+        min_ess_per_minute=ess[slowest] / sampling_minutes,
         min_ess_per_M=ess[slowest] / millions,
         slowest=slowest,
-        posterior_ess_per_M=ess.get("posterior", np.nan) / millions,
     ))
 
 if not rows:
@@ -55,10 +66,14 @@ geometric_mean = lambda x: float(np.exp(np.log(x).mean()))
 summary = runs.groupby("variant").agg(
     n=("run", "count"),
     converged=("converged", "sum"),
+    minutes=("minutes", "mean"),
+    min_ess=("min_ess", geometric_mean),
+    min_ess_per_minute=("min_ess_per_minute", geometric_mean),
     min_ess_per_M=("min_ess_per_M", geometric_mean),
-    posterior_ess_per_M=("posterior_ess_per_M", geometric_mean),
 )
 if baseline in summary.index:
-    summary["relative"] = summary.min_ess_per_M / summary.loc[baseline, "min_ess_per_M"]
+    summary["relative_per_minute"] = summary.min_ess_per_minute / summary.loc[baseline, "min_ess_per_minute"]
+    summary["relative_per_M"] = summary.min_ess_per_M / summary.loc[baseline, "min_ess_per_M"]
+    summary = summary[["n", "converged", "minutes", "min_ess", "min_ess_per_minute", "relative_per_minute", "min_ess_per_M", "relative_per_M"]]
 print()
-print(summary.sort_values("min_ess_per_M", ascending=False).round(2).to_string())
+print(summary.sort_values("min_ess_per_minute", ascending=False).round(2).to_string())

@@ -53,6 +53,12 @@ The models are `bd_emat`, `bsc_emat`, `coal_emat` and `sbd_emat`. Datasets whose
   cd $B && xargs -P 8 -L 1 ./run.sh < jobs.txt > xargs.log 2>&1
   ```
   The templates use `mcmc.ESSStoppingMCMC` (from beast-adaptive-operators), which stops once every logged column has ESS 200 and prints "All logged parameters reached". The cap in `jobs.txt` is a fallback. In the earlier runs, 20–30 min was enough for sars-757 and 12–20 min for zika.
+- **Equal load for timing numbers.** Minutes and ESS per minute depend on what else runs on the machine, so before using them:
+  - Start the chains only when nothing else of yours is running, for example by waiting on `pgrep -f "<other benchmark>/classes"` before `xargs`. Do not start probes, other benchmarks or analysis scripts while it runs.
+  - Run a fixed number of chains at a time (`-P`), below the number of CPU cores, with the same `-P` for all variants of one comparison.
+  - Shuffle the job order, so that no variant runs systematically in a quieter or busier period.
+  - Use the same build (`classes/`), the same XML template and the same cap for all variants, and run the variants of one comparison in one `xargs` call.
+  - Use fresh seeds for a rerun, and report a chain that starts in a bad region (posterior far below the others, a very slow start) separately instead of dropping it. It inflates the minutes of its variant and lowers its ESS per minute.
 - **Stopping.** Kill only the processes of this benchmark, matching on its directory:
   ```bash
   pkill -f "xargs -P 8 -L 1 ./run.sh"; pkill -f "$B/run.sh"; pkill -f "$B/classes"
@@ -69,7 +75,8 @@ uv run python ../.claude/skills/beast-benchmark/scripts/analyse.py $B <baseline 
 
 It also works on running chains, which gives preliminary results. It drops 10% as burn-in.
 
-- **Main metric:** ESS per million samples of the slowest logged column, as the geometric mean over seeds and relative to the baseline. Wall time depends on how many other chains or user runs share the machine, so ESS per sample is the fairer comparison. Report wall time to ESS 200, or samples per minute, separately, for variants that cost more per sample.
+- **Columns:** per run and as the geometric mean over seeds in the summary: `converged`; `minutes`, the wall time of the whole chain; `min_ess`, the ESS of the slowest logged column after the 10% burn-in; `min_ess_per_minute`, that ESS per minute of sampling after the burn-in, which assumes a constant speed so that the burn-in share of the wall time is its share of the samples; `min_ess_per_M`, that ESS per million samples after the burn-in. The summary also gives the ratio to the baseline of `min_ess_per_minute` (`relative_per_minute`) and of `min_ess_per_M` (`relative_per_M`). The raw ESS depends on where a chain stopped (the stopping rule checks at fixed intervals, and capped or running chains stop early), and the minutes depend on the machine load, so compare variants by ESS per million samples and report the per-minute columns separately.
+- **Main metric:** ESS per million samples of the slowest logged column, as the geometric mean over seeds and relative to the baseline. Wall time depends on how many other chains or user runs share the machine (see equal load above), so ESS per sample is the fairer comparison unless the load was equal. Report wall time to ESS 200, or samples per minute, separately, for variants that cost more per sample.
 - **Also report** which column is slowest (often `prior`, `Tree.treeLength`, `CoalescentExponential` or `mutations.count`) and how far each run got. Short runs still contain part of the burn-in transient.
 - **Tuned operator state.** At the end of each run, `stdout.txt` holds the operator table, with acceptance rates and tuned parameters. It shows, for example, whether a tuned step got stuck at a bound.
 - **One seed is noise.** The spread between seeds is often 1.5–2×.

@@ -134,6 +134,13 @@
                 <configuration>
                     <release>25</release>
                     <encoding>UTF-8</encoding>
+                    <compilerArgs>
+                        <!-- DiagnosticMCMC extends JumpMCMC, whose packages the adaptive operators do not export -->
+                        <arg>--add-exports</arg>
+                        <arg>adaptiveoperators/mcmc=my.beast.example</arg>
+                        <arg>--add-exports</arg>
+                        <arg>adaptiveoperators/slice=my.beast.example</arg>
+                    </compilerArgs>
                 </configuration>
             </plugin>
 
