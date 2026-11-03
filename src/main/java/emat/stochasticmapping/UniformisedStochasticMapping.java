@@ -18,6 +18,9 @@ public class UniformisedStochasticMapping implements StochasticMapping {
     // safeguard against numerical problems when sampling the number of uniformised jumps
     private static final int MAX_JUMPS = 10000;
 
+    // the relative size of a term of the sum below which the sum has converged
+    private static final double NEGLIGIBLE_TERM = 1e-12;
+
     private final int numStates;
 
     // the rate matrix Q set last, its uniformisation rate μ* = max_i -Q_ii and its jump matrix
@@ -76,20 +79,21 @@ public class UniformisedStochasticMapping implements StochasticMapping {
 
         // sample the number of jumps n with P(n | start, end) ∝ Poisson(n; μ* t) (B^n)_{start, end}
 
-        double threshold = Randomizer.nextDouble() * endProbability;
+        // draw the number of jumps from the terms of the sum itself, so that every drawn number has a nonzero term
+        // this differs from endProbability only by the numerical error of the transition probabilities of very short branches
 
-        double poissonProbability = Math.exp(-maxEscapeRate * duration);
-        double cumulativeProbability = startState == endState ? poissonProbability : 0.0;
+        double[] terms = this.computeJumpTerms(startState, endState, maxEscapeRate * duration);
+        double total = 0.0;
+        for (double term : terms) {
+            total += term;
+        }
+
+        double threshold = Randomizer.nextDouble() * total;
+        double cumulativeProbability = 0.0;
         int numJumps = 0;
-
-        while (cumulativeProbability < threshold) {
+        while (numJumps < terms.length - 1 && cumulativeProbability + terms[numJumps] < threshold) {
+            cumulativeProbability += terms[numJumps];
             numJumps++;
-            if (numJumps > MAX_JUMPS) {
-                throw new RuntimeException("Could not sample the number of jumps on a branch of the site history.");
-            }
-
-            poissonProbability *= maxEscapeRate * duration / numJumps;
-            cumulativeProbability += poissonProbability * this.getJumpMatrixPower(numJumps)[startState * this.numStates + endState];
         }
 
         if (numJumps == 0) {
@@ -198,6 +202,39 @@ public class UniformisedStochasticMapping implements StochasticMapping {
         }
 
         return siteMutations;
+    }
+
+    /**
+     * Returns the terms of the Poisson-weighted sum of the number of jumps, term n being
+     * Poisson(n; expectedJumps) (B^n)_{start, end}, computed in log space, until the Poisson
+     * probabilities are negligible.
+     */
+    private double[] computeJumpTerms(int startState, int endState, double expectedJumps) {
+        List<Double> terms = new ArrayList<>();
+        double logPoissonProbability = -expectedJumps;
+        double total = 0.0;
+        for (int numJumps = 0; ; numJumps++) {
+            if (numJumps > 0) {
+                logPoissonProbability += Math.log(expectedJumps / numJumps);
+            }
+            if (numJumps > MAX_JUMPS) {
+                throw new RuntimeException("Could not sample the number of jumps on a branch of the site history.");
+            }
+
+            // a sequence of zero jumps only reaches the end state if the states are equal
+            double poissonProbability = Math.exp(logPoissonProbability);
+            double term = startState == endState || numJumps > 0
+                    ? poissonProbability * this.getJumpMatrixPower(numJumps)[startState * this.numStates + endState]
+                    : 0.0;
+            terms.add(term);
+            total += term;
+
+            // the entries of B^n are at most one, so the Poisson probability bounds the later terms, which can be zero
+            if (numJumps > expectedJumps && poissonProbability <= NEGLIGIBLE_TERM * total) {
+                break;
+            }
+        }
+        return terms.stream().mapToDouble(Double::doubleValue).toArray();
     }
 
     /**

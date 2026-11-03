@@ -1,22 +1,26 @@
 package emat.helper;
 
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 
 /**
  * A reusable map from sites to their states at two points of the tree, the start and the
  * end. Entries are kept in slots in the order they were added, and a lookup table over all
- * sites finds the slot of a site in constant time. Clearing only resets the
+ * sites finds the slot of a site in constant time. The slots are stored in primitive arrays
+ * that grow as needed, so adding an entry does not allocate. Clearing only resets the
  * added sites, so its cost does not depend on the genome length.
  */
 public final class SiteChanges {
 
-    private record Entry(int site, int startState, int endState) {}
+    private static final int INITIAL_CAPACITY = 16;
 
     // the slot of every site, or -1 if the site has no entry
     private final int[] slotOfSite;
-    private final List<Entry> entries = new ArrayList<>();
+
+    // the site and both states of every slot
+    private int[] sites = new int[INITIAL_CAPACITY];
+    private int[] startStates = new int[INITIAL_CAPACITY];
+    private int[] endStates = new int[INITIAL_CAPACITY];
+    private int size = 0;
 
     public SiteChanges(int numSites) {
         this.slotOfSite = new int[numSites];
@@ -25,19 +29,19 @@ public final class SiteChanges {
 
     /** Returns the number of sites with an entry, which are stored in the slots below it. */
     public int getSize() {
-        return this.entries.size();
+        return this.size;
     }
 
     public int getSite(int slot) {
-        return this.entries.get(slot).site();
+        return this.sites[slot];
     }
 
     public int getStartState(int slot) {
-        return this.entries.get(slot).startState();
+        return this.startStates[slot];
     }
 
     public int getEndState(int slot) {
-        return this.entries.get(slot).endState();
+        return this.endStates[slot];
     }
 
     /** Returns the slot of the given site, or -1 if it has no entry. */
@@ -51,23 +55,36 @@ public final class SiteChanges {
 
     /** Adds an entry for the given site, which must not have one yet, and returns its slot. */
     public int addSite(int site, int startState, int endState) {
-        int slot = this.entries.size();
-        this.entries.add(new Entry(site, startState, endState));
+        if (this.size == this.sites.length) {
+            this.growCapacity();
+        }
+
+        int slot = this.size++;
+        this.sites[slot] = site;
+        this.startStates[slot] = startState;
+        this.endStates[slot] = endState;
         this.slotOfSite[site] = slot;
         return slot;
     }
 
+    /** Doubles the number of slots, which never needs to exceed the number of sites. */
+    private void growCapacity() {
+        int capacity = Math.min(2 * this.sites.length, this.slotOfSite.length);
+        this.sites = Arrays.copyOf(this.sites, capacity);
+        this.startStates = Arrays.copyOf(this.startStates, capacity);
+        this.endStates = Arrays.copyOf(this.endStates, capacity);
+    }
+
     public void setStartState(int slot, int state) {
-        Entry entry = this.entries.get(slot);
-        this.entries.set(slot, new Entry(entry.site(), state, entry.endState()));
+        this.startStates[slot] = state;
     }
 
     /** Removes all entries. */
     public void clear() {
-        for (Entry entry : this.entries) {
-            this.slotOfSite[entry.site()] = -1;
+        for (int slot = 0; slot < this.size; slot++) {
+            this.slotOfSite[this.sites[slot]] = -1;
         }
-        this.entries.clear();
+        this.size = 0;
     }
 
 }

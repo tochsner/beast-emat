@@ -146,14 +146,18 @@ public final class SubstitutionProcess {
         double[] eigenValues = eigenDecomposition.getEigenValues();
         int numStates = eigenValues.length;
 
-        // add up the contribution of one eigenvalue at a time, which needs only a single exponential at hand
+        // the eigenvector products sum to the identity, so exp(λ t) = 1 + expm1(λ t) gives P = I + Σ_k V_k W_k expm1(λ_k t);
+        // this avoids the cancellation of terms of size one, which dominates for short times
         Arrays.fill(probabilities, 0.0);
+        for (int state = 0; state < numStates; state++) {
+            probabilities[state * numStates + state] = 1.0;
+        }
         for (int k = 0; k < numStates; k++) {
-            // a zero eigenvalue, which every rate matrix has, needs no exponential
-            double expEigenValue = eigenValues[k] == 0.0 ? 1.0 : Math.exp(eigenValues[k] * duration);
+            // a zero eigenvalue, which every rate matrix has, contributes nothing to the correction
+            double expm1EigenValue = eigenValues[k] == 0.0 ? 0.0 : Math.expm1(eigenValues[k] * duration);
 
             for (int from = 0; from < numStates; from++) {
-                double scaledEigenVector = eigenVectors[from * numStates + k] * expEigenValue;
+                double scaledEigenVector = eigenVectors[from * numStates + k] * expm1EigenValue;
                 for (int to = 0; to < numStates; to++) {
                     probabilities[from * numStates + to] += scaledEigenVector * inverseEigenVectors[k * numStates + to];
                 }
