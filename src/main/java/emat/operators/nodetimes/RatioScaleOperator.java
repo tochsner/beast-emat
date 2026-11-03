@@ -4,6 +4,8 @@ import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.tree.Node;
 import beast.base.util.Randomizer;
+import emat.diagnostics.DiagnosedOperator;
+import emat.diagnostics.StepAnnotations;
 
 import java.text.DecimalFormat;
 import java.util.ArrayList;
@@ -18,7 +20,7 @@ import java.util.List;
         "linearly along with their ends. Every clade size class, the base-2 logarithm of the number of tips " +
         "below the node rounded down, has a scale factor of its own that is tuned separately, since a clade with " +
         "more nodes and mutations below it accepts only smaller steps.")
-public class RatioScaleOperator extends ScaleTunedOperator {
+public class RatioScaleOperator extends CompensatedScaleOperator implements DiagnosedOperator {
 
     final public Input<Double> scaleUpperLimit = new Input<>("upper", "upper limit of the scale factor", 10.0);
     final public Input<Double> scaleLowerLimit = new Input<>("lower", "lower limit of the scale factor", 1e-8);
@@ -70,6 +72,11 @@ public class RatioScaleOperator extends ScaleTunedOperator {
         this.weightFactor = this.scaleWeightByLogNumTipsInput.get() ? Math.log(this.tree.getLeafNodeCount()) : 1.0;
     }
 
+    @Override
+    public String[] getAnnotationNames() {
+        return new String[]{"logScaler", "subtreeTips", "subtreeMutations", "width", "nodeHeight", "ratio"};
+    }
+
     /** Returns the number of step classes, by default the number of clade size classes. */
     protected int computeNumClasses() {
         return this.computeSizeClass(this.tree.getLeafNodeCount()) + 1;
@@ -100,14 +107,12 @@ public class RatioScaleOperator extends ScaleTunedOperator {
      */
     @Override
     public double proposal() {
-        int numLeaves = this.tree.getLeafNodeCount();
-        int numInternalNodes = this.tree.getInternalNodeCount();
-        if (numInternalNodes == 0) {
+        if (this.tree.getInternalNodeCount() == 0) {
             return Double.NEGATIVE_INFINITY;
         }
 
-        // BEAST numbers the internal nodes after the leaves
-        Node node = this.tree.getNode(numLeaves + Randomizer.nextInt(numInternalNodes));
+        Node node = this.selectNode();
+        double lengthBefore = this.hasCompensatedParameters() ? NodeTimes.computeTreeLength(this.tree) : 0.0;
 
         this.subtreeNodes.clear();
         this.subtreeNumTips = 0;
@@ -116,7 +121,14 @@ public class RatioScaleOperator extends ScaleTunedOperator {
         this.computeRatios();
 
         this.lastClass = this.computeStepClass();
-        double scaler = this.kernelDistribution.getScaler(node.getNr(), node.getHeight(), this.classScaleFactors[this.lastClass]);
+        double scaler = this.drawScaler(node, this.classScaleFactors[this.lastClass]);
+        StepAnnotations.set(0, Math.log(scaler));
+        StepAnnotations.set(1, this.subtreeNumTips);
+        StepAnnotations.set(2, this.subtreeNumMutations);
+        StepAnnotations.set(3, this.classScaleFactors[this.lastClass]);
+        StepAnnotations.set(4, node.getHeight());
+        StepAnnotations.set(5, node.isRoot() ? Double.NaN : this.ratios[node.getNr()]);
+
         double logHastingsRatio = node.isRoot()
                 ? this.proposeRootHeight(node, scaler)
                 : this.proposeInnerHeight(node, scaler);
@@ -150,7 +162,36 @@ public class RatioScaleOperator extends ScaleTunedOperator {
             }
         }
 
+        // scale the other parameters with the tree length
+
+        if (this.hasCompensatedParameters()) {
+            double logCompensationJacobian = this.scaleCompensatedParameters(lengthBefore, NodeTimes.computeTreeLength(this.tree));
+            if (logCompensationJacobian == Double.NEGATIVE_INFINITY) {
+                return Double.NEGATIVE_INFINITY;
+            }
+            logHastingsRatio += logCompensationJacobian;
+        }
+
         return logHastingsRatio;
+    }
+
+    /** Draws the factor by which the parameter of the given node is scaled from the kernel with the given scale factor. */
+    protected double drawScaler(Node node, double stepScaleFactor) {
+        return this.kernelDistribution.getScaler(node.getNr(), node.getHeight(), stepScaleFactor);
+    }
+
+    /**
+     * Returns the log Hastings ratio of scaling the height of the root above its oldest tip by the given factor,
+     * which is the Jacobian s of the scaling for a kernel that is symmetric in log s.
+     */
+    protected double computeRootLogHastingsRatio(double scaler) {
+        return Math.log(scaler);
+    }
+
+    /** Returns the node to move, by default an internal node drawn uniformly, including the root. */
+    protected Node selectNode() {
+        // BEAST numbers the internal nodes after the leaves
+        return this.tree.getNode(this.tree.getLeafNodeCount() + Randomizer.nextInt(this.tree.getInternalNodeCount()));
     }
 
     /**
@@ -217,8 +258,8 @@ public class RatioScaleOperator extends ScaleTunedOperator {
     }
 
     /**
-     * Scales the height x = h - τ of the root above its oldest tip by the given factor, which
-     * has the Jacobian s. Returns the log Hastings ratio of this step.
+     * Scales the height x = h - τ of the root above its oldest tip by the given factor.
+     * Returns the log Hastings ratio of this step.
      */
     private double proposeRootHeight(Node root, double scaler) {
         double oldestTipHeight = this.oldestTipHeights[root.getNr()];
@@ -228,7 +269,7 @@ public class RatioScaleOperator extends ScaleTunedOperator {
         }
 
         this.newHeights[root.getNr()] = newHeight;
-        return Math.log(scaler);
+        return this.computeRootLogHastingsRatio(scaler);
     }
 
     /**
