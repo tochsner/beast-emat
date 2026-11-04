@@ -10,7 +10,6 @@ import emat.state.Mutation;
 import emat.state.Mutations;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 @Description("Moves a random mutation to a uniformly random time between its neighbouring events at the same site.")
@@ -96,7 +95,7 @@ public class MutationTimeOperator extends Operator {
             ));
         }
 
-        newBranchMutations.sort(Comparator.comparingDouble(Mutation::time).reversed());
+        newBranchMutations.sort(Mutation.BY_DESCENDING_TIME);
         this.mutations.applyMutations(node, newBranchMutations, this);
 
         return 0.0;

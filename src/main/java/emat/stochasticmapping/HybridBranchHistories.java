@@ -5,7 +5,7 @@ import emat.helper.SiteChanges;
 import emat.state.Mutation;
 
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.IntUnaryOperator;
 
@@ -31,12 +31,33 @@ public class HybridBranchHistories implements BranchHistorySampler {
     // reusable transition probabilities exp(s Q t) of the branch of the current call
     private final double[] transitionProbabilities;
 
+    // per site, the scan of the density that last saw it, with the heights and states of its first and last mutation
+    private final int[] siteScanStamps;
+    private int scanStamp;
+    private final double[] siteFirstHeights;
+    private final double[] siteLastHeights;
+    private final int[] siteStartStates;
+    private final int[] siteEndStates;
+
+    // the sites with mutations of the current scan, and how many of them start and end in each pair of states
+    private final int[] scannedSites;
+    private int numScannedSites;
+    private final int[] endStatePairCounts;
+
     public HybridBranchHistories(SubstitutionProcess process, int numSites) {
         this.process = process;
         this.numStates = process.getNumStates();
         this.numSites = numSites;
         this.siteMapping = new UniformisedStochasticMapping(this.numStates);
         this.transitionProbabilities = new double[this.numStates * this.numStates];
+
+        this.siteScanStamps = new int[numSites];
+        this.siteFirstHeights = new double[numSites];
+        this.siteLastHeights = new double[numSites];
+        this.siteStartStates = new int[numSites];
+        this.siteEndStates = new int[numSites];
+        this.scannedSites = new int[numSites];
+        this.endStatePairCounts = new int[this.numStates * this.numStates];
     }
 
     /** Samples the history of every site on the branch with the paths of the chosen sites drawn exactly. */
@@ -88,7 +109,7 @@ public class HybridBranchHistories implements BranchHistorySampler {
             }
         }
 
-        branchMutations.sort(Comparator.comparingDouble(Mutation::time).reversed());
+        branchMutations.sort(Mutation.BY_DESCENDING_TIME);
         return branchMutations;
     }
 
@@ -96,6 +117,13 @@ public class HybridBranchHistories implements BranchHistorySampler {
      * Computes the log probability that sampleBranchHistory proposes the given history on a
      * branch. Every site with mutations contributes the conditional density of its path, and
      * the agreeing sites contribute the probability of choosing exactly the ones with mutations.
+     * <p>
+     * The path densities of all sites together only depend on the transition counts and the
+     * time spent in each state: a site with start state a spends ∫ s Q_{x(t) x(t)} dt =
+     * s (Q_aa t + Σ_m (Q_{b_m b_m} - Q_{a_m a_m}) (t_m - t_end)) in its states, where mutation m
+     * at height t_m leads from a_m to b_m. The conditions only depend on the start and end
+     * states of every site. Hence, the density takes a single pass over the mutations in any
+     * order, and one condition per pair of start and end states.
      */
     @Override
     public double computeLogBranchHistoryDensity(List<Mutation> branchMutations, double branchStartHeight, double branchEndHeight,
@@ -106,37 +134,53 @@ public class HybridBranchHistories implements BranchHistorySampler {
         }
 
         this.updateModel(duration, rateScale);
+        double[] rateMatrix = this.process.getRateMatrix();
 
-        List<Mutation> sortedMutations = new ArrayList<>(branchMutations);
-        sortedMutations.sort(Comparator.comparingInt(Mutation::site).thenComparing(Comparator.comparingDouble(Mutation::time).reversed()));
+        // every mutation contributes its rate, and the change of the escape rate it causes lasts until the branch end
 
+        this.startSiteScan();
         double logDensity = 0.0;
+        double diagonalIntegral = 0.0;
+
+        for (int i = 0; i < branchMutations.size(); i++) {
+            Mutation mutation = branchMutations.get(i);
+            int oldState = mutation.oldState();
+            int newState = mutation.newState();
+
+            logDensity += Math.log(rateScale * rateMatrix[oldState * this.numStates + newState]);
+            diagonalIntegral += (rateMatrix[newState * this.numStates + newState] - rateMatrix[oldState * this.numStates + oldState])
+                    * (mutation.time() - branchEndHeight);
+            this.recordSiteEnds(mutation);
+        }
+
+        // every site with mutations stays in its start state until its first mutation and is conditioned on its end states
+
+        Arrays.fill(this.endStatePairCounts, 0);
+        for (int i = 0; i < this.numScannedSites; i++) {
+            int site = this.scannedSites[i];
+            int startState = this.siteStartStates[site];
+            diagonalIntegral += rateMatrix[startState * this.numStates + startState] * duration;
+            this.endStatePairCounts[startState * this.numStates + this.siteEndStates[site]]++;
+        }
+        logDensity += rateScale * diagonalIntegral;
+
         int numChosenAgreeingSites = 0;
+        for (int startState = 0; startState < this.numStates; startState++) {
+            for (int endState = 0; endState < this.numStates; endState++) {
+                int count = this.endStatePairCounts[startState * this.numStates + endState];
+                if (count == 0) {
+                    continue;
+                }
 
-        int start = 0;
-        while (start < sortedMutations.size()) {
-            int site = sortedMutations.get(start).site();
-            int end = start;
-            while (end < sortedMutations.size() && sortedMutations.get(end).site() == site) {
-                end++;
+                double conditionProbability;
+                if (startState == endState) {
+                    conditionProbability = this.computeNonEmptyProbability(startState, duration, rateScale);
+                    numChosenAgreeingSites += count;
+                } else {
+                    conditionProbability = this.transitionProbabilities[startState * this.numStates + endState];
+                }
+                logDensity -= count * Math.log(conditionProbability);
             }
-
-            List<Mutation> siteMutations = sortedMutations.subList(start, end);
-            int startState = siteMutations.getFirst().oldState();
-            int endState = siteMutations.getLast().newState();
-
-            double conditionProbability;
-            if (startState == endState) {
-                conditionProbability = this.computeNonEmptyProbability(startState, duration, rateScale);
-                numChosenAgreeingSites++;
-            } else {
-                conditionProbability = this.transitionProbabilities[startState * this.numStates + endState];
-            }
-
-            logDensity += this.siteMapping.computeLogSiteHistoryDensity(
-                    siteMutations, branchStartHeight, branchEndHeight, startState, endState, rateScale, conditionProbability
-            );
-            start = end;
         }
 
         // the agreeing sites are chosen independently with the same probability
@@ -149,6 +193,41 @@ public class HybridBranchHistories implements BranchHistorySampler {
         logDensity += (numAgreeingSites - numChosenAgreeingSites) * Math.log1p(-selectionProbability);
 
         return logDensity;
+    }
+
+    /** Starts a new scan of the sites with mutations, which only needs resetting the stamps once the counter runs out. */
+    private void startSiteScan() {
+        if (this.scanStamp == Integer.MAX_VALUE) {
+            Arrays.fill(this.siteScanStamps, 0);
+            this.scanStamp = 0;
+        }
+        this.scanStamp++;
+        this.numScannedSites = 0;
+    }
+
+    /** Records the given mutation as the first or the last one at its site if it is older or younger than the ones seen so far. */
+    private void recordSiteEnds(Mutation mutation) {
+        int site = mutation.site();
+        double height = mutation.time();
+
+        if (this.siteScanStamps[site] != this.scanStamp) {
+            this.siteScanStamps[site] = this.scanStamp;
+            this.scannedSites[this.numScannedSites++] = site;
+            this.siteFirstHeights[site] = height;
+            this.siteLastHeights[site] = height;
+            this.siteStartStates[site] = mutation.oldState();
+            this.siteEndStates[site] = mutation.newState();
+            return;
+        }
+
+        if (height > this.siteFirstHeights[site]) {
+            this.siteFirstHeights[site] = height;
+            this.siteStartStates[site] = mutation.oldState();
+        }
+        if (height < this.siteLastHeights[site]) {
+            this.siteLastHeights[site] = height;
+            this.siteEndStates[site] = mutation.newState();
+        }
     }
 
     /** Takes Q from the substitution process and computes the transition probabilities exp(s Q t) of the branch. */

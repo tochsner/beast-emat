@@ -62,7 +62,7 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     List<Mutation> joinedMutations;
     double logRatePerSite;
 
-    // the sequence of X as its differences to the reference sequence, which hold the state of X as end state
+    // the sequence of X as its differences to the reference sequence, which hold the state of X as end state, shared with the lookup of the states at X
     SiteChanges subtreeSequenceChanges;
     int[] referenceSequence;
 
@@ -116,8 +116,6 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
             throw new IllegalArgumentException("windowProbability must be at least 0 and less than 1.");
         }
         this.subtreeSelector = this.createSubtreeSelector();
-
-        this.subtreeSequenceChanges = new SiteChanges(this.mutations.getReferenceSequence().length);
 
         int shortcutDistance = this.shortcutDistanceInput.get();
         if (shortcutDistance >= 0) {
@@ -195,7 +193,7 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     protected GraftingPoint proposeGraftingPoint(Node x) {
         this.x = x;
         this.referenceSequence = this.mutations.getReferenceSequence();
-        MutationPaths.collectSequence(this.mutations, x, this.subtreeSequenceChanges);
+        this.subtreeSequenceChanges = this.subtreeStates.getSequence();
         this.logRatePerSite = Math.log(this.subtreeTotalRate / (3.0 * this.referenceSequence.length));
 
         // in the pruned tree, the branches above P and above S are joined into one branch above S

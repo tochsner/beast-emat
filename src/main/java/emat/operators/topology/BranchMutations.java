@@ -4,7 +4,6 @@ import emat.state.Mutation;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -123,7 +122,7 @@ public final class BranchMutations {
         int stamp = this.getNextStamp();
 
         List<Mutation> sortedMutations = new ArrayList<>(branchMutations);
-        sortedMutations.sort(Comparator.comparingDouble(Mutation::time).reversed());
+        sortedMutations.sort(Mutation.BY_DESCENDING_TIME);
 
         List<Mutation> linkedMutations = new ArrayList<>(sortedMutations.size());
         for (Mutation mutation : sortedMutations) {

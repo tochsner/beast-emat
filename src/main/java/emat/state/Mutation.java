@@ -1,5 +1,7 @@
 package emat.state;
 
+import java.util.Comparator;
+
 /**
  * A single mutation at one site on the branch above the given node. Both times are BEAST
  * node heights, which grow backwards in time. Evolution runs forwards in time from the
@@ -12,6 +14,9 @@ public record Mutation(int nodeNr, double time, double timeOfPreviousMutation, i
 
     /** The time of the previous mutation of the first mutation at a site on a branch. */
     public static final double BRANCH_START = Double.NaN;
+
+    /** Orders mutations by descending height, i.e. forwards in time from the parent to the node, in which branches store them. */
+    public static final Comparator<Mutation> BY_DESCENDING_TIME = (first, second) -> Double.compare(second.time, first.time);
 
     /** Returns whether this is the first mutation at its site on its branch. */
     public boolean isFirstAtSite() {

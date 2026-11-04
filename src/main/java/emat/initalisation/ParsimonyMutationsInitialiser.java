@@ -14,7 +14,6 @@ import emat.state.Mutation;
 import emat.state.Mutations;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 @Description("Initialises the mutations with a Fitch parsimony reconstruction on the current tree.")
@@ -157,7 +156,7 @@ public class ParsimonyMutationsInitialiser extends BEASTObject implements StateN
             mutations.add(new Mutation(nodeNr, time, Mutation.BRANCH_START, site, oldState, newState));
         }
 
-        mutations.sort(Comparator.comparingDouble(Mutation::time).reversed());
+        mutations.sort(Mutation.BY_DESCENDING_TIME);
         return mutations;
     }
 

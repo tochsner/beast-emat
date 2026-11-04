@@ -6,7 +6,6 @@ import emat.state.Mutation;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.List;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
@@ -157,7 +156,7 @@ public class JukesCantorStochasticMapping implements StochasticMapping, BranchHi
         this.sampleAgreeingSiteHistories(branchMutations, nodeNr, branchStartHeight, duration, expectedJumps,
                 differingSites, agreeingStates);
 
-        branchMutations.sort(Comparator.comparingDouble(Mutation::time).reversed());
+        branchMutations.sort(Mutation.BY_DESCENDING_TIME);
         return branchMutations;
     }
 

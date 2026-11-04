@@ -31,8 +31,22 @@ public class UniformisedStochasticMapping implements StochasticMapping {
     private double[] jumpMatrix;
     private final List<double[]> jumpMatrixPowers = new ArrayList<>();
 
+    // per pair of start and end states, the terms of the sum over the number of jumps with their total, and the expected
+    // number of jumps they were computed for, which is NaN if they are invalid. All sites of a branch share the terms.
+    private final double[][] jumpTerms;
+    private final int[] numJumpTerms;
+    private final double[] jumpTermTotals;
+    private final double[] jumpTermExpectedJumps;
+
     public UniformisedStochasticMapping(int numStates) {
         this.numStates = numStates;
+
+        int numStatePairs = numStates * numStates;
+        this.jumpTerms = new double[numStatePairs][16];
+        this.numJumpTerms = new int[numStatePairs];
+        this.jumpTermTotals = new double[numStatePairs];
+        this.jumpTermExpectedJumps = new double[numStatePairs];
+        Arrays.fill(this.jumpTermExpectedJumps, Double.NaN);
     }
 
     @Override
@@ -56,6 +70,7 @@ public class UniformisedStochasticMapping implements StochasticMapping {
 
         this.jumpMatrixPowers.clear();
         this.jumpMatrixPowers.add(this.getIdentityMatrix());
+        Arrays.fill(this.jumpTermExpectedJumps, Double.NaN);
     }
 
     /**
@@ -82,16 +97,20 @@ public class UniformisedStochasticMapping implements StochasticMapping {
         // draw the number of jumps from the terms of the sum itself, so that every drawn number has a nonzero term
         // this differs from endProbability only by the numerical error of the transition probabilities of very short branches
 
-        double[] terms = this.computeJumpTerms(startState, endState, maxEscapeRate * duration);
-        double total = 0.0;
-        for (double term : terms) {
-            total += term;
+        int statePair = startState * this.numStates + endState;
+        double expectedJumps = maxEscapeRate * duration;
+        // NaN marks invalid terms and never equals the expected number of jumps
+        if (this.jumpTermExpectedJumps[statePair] != expectedJumps) {
+            this.computeJumpTerms(startState, endState, expectedJumps);
         }
 
-        double threshold = Randomizer.nextDouble() * total;
+        double[] terms = this.jumpTerms[statePair];
+        int numTerms = this.numJumpTerms[statePair];
+
+        double threshold = Randomizer.nextDouble() * this.jumpTermTotals[statePair];
         double cumulativeProbability = 0.0;
         int numJumps = 0;
-        while (numJumps < terms.length - 1 && cumulativeProbability + terms[numJumps] < threshold) {
+        while (numJumps < numTerms - 1 && cumulativeProbability + terms[numJumps] < threshold) {
             cumulativeProbability += terms[numJumps];
             numJumps++;
         }
@@ -205,12 +224,15 @@ public class UniformisedStochasticMapping implements StochasticMapping {
     }
 
     /**
-     * Returns the terms of the Poisson-weighted sum of the number of jumps, term n being
+     * Computes the terms of the Poisson-weighted sum of the number of jumps, term n being
      * Poisson(n; expectedJumps) (B^n)_{start, end}, computed in log space, until the Poisson
-     * probabilities are negligible.
+     * probabilities are negligible, and stores them with their total for the pair of states.
      */
-    private double[] computeJumpTerms(int startState, int endState, double expectedJumps) {
-        List<Double> terms = new ArrayList<>();
+    private void computeJumpTerms(int startState, int endState, double expectedJumps) {
+        int statePair = startState * this.numStates + endState;
+        double[] terms = this.jumpTerms[statePair];
+        int numTerms = 0;
+
         double logPoissonProbability = -expectedJumps;
         double total = 0.0;
         for (int numJumps = 0; ; numJumps++) {
@@ -226,7 +248,10 @@ public class UniformisedStochasticMapping implements StochasticMapping {
             double term = startState == endState || numJumps > 0
                     ? poissonProbability * this.getJumpMatrixPower(numJumps)[startState * this.numStates + endState]
                     : 0.0;
-            terms.add(term);
+            if (numTerms == terms.length) {
+                terms = Arrays.copyOf(terms, 2 * terms.length);
+            }
+            terms[numTerms++] = term;
             total += term;
 
             // the entries of B^n are at most one, so the Poisson probability bounds the later terms, which can be zero
@@ -234,7 +259,11 @@ public class UniformisedStochasticMapping implements StochasticMapping {
                 break;
             }
         }
-        return terms.stream().mapToDouble(Double::doubleValue).toArray();
+
+        this.jumpTerms[statePair] = terms;
+        this.numJumpTerms[statePair] = numTerms;
+        this.jumpTermTotals[statePair] = total;
+        this.jumpTermExpectedJumps[statePair] = expectedJumps;
     }
 
     /**

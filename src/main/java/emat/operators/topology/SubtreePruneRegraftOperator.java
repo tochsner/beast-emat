@@ -136,6 +136,9 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         this.subtreeAmbiguousSiteSet = this.resampleAmbiguousSites ? this.missingSites.getAmbiguousSiteSet(x) : NO_SITE_SET;
         this.subtreeCompatibleStates = this.resampleAmbiguousSites ? this.missingSites.getCompatibleStates(x) : NO_SITES;
 
+        // the mutations stay unchanged until the regraft, so the states at X serve the whole proposal
+        this.subtreeStates.resetFor(x);
+
         // choose a grafting point
 
         GraftingPoint graftingPoint = this.proposeGraftingPoint(x);
@@ -255,7 +258,6 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
             }
         }
 
-        this.subtreeStates.resetFor(x);
         IntUnaryOperator newParentStates = this::getNewParentState;
 
         double newExpectedJumps = this.jukesCantorRate * (newParentHeight - x.getHeight());

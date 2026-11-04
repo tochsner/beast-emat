@@ -35,13 +35,22 @@ public final class NodeStateLookup implements IntUnaryOperator {
     /** Returns the state of the given site at the node. */
     @Override
     public int applyAsInt(int site) {
+        SiteChanges sequence = this.getSequence();
+        int slot = sequence.getSlot(site);
+        return slot >= 0 ? sequence.getEndState(slot) : this.mutations.getReferenceSequence()[site];
+    }
+
+    /**
+     * Returns the sequence at the node as the sites that mutate on the path from the root
+     * down to it, with their state at the node as end state, collecting it if needed. Sites
+     * without an entry keep the state of the reference sequence.
+     */
+    public SiteChanges getSequence() {
         if (!this.isCollected) {
             MutationPaths.collectSequence(this.mutations, this.node, this.sequence);
             this.isCollected = true;
         }
-
-        int slot = this.sequence.getSlot(site);
-        return slot >= 0 ? this.sequence.getEndState(slot) : this.mutations.getReferenceSequence()[site];
+        return this.sequence;
     }
 
 }

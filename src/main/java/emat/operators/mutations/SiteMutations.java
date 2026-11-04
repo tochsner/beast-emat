@@ -7,7 +7,6 @@ import emat.state.Mutations;
 import emat.stochasticmapping.SiteHistorySampler;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.function.IntPredicate;
 
@@ -77,7 +76,7 @@ public final class SiteMutations {
         }
 
         newBranchMutations.addAll(newSiteMutations);
-        newBranchMutations.sort(Comparator.comparingDouble(Mutation::time).reversed());
+        newBranchMutations.sort(Mutation.BY_DESCENDING_TIME);
         mutations.applyMutations(node, newBranchMutations, operator);
     }
 

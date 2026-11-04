@@ -6,15 +6,18 @@ import java.util.Arrays;
  * A reusable map from sites to their states at two points of the tree, the start and the
  * end. Entries are kept in slots in the order they were added, and a lookup table over all
  * sites finds the slot of a site in constant time. The slots are stored in primitive arrays
- * that grow as needed, so adding an entry does not allocate. Clearing only resets the
- * added sites, so its cost does not depend on the genome length.
+ * that grow as needed, so adding an entry does not allocate. The lookup table tags every
+ * slot with the generation of the map it was added in, so clearing only starts a new
+ * generation and takes constant time.
  */
 public final class SiteChanges {
 
     private static final int INITIAL_CAPACITY = 16;
 
-    // the slot of every site, or -1 if the site has no entry
-    private final int[] slotOfSite;
+    // per site, the generation in the upper and the slot in the lower 32 bits. An entry is only valid in the current
+    // generation, which starts at one, so that the zeros the table starts with are invalid.
+    private final long[] slotOfSite;
+    private int generation = 1;
 
     // the site and both states of every slot
     private int[] sites = new int[INITIAL_CAPACITY];
@@ -23,8 +26,7 @@ public final class SiteChanges {
     private int size = 0;
 
     public SiteChanges(int numSites) {
-        this.slotOfSite = new int[numSites];
-        Arrays.fill(this.slotOfSite, -1);
+        this.slotOfSite = new long[numSites];
     }
 
     /** Returns the number of sites with an entry, which are stored in the slots below it. */
@@ -46,11 +48,12 @@ public final class SiteChanges {
 
     /** Returns the slot of the given site, or -1 if it has no entry. */
     public int getSlot(int site) {
-        return this.slotOfSite[site];
+        long entry = this.slotOfSite[site];
+        return (int) (entry >>> 32) == this.generation ? (int) entry : -1;
     }
 
     public boolean containsSite(int site) {
-        return this.slotOfSite[site] >= 0;
+        return (int) (this.slotOfSite[site] >>> 32) == this.generation;
     }
 
     /** Adds an entry for the given site, which must not have one yet, and returns its slot. */
@@ -63,7 +66,7 @@ public final class SiteChanges {
         this.sites[slot] = site;
         this.startStates[slot] = startState;
         this.endStates[slot] = endState;
-        this.slotOfSite[site] = slot;
+        this.slotOfSite[site] = ((long) this.generation << 32) | slot;
         return slot;
     }
 
@@ -79,11 +82,13 @@ public final class SiteChanges {
         this.startStates[slot] = state;
     }
 
-    /** Removes all entries. */
+    /** Removes all entries by starting a new generation, which only needs resetting the table once the counter runs out. */
     public void clear() {
-        for (int slot = 0; slot < this.size; slot++) {
-            this.slotOfSite[this.sites[slot]] = -1;
+        if (this.generation == Integer.MAX_VALUE) {
+            Arrays.fill(this.slotOfSite, 0L);
+            this.generation = 0;
         }
+        this.generation++;
         this.size = 0;
     }
 
