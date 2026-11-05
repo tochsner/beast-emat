@@ -44,6 +44,7 @@
         <provider classname="emat.benchmark.HistoryDistanceLogger"/>
         <provider classname="emat.benchmark.ExactHistoryInitialiser"/>
         <provider classname="emat.operators.mutations.MissingCladeGibbsOperator"/>
+        <provider classname="emat.operators.mutations.SiteRateCategoryGibbsOperator"/>
         <provider classname="emat.operators.nodetimes.HamiltonianHeightOperator"/>
         <provider classname="emat.operators.nodetimes.batch.BatchNodeDisplacementOperator"/>
         <provider classname="emat.operators.nodetimes.batch.MappedBatchNodeDisplacementOperator"/>

@@ -74,7 +74,8 @@ public final class RootPathResampler {
 
         double startRate = this.geneticPrior.branchRateModel.getRateForBranch(start);
         double endRate = this.geneticPrior.branchRateModel.getRateForBranch(end);
-        double siteRate = this.process.getSiteRate();
+        // the path is in units of branch rate times time, so the sampler applies the category rates on top of unit scale
+        double unitRateScale = 1.0;
         int numSites = this.mutations.getReferenceSequence().length;
         double jukesCantorRate = 0.5 * (this.geneticPrior.getTotalMutationRate(start) + this.geneticPrior.getTotalMutationRate(end)) / numSites;
 
@@ -90,7 +91,7 @@ public final class RootPathResampler {
         RootPath oldPath = new RootPath(root.getHeight(), start, end, startRate, endRate);
         List<Mutation> oldPathMutations = oldPath.collectPathMutations(this.mutations.getMutations(start), this.mutations.getMutations(end));
         double logBackwardDensity = this.historySampler.computeLogBranchHistoryDensity(
-                oldPathMutations, oldPath.getLength(), 0.0, siteRate, jukesCantorRate, numDifferingSites
+                oldPathMutations, oldPath.getLength(), 0.0, unitRateScale, jukesCantorRate, numDifferingSites
         ) + oldPath.computeLogJacobian(oldPathMutations);
 
         // sample the new path while the tree still holds the sequence of X, which the move keeps
@@ -98,10 +99,10 @@ public final class RootPathResampler {
         root.setHeight(newHeight);
         RootPath newPath = new RootPath(newHeight, start, end, startRate, endRate);
         List<Mutation> newPathMutations = this.historySampler.sampleBranchHistory(
-                end.getNr(), newPath.getLength(), 0.0, siteRate, jukesCantorRate, this.differingSites, this.endStates.resetFor(end)
+                end.getNr(), newPath.getLength(), 0.0, unitRateScale, jukesCantorRate, this.differingSites, this.endStates.resetFor(end)
         );
         double logForwardDensity = this.historySampler.computeLogBranchHistoryDensity(
-                newPathMutations, newPath.getLength(), 0.0, siteRate, jukesCantorRate, numDifferingSites
+                newPathMutations, newPath.getLength(), 0.0, unitRateScale, jukesCantorRate, numDifferingSites
         ) + newPath.computeLogJacobian(newPathMutations);
 
         // the root state at a site is the state of S, unless the mirrored part of the path changes it

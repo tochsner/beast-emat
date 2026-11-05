@@ -330,7 +330,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         this.jukesCantorRate = this.subtreeTotalRate / numSites;
 
         this.process.update();
-        this.subtreeRateScale = this.process.getRateScale(x);
+        this.subtreeRateScale = this.process.getBranchRate(x);
     }
 
     /**

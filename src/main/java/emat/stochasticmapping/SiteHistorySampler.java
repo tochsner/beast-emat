@@ -58,11 +58,11 @@ public class SiteHistorySampler {
     final Node[] traversalStack;
     int numRegionNodes;
 
-    // the clade of the current region without data, which may be null, its nodes in pre-order, and the starts of
-    // the branches above them when laid end to end in scaled time
+    // the clade of the current region without data, which may be null, its nodes in pre-order, and per category the
+    // starts of the branches above them when laid end to end in scaled time
     Node dataFreeClade;
     final Node[] cladeNodes;
-    final double[] cladeBranchStarts;
+    final double[][] cladeBranchStarts;
     int numCladeNodes;
 
     // per node: the state after the last simulated mutation on the branch above it, valid if stamped with the
@@ -88,14 +88,14 @@ public class SiteHistorySampler {
     double[][] tipPartials = new double[0][];
     int[] tipStates = new int[0];
 
-    // per node: the scale of Q on the branch above it, the scaled branch length for which
-    // the transition probabilities were computed, the transition probabilities of the
-    // branch, the partial likelihoods of the subtree below it, the only state its partial
-    // likelihoods allow, -1 if they allow several, or UNINFORMATIVE if they allow all equally,
-    // and its sampled state
-    final double[] rateScales;
-    final double[] durations;
-    final double[][] transitionProbabilities;
+    // per category and node: the scale of Q on the branch above the node for sites of the category, the scaled branch
+    // length for which the transition probabilities were computed, and the transition probabilities of the branch
+    final double[][] rateScales;
+    final double[][] durations;
+    final double[][][] transitionProbabilities;
+
+    // per node: the partial likelihoods of the subtree below it, the only state its partial likelihoods allow,
+    // -1 if they allow several, or UNINFORMATIVE if they allow all equally, and its sampled state
     final double[][] partials;
     final int[] knownStates;
     final int[] nodeStates;
@@ -118,20 +118,23 @@ public class SiteHistorySampler {
         this.regionNodes = new Node[numNodes];
         this.traversalStack = new Node[numNodes];
         this.cladeNodes = new Node[numNodes];
-        this.cladeBranchStarts = new double[numNodes + 1];
+        int numCategories = process.getNumCategories();
+        this.cladeBranchStarts = new double[numCategories][numNodes + 1];
         this.simulatedEndStates = new int[numNodes];
         this.simulatedEndStamps = new long[numNodes];
         this.topParentStates = new NodeStateLookup(mutations, numSites);
         this.boundaryStamps = new long[numNodes];
-        this.rateScales = new double[numNodes];
-        this.durations = new double[numNodes];
-        this.transitionProbabilities = new double[numNodes][this.numStates * this.numStates];
+        this.rateScales = new double[numCategories][numNodes];
+        this.durations = new double[numCategories][numNodes];
+        this.transitionProbabilities = new double[numCategories][numNodes][this.numStates * this.numStates];
         this.partials = new double[numNodes][this.numStates];
         this.knownStates = new int[numNodes];
         this.nodeStates = new int[numNodes];
         this.stateWeights = new double[this.numStates];
 
-        Arrays.fill(this.durations, Double.NaN);
+        for (double[] categoryDurations : this.durations) {
+            Arrays.fill(categoryDurations, Double.NaN);
+        }
 
         // the tips keep their numbers and taxa when the tree changes
 
@@ -172,7 +175,9 @@ public class SiteHistorySampler {
         if (this.process.getRateMatrix() != this.rateMatrix) {
             this.rateMatrix = this.process.getRateMatrix();
             this.stochasticMapping.setRateMatrix(this.rateMatrix);
-            Arrays.fill(this.durations, Double.NaN);
+            for (double[] categoryDurations : this.durations) {
+                Arrays.fill(categoryDurations, Double.NaN);
+            }
         }
 
         this.regionStamp++;
@@ -252,10 +257,11 @@ public class SiteHistorySampler {
      */
     public void sampleRegionSiteHistory(int site, List<List<Mutation>> branchMutations) {
         Node top = this.regionNodes[this.numRegionNodes - 1];
+        int category = this.process.getCategory(site);
 
         // sample the node states: prune upwards, then sample downwards starting at the top
 
-        this.computePartials(site);
+        this.computePartials(site, category);
 
         double[] topWeights = this.stateWeights;
         double[] topPartial = this.partials[top.getNr()];
@@ -266,20 +272,20 @@ public class SiteHistorySampler {
         } else {
             int parentState = this.topParentStates.applyAsInt(site);
             this.nodeStates[top.getParent().getNr()] = parentState;
-            double[] topTransitionProbabilities = this.transitionProbabilities[top.getNr()];
+            double[] topTransitionProbabilities = this.transitionProbabilities[category][top.getNr()];
             for (int state = 0; state < this.numStates; state++) {
                 topWeights[state] = topTransitionProbabilities[parentState * this.numStates + state] * topPartial[state];
             }
         }
         this.nodeStates[top.getNr()] = StochasticMapping.sampleIndex(topWeights);
 
-        this.sampleNodeStates();
+        this.sampleNodeStates(category);
 
         // sample the path on every pruned branch given its end states, then the data-free clade from the state above it
 
-        this.sampleBranchHistories(site, branchMutations);
+        this.sampleBranchHistories(site, category, branchMutations);
         if (this.dataFreeClade != null) {
-            this.simulateClade(site, branchMutations);
+            this.simulateClade(site, category, branchMutations);
         }
     }
 
@@ -300,7 +306,7 @@ public class SiteHistorySampler {
      * states, or else falls back to an exact draw. As the expected number of jumps on the
      * whole tree is small for most sites, only few random draws are needed.
      */
-    private void sampleBranchHistories(int site, List<List<Mutation>> branchMutations) {
+    private void sampleBranchHistories(int site, int category, List<List<Mutation>> branchMutations) {
         double jumpRate = this.stochasticMapping.getJumpRate();
 
         // the position of the next jump on the axis of expected jumps, and how far the branches reach along it
@@ -317,13 +323,13 @@ public class SiteHistorySampler {
 
             int state = this.nodeStates[nodeNr];
             if (state != this.nodeStates[node.getParent().getNr()]) {
-                branchMutations.get(i).addAll(this.sampleBranchHistory(node, site));
+                branchMutations.get(i).addAll(this.sampleBranchHistory(node, site, category));
                 continue;
             }
 
             double startHeight = node.getParent().getHeight();
             double endHeight = node.getHeight();
-            branchesEndPosition += jumpRate * this.rateScales[nodeNr] * Math.max(startHeight - endHeight, 0.0);
+            branchesEndPosition += jumpRate * this.rateScales[category][nodeNr] * Math.max(startHeight - endHeight, 0.0);
 
             int numJumps = 0;
             while (nextJumpPosition < branchesEndPosition) {
@@ -336,7 +342,7 @@ public class SiteHistorySampler {
             }
 
             List<Mutation> sameStateMutations = this.stochasticMapping.sampleSameStateHistory(nodeNr, site, startHeight, endHeight, state, numJumps);
-            branchMutations.get(i).addAll(sameStateMutations != null ? sameStateMutations : this.sampleBranchHistory(node, site));
+            branchMutations.get(i).addAll(sameStateMutations != null ? sameStateMutations : this.sampleBranchHistory(node, site, category));
         }
     }
 
@@ -355,17 +361,18 @@ public class SiteHistorySampler {
      * the state after the last mutation on the branch, or else the end state of the closest
      * branch above with a mutation, or the start state of the clade.
      */
-    private void simulateClade(int site, List<List<Mutation>> branchMutations) {
+    private void simulateClade(int site, int category, List<List<Mutation>> branchMutations) {
         this.simulationStamp++;
         int cladeStartState = this.nodeStates[this.dataFreeClade.getParent().getNr()];
         double eventRate = this.process.getMaxEscapeRate();
-        double totalLength = this.cladeBranchStarts[this.numCladeNodes];
+        double[] branchStarts = this.cladeBranchStarts[category];
+        double totalLength = branchStarts[this.numCladeNodes];
 
         int branch = -1;
         int state = cladeStartState;
         double previousHeight = Mutation.BRANCH_START;
         for (double position = Randomizer.nextExponential(eventRate); position < totalLength; position += Randomizer.nextExponential(eventRate)) {
-            int index = this.findCladeBranch(position);
+            int index = this.findCladeBranch(branchStarts, position);
             Node node = this.cladeNodes[index];
             if (index != branch) {
                 branch = index;
@@ -378,7 +385,7 @@ public class SiteHistorySampler {
                 continue;
             }
 
-            double height = node.getParent().getHeight() - (position - this.cladeBranchStarts[index]) / this.rateScales[node.getNr()];
+            double height = node.getParent().getHeight() - (position - branchStarts[index]) / this.rateScales[category][node.getNr()];
             branchMutations.get(this.numRegionNodes + index).add(new Mutation(node.getNr(), height, previousHeight, site, state, newState));
 
             previousHeight = height;
@@ -389,12 +396,12 @@ public class SiteHistorySampler {
     }
 
     /** Returns the index of the clade branch whose stretch of the branches laid end to end contains the given position. */
-    private int findCladeBranch(double position) {
+    private int findCladeBranch(double[] branchStarts, double position) {
         int low = 0;
         int high = this.numCladeNodes - 1;
         while (low < high) {
             int middle = (low + high + 1) >>> 1;
-            if (this.cladeBranchStarts[middle] <= position) {
+            if (branchStarts[middle] <= position) {
                 low = middle;
             } else {
                 high = middle - 1;
@@ -442,6 +449,7 @@ public class SiteHistorySampler {
      */
     private double computeLogRegionSiteHistoryDensity(int site, List<List<Mutation>> regionHistory) {
         Node top = this.regionNodes[this.numRegionNodes - 1];
+        int category = this.process.getCategory(site);
 
         // replay the history from the top downwards to find the state of every node
 
@@ -461,11 +469,11 @@ public class SiteHistorySampler {
 
         for (int i = this.numRegionNodes - 1; i >= 0; i--) {
             if (!this.regionNodes[i].isRoot()) {
-                logDensity += this.computeLogBranchDensity(this.regionNodes[i], regionHistory.get(i));
+                logDensity += this.computeLogBranchDensity(this.regionNodes[i], regionHistory.get(i), category);
             }
         }
         for (int i = 0; i < this.numCladeNodes; i++) {
-            logDensity += this.computeLogBranchDensity(this.cladeNodes[i], regionHistory.get(this.numRegionNodes + i));
+            logDensity += this.computeLogBranchDensity(this.cladeNodes[i], regionHistory.get(this.numRegionNodes + i), category);
         }
 
         return logDensity;
@@ -475,7 +483,7 @@ public class SiteHistorySampler {
      * Returns the log of the transition probability of the given branch times the density of
      * its given path, starting from the state of its parent, and sets the state of its node.
      */
-    private double computeLogBranchDensity(Node node, List<Mutation> branchMutations) {
+    private double computeLogBranchDensity(Node node, List<Mutation> branchMutations, int category) {
         int nodeNr = node.getNr();
         Node parent = node.getParent();
 
@@ -483,11 +491,11 @@ public class SiteHistorySampler {
         int endState = branchMutations.isEmpty() ? startState : branchMutations.get(branchMutations.size() - 1).newState();
         this.nodeStates[nodeNr] = endState;
 
-        double endProbability = this.transitionProbabilities[nodeNr][startState * this.numStates + endState];
+        double endProbability = this.transitionProbabilities[category][nodeNr][startState * this.numStates + endState];
 
         return Math.log(endProbability) + this.stochasticMapping.computeLogSiteHistoryDensity(
                 branchMutations, parent.getHeight(), node.getHeight(),
-                startState, endState, this.rateScales[nodeNr], endProbability
+                startState, endState, this.rateScales[category][nodeNr], endProbability
         );
     }
 
@@ -499,7 +507,7 @@ public class SiteHistorySampler {
      * current state. The partials of the inner nodes are rescaled, which does not change the
      * sampled states.
      */
-    private void computePartials(int site) {
+    private void computePartials(int site, int category) {
         int patternIndex = this.alignment.getPatternIndex(site);
         if (this.dataFreeClade != null) {
             this.knownStates[this.dataFreeClade.getNr()] = UNINFORMATIVE;
@@ -511,7 +519,7 @@ public class SiteHistorySampler {
             if (this.boundaryStamps[node.getNr()] == this.regionStamp) {
                 this.setKnownState(node, this.boundaryStates.get(boundaryIndex++).applyAsInt(site));
             } else {
-                this.computePartial(node, patternIndex);
+                this.computePartial(node, patternIndex, category);
             }
         }
     }
@@ -530,7 +538,7 @@ public class SiteHistorySampler {
      * contributes a factor of one, as the rows of the transition probabilities sum to one. The
      * partials of an inner node are rescaled by their maximum to avoid underflow on large trees.
      */
-    private void computePartial(Node node, int patternIndex) {
+    private void computePartial(Node node, int patternIndex, int category) {
         double[] partial = this.partials[node.getNr()];
 
         if (node.isLeaf()) {
@@ -554,7 +562,7 @@ public class SiteHistorySampler {
 
             this.knownStates[node.getNr()] = -1;
             double[] childPartial = this.partials[child.getNr()];
-            double[] childTransitionProbabilities = this.transitionProbabilities[child.getNr()];
+            double[] childTransitionProbabilities = this.transitionProbabilities[category][child.getNr()];
 
             // a child that allows a single state, like most tips, only needs the column of that state
 
@@ -595,7 +603,7 @@ public class SiteHistorySampler {
      * probability from the parent state times the partial likelihood of the child, unless the
      * partial likelihood only allows a single state, like at most tips and at the boundary.
      */
-    private void sampleNodeStates() {
+    private void sampleNodeStates(int category) {
         double[] weights = this.stateWeights;
 
         for (int i = this.numRegionNodes - 2; i >= 0; i--) {
@@ -609,7 +617,7 @@ public class SiteHistorySampler {
 
             int parentState = this.nodeStates[node.getParent().getNr()];
             double[] partial = this.partials[node.getNr()];
-            double[] branchTransitionProbabilities = this.transitionProbabilities[node.getNr()];
+            double[] branchTransitionProbabilities = this.transitionProbabilities[category][node.getNr()];
 
             for (int state = 0; state < this.numStates; state++) {
                 weights[state] = branchTransitionProbabilities[parentState * this.numStates + state] * partial[state];
@@ -620,39 +628,43 @@ public class SiteHistorySampler {
     }
 
     /**
-     * Updates the scale of Q on the branch above the given node and recomputes the
-     * transition probabilities P = exp(Q t) of the branch if its scaled length t has changed.
+     * Updates the scale of Q on the branch above the given node for every category and
+     * recomputes the transition probabilities P = exp(Q t) of the branch for the categories
+     * whose scaled length t has changed.
      */
     private void updateTransitionProbabilities(Node node) {
         int nodeNr = node.getNr();
+        double branchLength = node.getParent().getHeight() - node.getHeight();
 
-        this.rateScales[nodeNr] = this.process.getRateScale(node);
-        double duration = this.rateScales[nodeNr] * (node.getParent().getHeight() - node.getHeight());
+        for (int category = 0; category < this.rateScales.length; category++) {
+            this.rateScales[category][nodeNr] = this.process.getRateScale(node, category);
+            double duration = this.rateScales[category][nodeNr] * branchLength;
 
-        if (duration != this.durations[nodeNr]) {
-            this.process.computeTransitionProbabilities(duration, this.transitionProbabilities[nodeNr]);
-            this.durations[nodeNr] = duration;
+            if (duration != this.durations[category][nodeNr]) {
+                this.process.computeTransitionProbabilities(duration, this.transitionProbabilities[category][nodeNr]);
+                this.durations[category][nodeNr] = duration;
+            }
         }
     }
 
     /* Branch Histories */
 
     /**
-     * Samples the history of the given site on the branch above the given node, given the
-     * sampled states at both ends. The rate matrix of the branch is Q scaled by the branch
-     * rate and the site rate.
+     * Samples the history of the given site of the given category on the branch above the
+     * given node, given the sampled states at both ends. The rate matrix of the branch is Q
+     * scaled by the branch rate and the rate of the category.
      */
-    private List<Mutation> sampleBranchHistory(Node node, int site) {
+    private List<Mutation> sampleBranchHistory(Node node, int site, int category) {
         int nodeNr = node.getNr();
         Node parent = node.getParent();
         int startState = this.nodeStates[parent.getNr()];
         int endState = this.nodeStates[nodeNr];
 
-        double endProbability = this.transitionProbabilities[nodeNr][startState * this.numStates + endState];
+        double endProbability = this.transitionProbabilities[category][nodeNr][startState * this.numStates + endState];
 
         return this.stochasticMapping.sampleSiteHistory(
                 nodeNr, site, parent.getHeight(), node.getHeight(),
-                startState, endState, this.rateScales[nodeNr], endProbability
+                startState, endState, this.rateScales[category][nodeNr], endProbability
         );
     }
 
@@ -738,7 +750,10 @@ public class SiteHistorySampler {
             }
 
             this.updateTransitionProbabilities(node);
-            this.cladeBranchStarts[i + 1] = this.cladeBranchStarts[i] + Math.max(this.durations[node.getNr()], 0.0);
+            for (int category = 0; category < this.cladeBranchStarts.length; category++) {
+                this.cladeBranchStarts[category][i + 1] = this.cladeBranchStarts[category][i]
+                        + Math.max(this.durations[category][node.getNr()], 0.0);
+            }
         }
     }
 

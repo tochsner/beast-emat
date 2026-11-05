@@ -184,7 +184,7 @@ public class BranchReformOperator extends Operator {
     private double resampleBranch(Node node) {
         double startHeight = node.getParent().getHeight();
         double endHeight = node.getHeight();
-        double rateScale = this.process.getRateScale(node);
+        double rateScale = this.process.getBranchRate(node);
         double jukesCantorRate = this.geneticPrior.branchRateModel.getRateForBranch(node)
                 * this.geneticPrior.getTotalMutationRate(node) / this.mutations.getReferenceSequence().length;
 

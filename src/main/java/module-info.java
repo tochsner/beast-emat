@@ -16,6 +16,7 @@ import emat.operators.nodetimes.InnerNodeDisplacementOperator;
 import emat.operators.nodetimes.batch.BatchNodeDisplacementOperator;
 import emat.operators.mutations.SiteHistoryGibbsOperator;
 import emat.operators.mutations.MissingCladeGibbsOperator;
+import emat.operators.mutations.SiteRateCategoryGibbsOperator;
 import emat.operators.nodetimes.RootScaleOperator;
 import emat.operators.nodetimes.RatioScaleOperator;
 import emat.operators.nodetimes.GammaRegressionRatioScaleOperator;
@@ -70,6 +71,7 @@ open module my.beast.example {
             BatchNodeDisplacementOperator,
             SiteHistoryGibbsOperator,
             MissingCladeGibbsOperator,
+            SiteRateCategoryGibbsOperator,
             RootScaleOperator,
             RatioScaleOperator,
             GammaRegressionRatioScaleOperator,

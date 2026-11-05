@@ -17,17 +17,19 @@ public interface BranchHistorySampler {
 
     /**
      * Samples the history of every site on the branch above the given node, which runs from
-     * the start height down to the end height. The differing sites map every site whose end
-     * states differ to its states at the start and at the end. At every other site, both end
-     * states equal the state returned by the given lookup, which is only called for the sites
-     * that receive mutations. The mutations are sorted by descending height.
+     * the start height down to the end height. The rate scale is the branch rate, and the
+     * sampler applies the rate of the category of every site on top of it. The differing sites
+     * map every site whose end states differ to its states at the start and at the end. At every
+     * other site, both end states equal the state returned by the given lookup, which is only
+     * called for the sites that receive mutations. The mutations are sorted by descending height.
      */
     List<Mutation> sampleBranchHistory(int nodeNr, double branchStartHeight, double branchEndHeight, double rateScale,
                                        double jukesCantorRate, SiteChanges differingSites, IntUnaryOperator agreeingStates);
 
     /**
      * Computes the log probability that sampleBranchHistory proposes the given history on a
-     * branch with the same arguments, given the number of sites whose end states differ.
+     * branch with the same arguments, given the number of sites whose end states differ. Samplers
+     * that can read the differing sites from the history may ignore this number.
      */
     double computeLogBranchHistoryDensity(List<Mutation> branchMutations, double branchStartHeight, double branchEndHeight,
                                           double rateScale, double jukesCantorRate, int numDifferingSites);
