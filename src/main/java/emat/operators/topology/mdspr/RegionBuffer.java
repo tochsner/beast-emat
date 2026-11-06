@@ -78,6 +78,16 @@ public class RegionBuffer {
         return this.get(lastCandidate);
     }
 
+    /** Returns the region on the branch above the given node that contains the given height, or null if there is none. */
+    public Region find(Node node, double height) {
+        for (int i = 0; i < this.size; i++) {
+            if (this.nodes[i] == node && this.lowerHeights[i] < height && height <= this.upperHeights[i]) {
+                return this.get(i);
+            }
+        }
+        return null;
+    }
+
     private Region get(int regionNr) {
         return new Region(
                 this.nodes[regionNr], this.indices[regionNr],

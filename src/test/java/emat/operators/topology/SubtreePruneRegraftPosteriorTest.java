@@ -22,6 +22,7 @@ import emat.helper.MutationPaths;
 import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.mutations.BranchReformOperator;
 import emat.prior.GeneticPrior;
+import emat.state.Mutation;
 import emat.state.Mutations;
 import emat.stochasticmapping.HistorySampler;
 import emat.stochasticmapping.SubstitutionProcess;
@@ -52,6 +53,9 @@ public class SubtreePruneRegraftPosteriorTest {
 
     // the transition probabilities of the posterior computation per number of half grid steps, stored row by row
     private double[][] halfStepTransitionProbabilities;
+
+    // the mean relative height of the mutations on their branches over the samples of the last chain
+    private double meanRelativeMutationHeight;
 
     /**
      * Runs mdSPR, which resample only the branch above the
@@ -123,7 +127,18 @@ public class SubtreePruneRegraftPosteriorTest {
         this.assertHkyTopologiesMatchPosterior(HistorySampler.HYBRID);
     }
 
-    private void assertHkyTopologiesMatchPosterior(HistorySampler historySampler) {
+    /**
+     * Runs mdSPR under HKY like testHybridHkyTopologiesMatchPosterior, mostly with sorted
+     * explorations. Under HKY with unequal frequencies, the density of a history depends on
+     * the times of its mutations, which sorted explorations move.
+     */
+    @Test
+    public void testSortedHkyTopologiesMatchPosterior() {
+        this.assertHkyTopologiesMatchPosterior(HistorySampler.HYBRID,
+                "sortedExplorationProbability", 0.7, "explorationRadius", 2);
+    }
+
+    private void assertHkyTopologiesMatchPosterior(HistorySampler historySampler, Object... explorationArguments) {
         Randomizer.setSeed(23);
 
         Frequencies frequencies = new Frequencies();
@@ -132,9 +147,11 @@ public class SubtreePruneRegraftPosteriorTest {
         hky.initByName("kappa", new RealScalarParam<>(4.0, PositiveReal.INSTANCE), "frequencies", frequencies);
         Setup setup = this.createSetup(hky, 0.7);
 
+        List<Object> arguments = new ArrayList<>(List.of("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                "windowProbability", 0.5, "fullExplorationProbability", 0.1, "historySampler", historySampler));
+        arguments.addAll(List.of(explorationArguments));
         MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
-        mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
-                "windowProbability", 0.5, "fullExplorationProbability", 0.1, "historySampler", historySampler);
+        mdSprOperator.initByName(arguments.toArray());
 
         int[] rootSequence = new int[SEQUENCES[0].length()];
         for (int site = 0; site < rootSequence.length; site++) {
@@ -166,6 +183,35 @@ public class SubtreePruneRegraftPosteriorTest {
         Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
         Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, branchReformOperator));
         this.assertFrequencies(expectedFrequencies, topologyCounts);
+    }
+
+    /**
+     * Runs mdSPR with sorted explorations, which also move the mutations that the subtree
+     * could share with its new branch above the attachment point and spread those on its old
+     * branch, together with local explorations for the height shifts and branch reform. The
+     * rooted topologies follow the same posterior as with the other subtree moves.
+     */
+    @Test
+    public void testSortedMdSprTopologiesMatchPosterior() {
+        for (double sortingErrorProbability : new double[]{0.05, 0.3}) {
+            Randomizer.setSeed(29);
+            Setup setup = this.createSetup();
+
+            MutationDirectedSprOperator mdSprOperator = new MutationDirectedSprOperator();
+            mdSprOperator.initByName("weight", 1.0, "tree", setup.tree, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior,
+                    "fullExplorationProbability", 0.0, "windowProbability", 0.5, "sortedExplorationProbability", 0.7,
+                    "sortingErrorProbability", sortingErrorProbability, "explorationRadius", 2);
+
+            BranchReformOperator branchReformOperator = new BranchReformOperator();
+            branchReformOperator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.geneticPrior);
+
+            Map<String, Double> expectedFrequencies = this.computeTopologyPosterior(setup, null);
+            Map<String, Integer> topologyCounts = this.runChain(setup, List.of(mdSprOperator, branchReformOperator));
+            this.assertFrequencies(expectedFrequencies, topologyCounts);
+
+            // under Jukes-Cantor, the mutations on a branch lie at uniform heights given everything else
+            assertEquals(0.5, this.meanRelativeMutationHeight, 0.005, "Mean relative height of the mutations");
+        }
     }
 
     /**
@@ -320,6 +366,8 @@ public class SubtreePruneRegraftPosteriorTest {
         }
 
         Map<String, Integer> topologyCounts = new HashMap<>();
+        double sumRelativeMutationHeights = 0.0;
+        long numMutations = 0;
 
         for (long i = 0; i < NUM_BURNIN + NUM_SAMPLES; i++) {
             state.store(i);
@@ -348,8 +396,20 @@ public class SubtreePruneRegraftPosteriorTest {
 
             if (i >= NUM_BURNIN) {
                 topologyCounts.merge(this.getTopology(tree.getRoot()), 1, Integer::sum);
+
+                for (Node node : tree.getNodesAsArray()) {
+                    if (node.isRoot()) {
+                        continue;
+                    }
+                    double branchLength = node.getParent().getHeight() - node.getHeight();
+                    for (Mutation mutation : mutations.getMutations(node)) {
+                        sumRelativeMutationHeights += (mutation.time() - node.getHeight()) / branchLength;
+                        numMutations++;
+                    }
+                }
             }
         }
+        this.meanRelativeMutationHeight = sumRelativeMutationHeights / numMutations;
 
         return topologyCounts;
     }

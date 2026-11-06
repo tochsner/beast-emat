@@ -85,9 +85,17 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
     /**
      * A new attachment point for the pruned subtree: the branch above the new sibling S' in
      * the pruned tree, the height of the new parent P' on it, and the log of
-     * α_graft(n → o) / α_graft(o → n).
+     * α_graft(n → o) / α_graft(o → n). A proposal that also moves mutations along the branch
+     * above S' or along the joined branch above S, which requires S' to differ from S, gives
+     * their new mutations, which replace the current ones. Null keeps the current ones.
      */
-    protected record GraftingPoint(Node newSibling, double newParentHeight, double logHastingsRatio) {
+    protected record GraftingPoint(Node newSibling, double newParentHeight, double logHastingsRatio,
+                                   List<Mutation> newSiblingMutations, List<Mutation> joinedMutations) {
+
+        protected GraftingPoint(Node newSibling, double newParentHeight, double logHastingsRatio) {
+            this(newSibling, newParentHeight, logHastingsRatio, null, null);
+        }
+
     }
 
     @Override
@@ -230,6 +238,11 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
         double newParentHeight = graftingPoint.newParentHeight();
         double oldParentHeight = parent.getHeight();
 
+        // mutations that the grafting proposal moved along the branch above S' change the states at P', but not those on the path to P or X
+        if (graftingPoint.newSiblingMutations() != null) {
+            this.mutations.applyMutations(newSibling, graftingPoint.newSiblingMutations(), this);
+        }
+
         // find the sites that differ between the ends of the old P–X branch, which are exactly the changes on it
 
         List<Mutation> oldSubtreeMutations = this.mutations.getMutations(x);
@@ -276,7 +289,7 @@ public abstract class SubtreePruneRegraftOperator extends TreeOperator {
 
         // rearrange the mutations: join G–P–S into G–S, then split G'–S' into G'–P'–S'
 
-        List<Mutation> joinedMutations = this.branchMutations.joinBranches(
+        List<Mutation> joinedMutations = graftingPoint.joinedMutations() != null ? graftingPoint.joinedMutations() : this.branchMutations.joinBranches(
                 this.mutations.getMutations(parent), this.mutations.getMutations(sibling), sibling.getNr()
         );
         newBranchMutations.put(sibling, joinedMutations);

@@ -24,7 +24,9 @@ import java.util.Map;
 @Description("Regrafts a random subtree preferably where the sequence is close to the sequence of the subtree, " +
         "using the mutations of the EMAT as a parsimony map (mutation-directed SPR, docs/mcmc-moves.md §8.3). " +
         "Most proposals only explore the neighbourhood of the current attachment point, whose extent is drawn " +
-        "from a geometric distribution, and may jump between tips with close data. The root is never changed. " +
+        "from a geometric distribution, and may jump between tips with close data. Optionally, some proposals " +
+        "explore the branches within a few steps of the current attachment point instead and move the mutations that the subtree could share " +
+        "with its new branch above the new attachment point. The root is never changed. " +
         "The history on the branch above the subtree is resampled under Jukes-Cantor or, with historySampler " +
         "HYBRID, at the sites chosen under Jukes-Cantor exactly under the model of the genetic prior.")
 public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
@@ -36,6 +38,13 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     final public Input<Double> annealingInput = new Input<>("annealing", "the power f to which the grafting density is raised, which makes the proposals less eager", 0.8);
     final public Input<Double> fullExplorationProbabilityInput = new Input<>("fullExplorationProbability", "the probability of exploring the whole tree instead of the neighbourhood of the current attachment point", 0.01);
     final public Input<Double> windowProbabilityInput = new Input<>("windowProbability", "the parameter q of the geometric number of additional differences, q^j (1 - q), that the neighbourhood may have compared to the current attachment point. With 0, the neighbourhood never has more differences than the current attachment point", 0.0);
+
+    final public Input<Double> sortedExplorationProbabilityInput = new Input<>("sortedExplorationProbability", "the probability of a sorted exploration, which explores the other branches within the exploration radius of the current attachment point " +
+            "as if the mutations that the subtree could share with a branch lay above the attachment point, and then moves them there on the new branch and to uniform times on the old one. " +
+            "This lets subtrees attach to branches whose shared mutations happen to lie low", 0.0);
+    final public Input<Double> sortingErrorProbabilityInput = new Input<>("sortingErrorProbability", "the probability ε with which a sorted exploration moves a shared mutation on the new branch below the attachment point instead, " +
+            "which keeps the reverse move possible where the shared mutations on the old branch do not all lie above the current attachment point", 0.1);
+    final public Input<Integer> explorationRadiusInput = new Input<>("explorationRadius", "the number of branches that a sorted exploration may step away from the branch of the current attachment point", 2);
 
     final public Input<SubtreeSelection> subtreeSelectionInput = new Input<>("subtreeSelection", "the strategy for choosing the subtree to regraft: UNIFORM picks every subtree with the same probability, " +
             "and BRANCH_LENGTH proportional to the length of the branch above it", SubtreeSelection.UNIFORM, SubtreeSelection.values());
@@ -53,6 +62,11 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     double annealing;
     double fullExplorationProbability;
     double windowProbability;
+
+    // the probability of a sorted exploration, the probability ε of moving a shared mutation below the attachment point, and the radius of the explored neighbourhood
+    double sortedExplorationProbability;
+    double sortingErrorProbability;
+    int explorationRadius;
 
     SubtreeSelector subtreeSelector;
 
@@ -79,6 +93,17 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     int[] topRunStamps;
     int[] bottomRunStamps;
     int threshold;
+
+    // per node, the sorted exploration that explored the branch above it
+    int[] sortedBranchStamps;
+
+    // per node, the number of differences at the top of the branch above it, as recorded by the last sorted exploration that explored the branch
+    int[] sortedTopNumDifferences;
+
+    // per site, the branch count that last counted its mutations, with their number on that branch
+    int siteStamp;
+    int[] siteStamps;
+    int[] siteCounts;
 
     // per tip, the tips with close data that the bottom region of its branch has shortcuts to, or null without shortcuts
     TipNeighbours tipNeighbours;
@@ -115,6 +140,15 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         if (this.windowProbability < 0.0 || this.windowProbability >= 1.0) {
             throw new IllegalArgumentException("windowProbability must be at least 0 and less than 1.");
         }
+        this.explorationRadius = this.explorationRadiusInput.get();
+        this.sortedExplorationProbability = this.sortedExplorationProbabilityInput.get();
+        this.sortingErrorProbability = this.sortingErrorProbabilityInput.get();
+        if (this.fullExplorationProbability + this.sortedExplorationProbability > 1.0) {
+            throw new IllegalArgumentException("fullExplorationProbability and sortedExplorationProbability must not sum to more than 1.");
+        }
+        if (this.sortingErrorProbability <= 0.0 || this.sortingErrorProbability >= 0.5) {
+            throw new IllegalArgumentException("sortingErrorProbability must be greater than 0 and less than 0.5.");
+        }
         this.subtreeSelector = this.createSubtreeSelector();
 
         int shortcutDistance = this.shortcutDistanceInput.get();
@@ -134,6 +168,11 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         }
         this.topRunStamps = new int[numNodes];
         this.bottomRunStamps = new int[numNodes];
+        this.sortedBranchStamps = new int[numNodes];
+        this.sortedTopNumDifferences = new int[numNodes];
+        int numSites = this.mutations.getReferenceSequence().length;
+        this.siteStamps = new int[numSites];
+        this.siteCounts = new int[numSites];
 
         this.weightFactor = this.scaleWeightByLogNumTipsInput.get() ? Math.log(this.tree.getLeafNodeCount()) : 1.0;
     }
@@ -188,6 +227,9 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
      * With shortcuts, the regions at the bottom of the branches above tips with close data
      * are connected as well if both are within T. This is symmetric and does not depend on
      * the attachment point of X, so the reverse move still finds the same regions.
+     * <p>
+     * With another fixed probability, the proposal is a sorted exploration, which also moves
+     * mutations along the old and the new branch (see proposeSortedGraftingPoint).
      */
     @Override
     protected GraftingPoint proposeGraftingPoint(Node x) {
@@ -221,7 +263,11 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
 
         // explore the candidate regions and pick one
 
-        boolean isFullExploration = Randomizer.nextDouble() < this.fullExplorationProbability;
+        double modeDraw = Randomizer.nextDouble();
+        boolean isFullExploration = modeDraw < this.fullExplorationProbability;
+        if (!isFullExploration && modeDraw < this.fullExplorationProbability + this.sortedExplorationProbability) {
+            return this.proposeSortedGraftingPoint(oldRegion);
+        }
         int oldMinThreshold = Math.max(1, oldNumDifferences);
         int threshold = isFullExploration ? Integer.MAX_VALUE : this.sampleThreshold(oldMinThreshold);
 
@@ -329,6 +375,7 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
         if (this.explorationStamp == Integer.MAX_VALUE) {
             Arrays.fill(this.topRunStamps, 0);
             Arrays.fill(this.bottomRunStamps, 0);
+            Arrays.fill(this.sortedBranchStamps, 0);
             if (this.tipNeighbours != null) {
                 Arrays.fill(this.classStamps, 0);
                 Arrays.fill(this.shortcutStamps, 0);
@@ -685,6 +732,263 @@ public class MutationDirectedSprOperator extends SubtreePruneRegraftOperator {
     private int getSubtreeState(int site) {
         int slot = this.subtreeSequenceChanges.getSlot(site);
         return slot >= 0 ? this.subtreeSequenceChanges.getEndState(slot) : this.referenceSequence[site];
+    }
+
+    /* Sorted Explorations */
+
+    /**
+     * Proposes an attachment point together with new times of the mutations that the subtree
+     * could share with the branch it attaches to. A mutation on a branch of the pruned tree is
+     * movable if it is the only one at its site on the branch and crossing it downwards
+     * brings the sequence closer to X. Above an attachment point, it is shared with the
+     * subtree, and below, the subtree needs a mutation of its own.
+     * <p>
+     * The candidates are the regions on the branches within the exploration radius of the
+     * current attachment point, other than its own branch, as if every movable mutation lay
+     * above them. Their boundaries are the other mutations that change the number of
+     * differences. Once a region and a height t in it are drawn, each movable mutation on the
+     * new branch moves to a uniform time above t with probability 1 - ε, or below t
+     * otherwise. The movable mutations on the joined branch that the subtree leaves move to
+     * uniform times on it, i.e. above the current attachment point with probability
+     * proportional to the length above it. The reverse move draws the current times on the joined branch
+     * around the current attachment point and uniform times on the new branch, so the
+     * Hastings ratio holds both densities of the times besides the grafting densities.
+     */
+    private GraftingPoint proposeSortedGraftingPoint(Region oldRegion) {
+        Node oldBranchNode = oldRegion.node();
+        int oldTopNumDifferences = oldRegion.numDifferences();
+        for (int i = 0; i < oldRegion.index(); i++) {
+            oldTopNumDifferences -= this.computeDifferenceChange(this.joinedMutations.get(i));
+        }
+
+        this.exploreSorted(oldBranchNode, oldTopNumDifferences);
+        if (this.regions.size() == 0) {
+            return null;
+        }
+        double logTotalWeight = this.regions.normaliseWeights();
+
+        Region newRegion = this.regions.sample();
+        Node newBranchNode = newRegion.node();
+        double newParentHeight = newRegion.lowerHeight() + Randomizer.nextDouble() * (newRegion.upperHeight() - newRegion.lowerHeight());
+        int newTopNumDifferences = this.sortedTopNumDifferences[newBranchNode.getNr()];
+
+        // sort the movable mutations on the new branch around the new attachment point, and spread those on the old branch uniformly
+
+        double newTopHeight = this.getPrunedParent(this.x, newBranchNode).getHeight();
+        List<Mutation> newBranchMutations = new ArrayList<>(this.mutations.getMutations(newBranchNode));
+        double newAboveProbability = (newTopHeight - newParentHeight) / (newTopHeight - newBranchNode.getHeight());
+        double logForwardDensity = this.computeLogDensity(newRegion) - logTotalWeight
+                + this.drawMovableTimes(newBranchMutations, newParentHeight, newTopHeight, newBranchNode.getHeight(), 1.0 - this.sortingErrorProbability);
+
+        Node parent = this.x.getParent();
+        double oldTopHeight = parent.getParent().getHeight();
+        double oldAboveProbability = (oldTopHeight - parent.getHeight()) / (oldTopHeight - oldBranchNode.getHeight());
+        List<Mutation> oldBranchMutations = this.branchMutations.joinBranches(
+                this.mutations.getMutations(parent), this.mutations.getMutations(oldBranchNode), oldBranchNode.getNr()
+        );
+        double logBackwardDensity = this.computeLogMovableTimesDensity(
+                oldBranchMutations, parent.getHeight(), oldTopHeight, oldBranchNode.getHeight(), 1.0 - this.sortingErrorProbability
+        );
+        logForwardDensity += this.drawMovableTimes(oldBranchMutations, parent.getHeight(), oldTopHeight, oldBranchNode.getHeight(), oldAboveProbability);
+
+        // the reverse move explores the neighbourhood of the new attachment point, where it has to find the current one
+
+        this.exploreSorted(newBranchNode, newTopNumDifferences);
+        double logReverseTotalWeight = this.regions.normaliseWeights();
+        Region reverseRegion = this.regions.find(oldBranchNode, parent.getHeight());
+        if (reverseRegion == null) {
+            throw new IllegalStateException("The reverse move cannot find the current attachment point.");
+        }
+        logBackwardDensity += this.computeLogDensity(reverseRegion) - logReverseTotalWeight
+                + this.computeLogMovableTimesDensity(newBranchMutations, newParentHeight, newTopHeight, newBranchNode.getHeight(), newAboveProbability);
+
+        return new GraftingPoint(
+                newBranchNode, newParentHeight, logBackwardDensity - logForwardDensity,
+                this.branchMutations.linkMutations(newBranchMutations), this.branchMutations.linkMutations(oldBranchMutations)
+        );
+    }
+
+    /**
+     * Collects the sorted regions older than X on the branches of the pruned tree that are at
+     * most the exploration radius away from the branch above the given node, which has the
+     * given number of differences at its top, leaving out that branch itself. The numbers of
+     * differences at the tops of the explored branches are recorded.
+     */
+    private void exploreSorted(Node start, int topNumDifferences) {
+        this.startExploration(Integer.MAX_VALUE);
+
+        this.sortedBranchStamps[start.getNr()] = this.explorationStamp;
+        this.sortedTopNumDifferences[start.getNr()] = topNumDifferences;
+        List<Junction> junctions = new ArrayList<>();
+        junctions.add(new Junction(this.getPrunedParent(this.x, start), topNumDifferences, 0));
+        if (start.getHeight() > this.x.getHeight()) {
+            junctions.add(new Junction(start, topNumDifferences + this.sumDifferenceChanges(start), 0));
+        }
+
+        // expand the junctions breadth-first until the radius is reached, where the first expansion of a junction explores all its branches
+
+        for (int next = 0; next < junctions.size(); next++) {
+            Junction junction = junctions.get(next);
+            if (junction.depth() >= this.explorationRadius) {
+                continue;
+            }
+
+            List<Node> children = junction.node().getChildrenMutable();
+            for (int i = 0; i < children.size(); i++) {
+                Node child = this.getPrunedChild(children.get(i));
+                if (this.sortedBranchStamps[child.getNr()] != this.explorationStamp) {
+                    int bottomNumDifferences = this.addSortedRegions(child, junction.numDifferences());
+                    if (child.getHeight() > this.x.getHeight()) {
+                        junctions.add(new Junction(child, bottomNumDifferences, junction.depth() + 1));
+                    }
+                }
+            }
+
+            Node node = junction.node();
+            if (!node.isRoot() && this.sortedBranchStamps[node.getNr()] != this.explorationStamp) {
+                int topOfBranch = junction.numDifferences() - this.sumDifferenceChanges(node);
+                this.addSortedRegions(node, topOfBranch);
+                junctions.add(new Junction(this.getPrunedParent(this.x, node), topOfBranch, junction.depth() + 1));
+            }
+        }
+    }
+
+    /** A node of the pruned tree where branches meet, with its number of differences to X and its number of steps from the start branch. */
+    private record Junction(Node node, int numDifferences, int depth) {
+    }
+
+    /**
+     * Adds the sorted regions older than X on the branch above the given node, which has the
+     * given number of differences at its top, and returns the number of differences at its
+     * bottom. All movable mutations count as lying above the regions.
+     */
+    private int addSortedRegions(Node node, int topNumDifferences) {
+        this.sortedBranchStamps[node.getNr()] = this.explorationStamp;
+        this.sortedTopNumDifferences[node.getNr()] = topNumDifferences;
+
+        List<Mutation> branchMutations = this.getBranchMutations(node);
+        this.countSiteMutations(branchMutations);
+
+        int numDifferences = topNumDifferences;
+        int bottomNumDifferences = topNumDifferences;
+        for (int i = 0; i < branchMutations.size(); i++) {
+            int differenceChange = this.computeDifferenceChange(branchMutations.get(i));
+            bottomNumDifferences += differenceChange;
+            if (this.isMovable(branchMutations.get(i), differenceChange)) {
+                numDifferences += differenceChange;
+            }
+        }
+
+        // the other mutations that change the number of differences bound the regions
+
+        double upperHeight = this.getPrunedParent(this.x, node).getHeight();
+        int index = 0;
+        for (int i = 0; i < branchMutations.size() && upperHeight > this.x.getHeight(); i++) {
+            Mutation mutation = branchMutations.get(i);
+            int differenceChange = this.computeDifferenceChange(mutation);
+            if (differenceChange == 0 || this.isMovable(mutation, differenceChange)) {
+                continue;
+            }
+
+            this.addSortedRegion(node, index, mutation.time(), upperHeight, numDifferences);
+            numDifferences += differenceChange;
+            upperHeight = mutation.time();
+            index = i + 1;
+        }
+        this.addSortedRegion(node, index, node.getHeight(), upperHeight, numDifferences);
+
+        return bottomNumDifferences;
+    }
+
+    private void addSortedRegion(Node node, int index, double lowerHeight, double upperHeight, int numDifferences) {
+        lowerHeight = Math.max(lowerHeight, this.x.getHeight());
+        if (upperHeight > lowerHeight) {
+            this.regions.add(
+                    new Region(node, index, lowerHeight, upperHeight, numDifferences),
+                    this.computeLogWeight(lowerHeight, upperHeight, numDifferences)
+            );
+        }
+    }
+
+    /** Returns the change of the number of differences along the whole branch above the given node. */
+    private int sumDifferenceChanges(Node node) {
+        int sum = 0;
+        for (Mutation mutation : this.getBranchMutations(node)) {
+            sum += this.computeDifferenceChange(mutation);
+        }
+        return sum;
+    }
+
+    /** Counts the mutations of the given branch at each of their sites, which isMovable needs. */
+    private void countSiteMutations(List<Mutation> branchMutations) {
+        if (this.siteStamp == Integer.MAX_VALUE) {
+            Arrays.fill(this.siteStamps, 0);
+            this.siteStamp = 0;
+        }
+        this.siteStamp++;
+
+        for (Mutation mutation : branchMutations) {
+            int site = mutation.site();
+            if (this.siteStamps[site] != this.siteStamp) {
+                this.siteStamps[site] = this.siteStamp;
+                this.siteCounts[site] = 0;
+            }
+            this.siteCounts[site]++;
+        }
+    }
+
+    /** Checks whether the given mutation of the branch whose sites were counted last is movable. */
+    private boolean isMovable(Mutation mutation, int differenceChange) {
+        return differenceChange < 0 && this.siteCounts[mutation.site()] == 1;
+    }
+
+    /**
+     * Draws new times for the movable mutations of the given branch, which runs between the
+     * given heights: above the given split height with the given probability and below it
+     * otherwise, uniformly on either side. Returns the log density of the new times.
+     */
+    private double drawMovableTimes(List<Mutation> branchMutations, double splitHeight, double upperHeight, double lowerHeight, double aboveProbability) {
+        this.countSiteMutations(branchMutations);
+
+        double logDensity = 0.0;
+        for (int i = 0; i < branchMutations.size(); i++) {
+            Mutation mutation = branchMutations.get(i);
+            if (!this.isMovable(mutation, this.computeDifferenceChange(mutation))) {
+                continue;
+            }
+
+            boolean isAbove = Randomizer.nextDouble() < aboveProbability;
+            double time = isAbove
+                    ? splitHeight + Randomizer.nextDouble() * (upperHeight - splitHeight)
+                    : lowerHeight + Randomizer.nextDouble() * (splitHeight - lowerHeight);
+            branchMutations.set(i, this.moveMutation(mutation, time));
+            logDensity += this.computeLogTimeDensity(isAbove, splitHeight, upperHeight, lowerHeight, aboveProbability);
+        }
+        return logDensity;
+    }
+
+    /** Computes the log density with which drawMovableTimes draws the current times of the movable mutations of the given branch. */
+    private double computeLogMovableTimesDensity(List<Mutation> branchMutations, double splitHeight, double upperHeight, double lowerHeight, double aboveProbability) {
+        this.countSiteMutations(branchMutations);
+
+        double logDensity = 0.0;
+        for (Mutation mutation : branchMutations) {
+            if (this.isMovable(mutation, this.computeDifferenceChange(mutation))) {
+                logDensity += this.computeLogTimeDensity(mutation.time() > splitHeight, splitHeight, upperHeight, lowerHeight, aboveProbability);
+            }
+        }
+        return logDensity;
+    }
+
+    private double computeLogTimeDensity(boolean isAbove, double splitHeight, double upperHeight, double lowerHeight, double aboveProbability) {
+        return isAbove
+                ? Math.log(aboveProbability / (upperHeight - splitHeight))
+                : Math.log((1.0 - aboveProbability) / (splitHeight - lowerHeight));
+    }
+
+    /** Returns the given mutation, which is the only one at its site on its branch, at the given time. */
+    private Mutation moveMutation(Mutation mutation, double time) {
+        return new Mutation(mutation.nodeNr(), time, Mutation.BRANCH_START, mutation.site(), mutation.oldState(), mutation.newState());
     }
 
     /* Grafting Density */
