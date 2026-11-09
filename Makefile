@@ -1,4 +1,4 @@
-.PHONY: xmls run stop plots plots_hpc summary
+.PHONY: xmls run stop plots plots_hpc summary delphy
 
 xmls:
 	rm -f data/xmls/*
@@ -18,3 +18,6 @@ plots_hpc:
 
 summary:
 	cd python && uv run -m src.data_pipeline.summary
+
+delphy:                                                                                           
+	bash scripts/run_delphy.sh

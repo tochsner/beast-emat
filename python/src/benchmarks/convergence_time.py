@@ -24,6 +24,7 @@ import pandas as pd
 import seaborn as sns
 from adjustText import adjust_text
 
+from src.data_pipeline.fasta import iterate_records
 from src.data_pipeline.summary import SEED, compute_mean_pairwise_distance
 from src.utils.ess import compute_ess
 
@@ -31,6 +32,7 @@ from src.utils.ess import compute_ess
 REPOSITORY_PATH = Path(__file__).resolve().parents[3]
 OUT_PATH = REPOSITORY_PATH / "data" / "out"
 XMLS_PATH = REPOSITORY_PATH / "data" / "xmls"
+FASTA_PATH = REPOSITORY_PATH / "data" / "fasta"
 PLOTS_PATH = REPOSITORY_PATH / "plots"
 CACHE_PATH = REPOSITORY_PATH / "data" / "cache" / "convergence_time"
 
@@ -39,8 +41,11 @@ SEQUENCE_PATTERN = re.compile(r'<sequence\b[^>]*\bvalue="([^"]*)"')
 TARGET_ESS = 200
 BURNIN_FRACTION = 0.1
 NUM_POINTS = 20
-INCLUDED_METHODS = {"coal_emat", "sbd_emat", "coal_emat_uniform_reform"}
+INCLUDED_METHODS = {"coal_emat", "sbd_emat", "coal_emat_uniform_reform", "coal_delphy"}
 EXCLUDED_EXPERIMENTS = {"sars20000", "wnv", "ncbisc2"}
+
+# Delphy logs name some columns differently than BEAST logs
+DELPHY_COLUMNS = {"state": "Sample", "numMuts": "mutations.count"}
 
 T = TypeVar("T")
 
@@ -149,11 +154,33 @@ def get_seconds_per_sample(log_path: Path, last_sample: int) -> float:
     return elapsed_seconds / last_sample
 
 
-def get_alignment_stats(xml_path: Path) -> dict[str, float]:
-    """Returns the number of sequences and the nucleotide diversity (mean pairwise p-distance) of the alignment in a BEAST XML."""
-    encoded = read_alignment(xml_path)
+def get_alignment_path(method: str, experiment: str) -> Path:
+    """Returns the BEAST XML of a run, or the FASTA of the experiment for methods without an XML (e.g. Delphy)."""
+    xml_path = XMLS_PATH / f"{method}_{experiment}.xml"
+    if xml_path.exists():
+        return xml_path
+    return FASTA_PATH / f"{experiment}.fasta"
+
+
+def get_alignment_stats(alignment_path: Path) -> dict[str, float]:
+    """Returns the number of sequences and the nucleotide diversity (mean pairwise p-distance) of the alignment in a BEAST XML or FASTA file."""
+    if alignment_path.suffix == ".xml":
+        encoded = read_alignment(alignment_path)
+    else:
+        encoded = read_fasta_alignment(alignment_path)
     diversity, _ = compute_mean_pairwise_distance(encoded, np.random.default_rng(SEED))
     return {"num_sequences": len(encoded), "diversity": diversity}
+
+
+def read_fasta_alignment(fasta_path: Path) -> list[np.ndarray]:
+    """Returns the upper-case sequences of a FASTA file, encoded as bytes."""
+    encoded = [
+        np.frombuffer(sequence.upper().encode("ascii"), dtype=np.uint8)
+        for _, sequence in iterate_records(fasta_path)
+    ]
+    if not encoded:
+        raise ValueError(f"no sequences found in {fasta_path}")
+    return encoded
 
 
 def read_alignment(xml_path: Path) -> list[np.ndarray]:
@@ -191,6 +218,9 @@ def load_log(log_path: Path) -> pd.DataFrame | None:
     except (pd.errors.EmptyDataError, pd.errors.ParserError) as error:
         print(f"Skipping unreadable log file: {log_path.name} ({error})")
         return None
+
+    # a trailing tab on each line (as written by Delphy) adds an empty column, which would otherwise drop all rows
+    log_df = log_df.rename(columns=DELPHY_COLUMNS).dropna(axis=1, how="all")
     log_df = log_df.apply(pd.to_numeric, errors="coerce").dropna()
 
     # two merged lines can still have the right number of fields, but then their sample exceeds the next one
@@ -587,7 +617,7 @@ def analyse_method(method: str, log_paths: dict[tuple[str, int], Path]) -> None:
     for experiment in sorted({experiment for experiment, _ in log_results}):
         try:
             alignment_stats[experiment] = get_cached(
-                XMLS_PATH / f"{method}_{experiment}.xml", get_alignment_stats
+                get_alignment_path(method, experiment), get_alignment_stats
             )
         except (ValueError, OSError) as error:
             print(f"Skipping experiment {method}_{experiment}: {error}")
