@@ -2,6 +2,8 @@
 
 import calendar
 import csv
+import datetime
+import random
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +13,7 @@ DATE_PATTERN = re.compile(r"^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?$")
 
 @dataclass(frozen=True)
 class Taxon:
-    """A sequence record, with the full FASTA header as its name."""
+    """A sequence record, with the full FASTA header as its name and a full date imputed from its raw date."""
 
     name: str
     raw_date: str
@@ -19,24 +21,44 @@ class Taxon:
     sequence: str
 
 
-def normalise_date(raw_date):
-    """Returns the date as YYYY-MM-DD, filling a missing month or day with the first one."""
+def parse_date_bounds(raw_date):
+    """Returns the first and last day covered by a date of the form YYYY, YYYY-MM or YYYY-MM-DD."""
     match = DATE_PATTERN.match(raw_date)
     if not match:
         raise ValueError(f"unparseable date '{raw_date}'")
     year, month, day = int(match[1]), int(match[2] or 1), int(match[3] or 1)
     if not 1 <= month <= 12 or not 1 <= day <= calendar.monthrange(year, month)[1]:
         raise ValueError(f"invalid date '{raw_date}'")
-    return f"{year:04d}-{month:02d}-{day:02d}"
+
+    if match[2] is None:
+        return datetime.date(year, 1, 1), datetime.date(year, 12, 31)
+    if match[3] is None:
+        return datetime.date(year, month, 1), datetime.date(year, month, calendar.monthrange(year, month)[1])
+    return datetime.date(year, month, day), datetime.date(year, month, day)
+
+
+def normalise_date(raw_date):
+    """Returns the date as YYYY-MM-DD, filling a missing month or day with the first one."""
+    return parse_date_bounds(raw_date)[0].isoformat()
+
+
+def impute_date(raw_date, name):
+    """Returns the date as YYYY-MM-DD, drawing a missing month or day uniformly from the days the date covers.
+
+    The draw is seeded by the taxon name, so that it is reproducible and does not depend on the other taxa.
+    """
+    first, last = parse_date_bounds(raw_date)
+    rng = random.Random(name)
+    return (first + datetime.timedelta(days=rng.randint(0, (last - first).days))).isoformat()
 
 
 def parse_header(header):
-    """Returns the (name, raw date, normalised date) of a `name|date` header."""
+    """Returns the (name, raw date, imputed date) of a `name|date` header."""
     if "|" not in header:
         raise ValueError(f"header '{header}' has no '|date' suffix")
     raw_date = header.rsplit("|", 1)[1]
     try:
-        return header, raw_date, normalise_date(raw_date)
+        return header, raw_date, impute_date(raw_date, header)
     except ValueError as error:
         raise ValueError(f"header '{header}': {error}") from error
 
@@ -121,12 +143,13 @@ def find_raw_date(sequence_id, dates):
 
 
 def look_up_date(sequence_id, dates):
-    """Returns the (name, raw date, normalised date) of a sequence id that is in the metadata."""
+    """Returns the (name, raw date, imputed date) of a sequence id that is in the metadata."""
     raw_date = find_raw_date(sequence_id, dates)
     if not raw_date:
         raise ValueError(f"no date in the metadata for sequence '{sequence_id}'")
+    name = f"{sequence_id}|{raw_date}"
     try:
-        return f"{sequence_id}|{raw_date}", raw_date, normalise_date(raw_date)
+        return name, raw_date, impute_date(raw_date, name)
     except ValueError as error:
         raise ValueError(f"sequence '{sequence_id}': {error}") from error
 
