@@ -4,23 +4,23 @@ This project adds an implementation of Explicitly Annotated Mutation Trees (EMAT
 
 ## Preliminary Convergence Time
 
-Running time until an ESS of at least 200 is reached on all parameters, for datasets of increasing size.
+Running time until an ESS of at least 200 is reached on all parameters. Median for five different seeds.
 
 
 | Dataset                   | Sequences | Nucleotide diversity (π) | Missing fraction | Runtime   |
 | ------------------------- | ---------: | ------------------------: | ----------------: | ---------: |
 | Zika                      | 174       | 0.0036                   | 0.1778           | 12min     |
-| RSV A                     | 215       | 0.0127                   | 0.0303           | 27min     |
-| RSV B                     | 390       | 0.0082                   | 0.0323           | 31min     |
-| Adenovirus B1             | 735       | 0.0684                   | 0.0799           | 17h 49min |
-| HMPV                      | 986       | 0.1135                   | 0.3275           | \~19d     |
-| Ebola                     | 1610      | 0.0009                   | 0.0162           | 1h 16min  |
-| Influenza A (H1N1)        | 3746      | 0.0185                   | 0.0006           | 7h 38min  |
-| Influenza A (H3N2)        | 4036      | 0.0115                   | 0.0186           | 6h 36min  |
-| SARS-CoV-2 (2020, COG-UK) | 757       | 0.0002                   | 0.0181           | 13min     |
-| SARS-CoV-2 (2020, COG-UK) | 5000      | 0.0003                   | 0.0134           | 6h 31min  |
-| SARS-CoV-2 (2020, COG-UK) | 10000     | 0.0003                   | 0.0135           | 28h 23min |
-| SARS-CoV-2 (2024 - 2026)  | 5800      | 0.0012                   | 0.0480           | \~5d      |
+| RSV A                     | 215       | 0.0127                   | 0.0303           | 6min     |
+| RSV B                     | 390       | 0.0082                   | 0.0323           | 38min     |
+| Adenovirus B1             | 735       | 0.0684                   | 0.0799           | 9h 33min |
+| HMPV                      | 986       | 0.1135                   | 0.3275           | \~3d     |
+| Ebola                     | 1610      | 0.0009                   | 0.0162           | 53min  |
+| Influenza A (H1N1)        | 3746      | 0.0185                   | 0.0006           | 3h 39min  |
+| Influenza A (H3N2)        | 4036      | 0.0115                   | 0.0186           | 4h 31min  |
+| SARS-CoV-2 (2020, COG-UK) | 757       | 0.0002                   | 0.0181           | 12min     |
+| SARS-CoV-2 (2020, COG-UK) | 5000      | 0.0003                   | 0.0134           | 4h 43min  |
+| SARS-CoV-2 (2024 - 2026)  | 5800      | 0.0012                   | 0.0480           | 19h 32min |
+| SARS-CoV-2 (2020, COG-UK) | 10000     | 0.0003                   | 0.0135           | 23h 44min |
 
 
 ## Package Overview
