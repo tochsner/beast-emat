@@ -75,7 +75,7 @@ public class Mutations extends StateNode {
      */
     public void applyMutations(Node node, List<Mutation> mutations, Operator operator) {
         this.startEditing(operator);
-        this.mutationsAboveNode[node.getNr()] = List.copyOf(mutations);
+        this.mutationsAboveNode[node.getNr()] = Collections.unmodifiableList(mutations);
         this.markBranchDirty(node.getNr());
 
         // perform sanity checks from time to time
