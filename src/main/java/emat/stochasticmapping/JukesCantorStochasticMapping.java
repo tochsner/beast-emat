@@ -6,7 +6,6 @@ import emat.state.Mutation;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.List;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
@@ -20,6 +19,8 @@ import java.util.function.IntUnaryOperator;
  * match the real model, since the genetic prior corrects for it in the acceptance probability.
  * Single sites are mapped with the rate μ̃ = s μ̄ on a branch with rate scale s, where μ̄ is
  * the average escape rate of the rate matrix Q, which does not depend on the end states.
+ * The jump times of all sites on a branch are drawn in increasing order (see
+ * {@link BranchJumpChains}), so the mutations of the branch need no sorting.
  */
 public class JukesCantorStochasticMapping implements StochasticMapping, BranchHistorySampler {
 
@@ -31,6 +32,9 @@ public class JukesCantorStochasticMapping implements StochasticMapping, BranchHi
 
     final int numStates;
     final int numSites;
+
+    // collects the jump chains of all sites on a branch before their times are drawn
+    private final BranchJumpChains branchJumpChains = new BranchJumpChains();
 
     // the average escape rate μ̄ of the rate matrix Q set last
     double meanEscapeRate = Double.NaN;
@@ -149,15 +153,16 @@ public class JukesCantorStochasticMapping implements StochasticMapping, BranchHi
             int endState = differingSites.getEndState(slot);
 
             int[] states = this.sampleJumpStates(expectedJumps, 1, startState, endState);
-            this.addSiteMutations(branchMutations, nodeNr, differingSites.getSite(slot), branchStartHeight, duration, states);
+            this.branchJumpChains.addChain(differingSites.getSite(slot), states);
         }
 
         // map all sites whose end states agree at once (Algorithm 1)
 
-        this.sampleAgreeingSiteHistories(branchMutations, nodeNr, branchStartHeight, duration, expectedJumps,
-                differingSites, agreeingStates);
+        this.sampleAgreeingSiteHistories(expectedJumps, differingSites, agreeingStates);
 
-        branchMutations.sort(Comparator.comparingDouble(Mutation::time).reversed());
+        // draw the jump times of all sites at once
+
+        this.branchJumpChains.addMutations(branchMutations, nodeNr, branchStartHeight, duration);
         return branchMutations;
     }
 
@@ -320,8 +325,7 @@ public class JukesCantorStochasticMapping implements StochasticMapping, BranchHi
      * The number of sites that trivially stay empty is drawn from Geom(1 - p*), and only the
      * site after them is sampled in detail. On rejection, the sampling restarts at that site.
      */
-    private void sampleAgreeingSiteHistories(List<Mutation> branchMutations, int nodeNr, double branchStartHeight, double duration,
-                                             double expectedJumps, SiteChanges differingSites, IntUnaryOperator agreeingStates) {
+    private void sampleAgreeingSiteHistories(double expectedJumps, SiteChanges differingSites, IntUnaryOperator agreeingStates) {
         // 1 - p* = P(n ≥ 2) / (1 - p1), computed without cancellation for short branches
 
         double multipleJumpsProbability = this.computePoissonTailProbability(expectedJumps, 2);
@@ -372,7 +376,7 @@ public class JukesCantorStochasticMapping implements StochasticMapping, BranchHi
                 states[i] = (states[i] + state) % this.numStates;
             }
 
-            this.addSiteMutations(branchMutations, nodeNr, siteIndex, branchStartHeight, duration, states);
+            this.branchJumpChains.addChain(siteIndex, states);
             site++;
         }
     }
@@ -415,7 +419,7 @@ public class JukesCantorStochasticMapping implements StochasticMapping, BranchHi
      * Adds the mutations of the given jump chain at the given site, with jump times drawn
      * uniformly on the branch.
      */
-    private void addSiteMutations(List<Mutation> branchMutations, int nodeNr, int site, double branchStartHeight,
+    private void addSiteMutations(List<Mutation> siteMutations, int nodeNr, int site, double branchStartHeight,
                                   double duration, int[] states) {
         int numJumps = states.length - 1;
 
@@ -428,7 +432,7 @@ public class JukesCantorStochasticMapping implements StochasticMapping, BranchHi
         double previousHeight = Mutation.BRANCH_START;
         for (int i = 0; i < numJumps; i++) {
             double height = branchStartHeight - jumpTimes[i];
-            branchMutations.add(new Mutation(nodeNr, height, previousHeight, site, states[i], states[i + 1]));
+            siteMutations.add(new Mutation(nodeNr, height, previousHeight, site, states[i], states[i + 1]));
             previousHeight = height;
         }
     }

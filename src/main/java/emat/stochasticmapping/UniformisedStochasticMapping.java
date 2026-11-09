@@ -74,11 +74,39 @@ public class UniformisedStochasticMapping implements StochasticMapping {
             return siteMutations;
         }
 
-        // sample the number of jumps n with P(n | start, end) ∝ Poisson(n; μ* t) (B^n)_{start, end}
+        int numJumps = this.sampleNumJumps(startState, endState, maxEscapeRate * duration, endProbability);
+        if (numJumps == 0) {
+            return siteMutations;
+        }
 
+        return this.sampleJumps(nodeNr, site, branchStartHeight, branchEndHeight, startState, endState, numJumps);
+    }
+
+    /**
+     * Samples the uniformised jump chain of a site from its exact conditional distribution
+     * under R = s Q given the states at both ends, like sampleSiteHistory, but without the jump
+     * times. The returned array holds the start state followed by the state after every
+     * uniformised jump, including the jumps that stay in the same state. Given its length, the
+     * times of its jumps are independent and uniform on the branch.
+     */
+    public int[] sampleJumpChain(int startState, int endState, double duration, double rateScale, double endProbability) {
+        double maxEscapeRate = rateScale * this.uniformisationRate;
+        if (duration <= 0.0 || maxEscapeRate == 0.0) {
+            return new int[]{startState};
+        }
+
+        int numJumps = this.sampleNumJumps(startState, endState, maxEscapeRate * duration, endProbability);
+        return this.sampleJumpStates(startState, endState, numJumps);
+    }
+
+    /**
+     * Samples the number of uniformised jumps n with P(n | start, end) ∝ Poisson(n; μ* t) (B^n)_{start, end},
+     * where the end probability is the normalising constant.
+     */
+    private int sampleNumJumps(int startState, int endState, double expectedJumps, double endProbability) {
         double threshold = Randomizer.nextDouble() * endProbability;
 
-        double poissonProbability = Math.exp(-maxEscapeRate * duration);
+        double poissonProbability = Math.exp(-expectedJumps);
         double cumulativeProbability = startState == endState ? poissonProbability : 0.0;
         int numJumps = 0;
 
@@ -88,15 +116,11 @@ public class UniformisedStochasticMapping implements StochasticMapping {
                 throw new RuntimeException("Could not sample the number of jumps on a branch of the site history.");
             }
 
-            poissonProbability *= maxEscapeRate * duration / numJumps;
+            poissonProbability *= expectedJumps / numJumps;
             cumulativeProbability += poissonProbability * this.getJumpMatrixPower(numJumps)[startState * this.numStates + endState];
         }
 
-        if (numJumps == 0) {
-            return siteMutations;
-        }
-
-        return this.sampleJumps(nodeNr, site, branchStartHeight, branchEndHeight, startState, endState, numJumps);
+        return numJumps;
     }
 
     /** Returns the uniformisation rate μ* of Q, before the scaling of a branch. */
@@ -129,22 +153,30 @@ public class UniformisedStochasticMapping implements StochasticMapping {
     }
 
     /**
-     * Samples the history of the given site exactly from its conditional distribution under
-     * R = s Q, given that it starts and ends in the given state and has at least one mutation.
-     * The non-empty probability is the probability of returning to the state with at least one
-     * mutation, P_ii(t) - exp(R_ii t). A uniformised path is empty if all its jumps stay in the
-     * state, which has probability B_ii^n for n jumps, so the number of jumps is drawn with
-     * P(n) ∝ Poisson(n; μ* t) ((B^n)_ii - B_ii^n), and the states of the jumps exclude the path
-     * that never leaves the state.
+     * Samples the uniformised jump chain of a site exactly from its conditional distribution
+     * under R = s Q, given that it starts and ends in the given state and has at least one
+     * mutation. The non-empty probability is the probability of returning to the state with at
+     * least one mutation, P_ii(t) - exp(R_ii t). A uniformised path is empty if all its jumps
+     * stay in the state, which has probability B_ii^n for n jumps, so the number of jumps is
+     * drawn with P(n) ∝ Poisson(n; μ* t) ((B^n)_ii - B_ii^n), and the states of the jumps
+     * exclude the path that never leaves the state. The returned array holds the start state
+     * followed by the state after every uniformised jump, including the jumps that stay in the
+     * same state. Given its length, the times of its jumps are independent and uniform on the
+     * branch.
      */
-    public List<Mutation> sampleNonEmptySameStateHistory(int nodeNr, int site, double branchStartHeight, double branchEndHeight,
-                                                         int state, double rateScale, double nonEmptyProbability) {
-        double duration = branchStartHeight - branchEndHeight;
-        double expectedJumps = rateScale * this.uniformisationRate * duration;
+    public int[] sampleNonEmptySameStateChain(int state, double duration, double rateScale, double nonEmptyProbability) {
+        int numJumps = this.sampleNonEmptyNumJumps(state, rateScale * this.uniformisationRate * duration, nonEmptyProbability);
+        return this.sampleNonEmptyJumpStates(state, numJumps);
+    }
+
+    /**
+     * Samples the number of uniformised jumps of a non-empty history that starts and ends in the
+     * given state, with P(n) ∝ Poisson(n; μ* t) ((B^n)_ii - B_ii^n). At least two jumps are
+     * needed to leave and return.
+     */
+    private int sampleNonEmptyNumJumps(int state, double expectedJumps, double nonEmptyProbability) {
         int diagonal = state * this.numStates + state;
         double selfJumpProbability = this.jumpMatrix[diagonal];
-
-        // sample the number of uniformised jumps, of which at least two are needed to leave and return
 
         double threshold = Randomizer.nextDouble() * nonEmptyProbability;
         double poissonProbability = Math.exp(-expectedJumps);
@@ -162,18 +194,22 @@ public class UniformisedStochasticMapping implements StochasticMapping {
                     * Math.max(this.getJumpMatrixPower(numJumps)[diagonal] - Math.pow(selfJumpProbability, numJumps), 0.0);
         }
 
-        double[] jumpTimes = new double[numJumps];
-        for (int i = 0; i < numJumps; i++) {
-            jumpTimes[i] = Randomizer.nextDouble() * duration;
-        }
-        Arrays.sort(jumpTimes);
+        return numJumps;
+    }
 
-        // sample the state after every jump; until the first mutation, the path is still in the state and must not stay there
+    /**
+     * Samples the state after every one of the given number of uniformised jumps of a path that
+     * starts and ends in the given state and leaves it at least once. Until the first mutation,
+     * the path is still in the state and must not stay there. The returned array holds the
+     * start state followed by the state after every jump.
+     */
+    private int[] sampleNonEmptyJumpStates(int state, int numJumps) {
+        int diagonal = state * this.numStates + state;
+        double selfJumpProbability = this.jumpMatrix[diagonal];
 
-        List<Mutation> siteMutations = new ArrayList<>();
-        int currentState = state;
+        int[] states = new int[numJumps + 1];
+        states[0] = state;
         boolean hasMutated = false;
-        double previousHeight = Mutation.BRANCH_START;
         double[] weights = new double[this.numStates];
 
         for (int i = 0; i < numJumps; i++) {
@@ -184,20 +220,13 @@ public class UniformisedStochasticMapping implements StochasticMapping {
                 if (!hasMutated && nextState == state) {
                     reachProbability = Math.max(reachProbability - Math.pow(selfJumpProbability, remainingJumps), 0.0);
                 }
-                weights[nextState] = this.jumpMatrix[currentState * this.numStates + nextState] * reachProbability;
+                weights[nextState] = this.jumpMatrix[states[i] * this.numStates + nextState] * reachProbability;
             }
-            int nextState = StochasticMapping.sampleIndex(weights);
-
-            if (nextState != currentState) {
-                double height = branchStartHeight - jumpTimes[i];
-                siteMutations.add(new Mutation(nodeNr, height, previousHeight, site, currentState, nextState));
-                previousHeight = height;
-                currentState = nextState;
-                hasMutated = true;
-            }
+            states[i + 1] = StochasticMapping.sampleIndex(weights);
+            hasMutated |= states[i + 1] != states[i];
         }
 
-        return siteMutations;
+        return states;
     }
 
     /**
@@ -208,7 +237,6 @@ public class UniformisedStochasticMapping implements StochasticMapping {
     private List<Mutation> sampleJumps(int nodeNr, int site, double branchStartHeight, double branchEndHeight,
                                        int startState, int endState, int numJumps) {
         double duration = branchStartHeight - branchEndHeight;
-        List<Mutation> siteMutations = new ArrayList<>();
 
         // sample the jump times forwards from the branch start
 
@@ -220,27 +248,41 @@ public class UniformisedStochasticMapping implements StochasticMapping {
 
         // sample the state after every jump, conditional on reaching the end state, and keep the real jumps
 
-        int state = startState;
+        int[] states = this.sampleJumpStates(startState, endState, numJumps);
+
+        List<Mutation> siteMutations = new ArrayList<>();
         double previousHeight = Mutation.BRANCH_START;
+        for (int i = 0; i < numJumps; i++) {
+            if (states[i + 1] != states[i]) {
+                double height = branchStartHeight - jumpTimes[i];
+                siteMutations.add(new Mutation(nodeNr, height, previousHeight, site, states[i], states[i + 1]));
+                previousHeight = height;
+            }
+        }
+
+        return siteMutations;
+    }
+
+    /**
+     * Samples the state after every one of the given number of uniformised jumps, conditional on
+     * reaching the end state. The returned array holds the start state followed by the state
+     * after every jump.
+     */
+    private int[] sampleJumpStates(int startState, int endState, int numJumps) {
+        int[] states = new int[numJumps + 1];
+        states[0] = startState;
         double[] weights = new double[this.numStates];
 
         for (int i = 0; i < numJumps; i++) {
             double[] remainingPower = this.getJumpMatrixPower(numJumps - i - 1);
             for (int nextState = 0; nextState < this.numStates; nextState++) {
-                weights[nextState] = this.jumpMatrix[state * this.numStates + nextState]
+                weights[nextState] = this.jumpMatrix[states[i] * this.numStates + nextState]
                         * remainingPower[nextState * this.numStates + endState];
             }
-            int nextState = StochasticMapping.sampleIndex(weights);
-
-            if (nextState != state) {
-                double height = branchStartHeight - jumpTimes[i];
-                siteMutations.add(new Mutation(nodeNr, height, previousHeight, site, state, nextState));
-                previousHeight = height;
-                state = nextState;
-            }
+            states[i + 1] = StochasticMapping.sampleIndex(weights);
         }
 
-        return siteMutations;
+        return states;
     }
 
     /**

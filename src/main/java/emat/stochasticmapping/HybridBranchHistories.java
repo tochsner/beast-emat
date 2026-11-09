@@ -19,7 +19,9 @@ import java.util.function.IntUnaryOperator;
  * distribution given its end states and, for an agreeing site, that it is not empty. As r does
  * not depend on the states, the agreeing sites are chosen by geometric skipping, so the cost
  * grows with the number of mutations rather than with the genome length. The Jukes-Cantor rate
- * is not used.
+ * is not used. The uniformised jump chains of all chosen sites are drawn first, and their jump
+ * times are then drawn in increasing order (see {@link BranchJumpChains}), so the mutations of
+ * the branch need no sorting.
  */
 public class HybridBranchHistories implements BranchHistorySampler {
 
@@ -30,6 +32,9 @@ public class HybridBranchHistories implements BranchHistorySampler {
 
     // reusable transition probabilities exp(s Q t) of the branch of the current call
     private final double[] transitionProbabilities;
+
+    // collects the jump chains of all chosen sites on a branch before their times are drawn
+    private final BranchJumpChains branchJumpChains = new BranchJumpChains();
 
     public HybridBranchHistories(SubstitutionProcess process, int numSites) {
         this.process = process;
@@ -55,12 +60,11 @@ public class HybridBranchHistories implements BranchHistorySampler {
         // the differing sites always receive mutations
 
         for (int slot = 0; slot < differingSites.getSize(); slot++) {
+            int site = differingSites.getSite(slot);
             int startState = differingSites.getStartState(slot);
             int endState = differingSites.getEndState(slot);
-            branchMutations.addAll(this.siteMapping.sampleSiteHistory(
-                    nodeNr, differingSites.getSite(slot), branchStartHeight, branchEndHeight, startState, endState, rateScale,
-                    this.transitionProbabilities[startState * this.numStates + endState]
-            ));
+            double endProbability = this.transitionProbabilities[startState * this.numStates + endState];
+            this.branchJumpChains.addChain(site, this.siteMapping.sampleJumpChain(startState, endState, duration, rateScale, endProbability));
         }
 
         // choose the agreeing sites by skipping over the ones that stay empty
@@ -79,16 +83,17 @@ public class HybridBranchHistories implements BranchHistorySampler {
                 int siteIndex = (int) site;
                 if (!differingSites.containsSite(siteIndex)) {
                     int state = agreeingStates.applyAsInt(siteIndex);
-                    branchMutations.addAll(this.siteMapping.sampleNonEmptySameStateHistory(
-                            nodeNr, siteIndex, branchStartHeight, branchEndHeight, state, rateScale,
-                            this.computeNonEmptyProbability(state, duration, rateScale)
-                    ));
+                    double nonEmptyProbability = this.computeNonEmptyProbability(state, duration, rateScale);
+                    this.branchJumpChains.addChain(siteIndex, this.siteMapping.sampleNonEmptySameStateChain(
+                            state, duration, rateScale, nonEmptyProbability));
                 }
                 site++;
             }
         }
 
-        branchMutations.sort(Comparator.comparingDouble(Mutation::time).reversed());
+        // draw the jump times of all chosen sites at once
+
+        this.branchJumpChains.addMutations(branchMutations, nodeNr, branchStartHeight, duration);
         return branchMutations;
     }
 
