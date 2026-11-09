@@ -1,4 +1,4 @@
-package emat.operators.mutations;
+package emat.operators.categories;
 
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
@@ -58,13 +58,12 @@ public class SiteCategoryPosterior {
     }
 
     /**
-     * Collects the statistics of every site from the tree and the mutations, and computes the
-     * posterior of the sites without mutations under the given proportions of the categories.
-     * The process has to be updated before, as the rates are read from it.
+     * Sets the proportions of the categories, and computes the posterior of the sites without
+     * mutations under them. The statistics have to be collected before, and the process has to be
+     * updated, as the category rates are read from it.
      */
-    public void update(double[] categoryProportions) {
+    public void setCategoryProportions(double[] categoryProportions) {
         System.arraycopy(categoryProportions, 0, this.categoryProportions, 0, this.numCategories);
-        this.collectSiteStatistics();
         this.computeInvariantPosteriors();
     }
 
@@ -98,15 +97,17 @@ public class SiteCategoryPosterior {
     /* Site Statistics */
 
     /**
-     * Computes for every site the number of its mutations on the non-root branches and the
+     * Collects for every site the number of its mutations on the non-root branches and the
      * rate-weighted time L of its escape rates. The escape rate of a state is the one of the
      * unscaled rate matrix. With the states x_s(t) of a site, L is the integral over the tree of
      * the escape rate of x_s(t), weighted by the branch rates. It starts at the root state
      * times the total weighted length, and every non-root mutation changes the escape rate for
      * the part of the tree below it, which is the weighted length of its branch below the
-     * mutation plus the weighted length below the branch.
+     * mutation plus the weighted length below the branch. The statistics do not depend on the
+     * shape or the categories, so they only have to be collected once per change of the tree or
+     * the histories. The process has to be updated before, as the rate matrix is read from it.
      */
-    private void collectSiteStatistics() {
+    public void collectSiteStatistics() {
         Node root = this.tree.getRoot();
         double[] subtreeLengths = this.computeSubtreeLengths();
         this.computeRootStates();

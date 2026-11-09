@@ -1,4 +1,4 @@
-package emat.operators.mutations;
+package emat.operators.categories;
 
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;

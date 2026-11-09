@@ -1,14 +1,14 @@
-package emat.operators.mutations;
+package emat.operators.categories;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.inference.Operator;
 import beast.base.spec.domain.PositiveReal;
-import beast.base.spec.inference.parameter.IntVectorParam;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.util.Randomizer;
 import emat.prior.GeneticPrior;
+import emat.prior.SiteRateCategories;
 import emat.state.Mutations;
 import emat.stochasticmapping.StochasticMapping;
 import emat.stochasticmapping.SubstitutionProcess;
@@ -30,7 +30,7 @@ public class GammaShapeCategoryOperator extends Operator {
     TreeInterface tree;
     GeneticPrior geneticPrior;
     RealScalarParam<PositiveReal> shape;
-    IntVectorParam<?> siteRateCategories;
+    SiteRateCategories siteRateCategories;
     SubstitutionProcess process;
     SiteCategoryPosterior posterior;
     double scaleFactor;
@@ -47,7 +47,7 @@ public class GammaShapeCategoryOperator extends Operator {
         this.geneticPrior = this.geneticPriorInput.get();
         this.shape = this.shapeInput.get();
         this.siteRateCategories = this.geneticPrior.getSiteRateCategories();
-        if (this.siteRateCategories == null) {
+        if (!this.siteRateCategories.hasParameter()) {
             throw new IllegalArgumentException("The genetic prior has no siteRateCategories to redraw.");
         }
         this.scaleFactor = this.scaleFactorInput.get();
@@ -74,6 +74,11 @@ public class GammaShapeCategoryOperator extends Operator {
             return Double.NEGATIVE_INFINITY;
         }
 
+        // collect the statistics of the sites, which do not depend on the shape, once for both shapes
+
+        this.process.update();
+        this.posterior.collectSiteStatistics();
+
         double logOldCategoryProbability = this.computeLogCurrentCategoryProbability();
 
         this.shape.set(newShape);
@@ -87,11 +92,11 @@ public class GammaShapeCategoryOperator extends Operator {
      * the current shape.
      */
     private double computeLogCurrentCategoryProbability() {
-        this.updatePosterior();
+        this.updateProportions();
 
         double logProbability = 0.0;
         for (int site = 0; site < this.numSites; site++) {
-            logProbability += this.posterior.computeLogProbability(site, this.siteRateCategories.get(site));
+            logProbability += this.posterior.computeLogProbability(site, this.siteRateCategories.getStateCategory(site));
         }
         return logProbability;
     }
@@ -101,29 +106,25 @@ public class GammaShapeCategoryOperator extends Operator {
      * and returns the log probability of the drawn categories.
      */
     private double drawCategories() {
-        this.updatePosterior();
+        this.updateProportions();
 
         double logProbability = 0.0;
-        boolean isChanged = false;
         for (int site = 0; site < this.numSites; site++) {
             this.posterior.computeProbabilities(site, this.categoryProbabilities);
             int category = StochasticMapping.sampleIndex(this.categoryProbabilities);
-            if (category != this.siteRateCategories.get(site)) {
-                this.siteRateCategories.set(site, category);
-                isChanged = true;
-            }
+            this.siteRateCategories.setStateCategory(site, category);
             logProbability += this.posterior.computeLogProbability(site, category);
         }
-        if (isChanged) {
-            this.geneticPrior.markSiteCategoriesChanged();
-        }
+
+        // the categories of all sites are drawn together, so they are marked as redrawn as a whole
+        this.siteRateCategories.markRedrawn();
         return logProbability;
     }
 
-    /** Updates the rates of the process and the posterior of the sites under the current shape. */
-    private void updatePosterior() {
+    /** Updates the rates of the process and the category proportions of the posterior under the current shape. */
+    private void updateProportions() {
         this.process.update();
-        this.posterior.update(this.geneticPrior.siteModel.getCategoryProportions(this.tree.getRoot()));
+        this.posterior.setCategoryProportions(this.geneticPrior.siteModel.getCategoryProportions(this.tree.getRoot()));
     }
 
 }

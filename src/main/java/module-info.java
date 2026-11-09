@@ -16,7 +16,7 @@ import emat.operators.nodetimes.InnerNodeDisplacementOperator;
 import emat.operators.nodetimes.batch.BatchNodeDisplacementOperator;
 import emat.operators.mutations.SiteHistoryGibbsOperator;
 import emat.operators.mutations.MissingCladeGibbsOperator;
-import emat.operators.mutations.GammaShapeCategoryOperator;
+import emat.operators.categories.GammaShapeCategoryOperator;
 import emat.operators.nodetimes.RootScaleOperator;
 import emat.operators.nodetimes.RatioScaleOperator;
 import emat.operators.nodetimes.RootRatioScaleOperator;
@@ -48,6 +48,7 @@ open module my.beast.example {
     exports emat.benchmark;
     exports emat.prior;
     exports emat.operators.mutations;
+    exports emat.operators.categories;
     exports emat.operators.nodetimes;
     exports emat.operators.nodetimes.batch;
     exports emat.operators.nodetimes.warp;

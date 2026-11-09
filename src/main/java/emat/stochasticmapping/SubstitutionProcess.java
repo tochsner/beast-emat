@@ -3,9 +3,9 @@ package emat.stochasticmapping;
 import beast.base.evolution.substitutionmodel.EigenDecomposition;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
-import beast.base.spec.inference.parameter.IntVectorParam;
 import beast.base.util.Randomizer;
 import emat.prior.GeneticPrior;
+import emat.prior.SiteRateCategories;
 
 import java.util.Arrays;
 
@@ -30,9 +30,10 @@ public final class SubstitutionProcess {
     private double[] frequencies;
     private double maxEscapeRate;
 
-    // the category of every site as of the last update, and the sites of every category in increasing order
-    private final int[] siteCategories;
-    private long comparedSiteCategoriesVersion = -1;
+    // the categories of the sites, which the genetic prior snapshots, and the sites of every category in increasing order
+    private final SiteRateCategories siteRateCategories;
+    private final int numSites;
+    private long comparedGeneration = -1;
     private boolean isSitesOfCategoryStale = true;
     private int[][] sitesOfCategory;
 
@@ -42,7 +43,8 @@ public final class SubstitutionProcess {
         this.numStates = numStates;
         this.numCategories = geneticPrior.getNumCategories();
         this.categoryRates = new double[this.numCategories];
-        this.siteCategories = new int[geneticPrior.getNumSites()];
+        this.numSites = geneticPrior.getNumSites();
+        this.siteRateCategories = geneticPrior.getSiteRateCategories();
     }
 
     /**
@@ -70,27 +72,14 @@ public final class SubstitutionProcess {
         }
         this.frequencies = this.geneticPrior.substitutionModel.getFrequencies();
 
-        this.updateSiteCategories();
+        this.updateSitesOfCategory();
     }
 
-    /** Copies the categories of the sites from the prior, and rebuilds the sites of every category if any of them changed. */
-    private void updateSiteCategories() {
-        IntVectorParam<?> categories = this.geneticPrior.getSiteRateCategories();
-        if (categories == null || this.comparedSiteCategoriesVersion == this.geneticPrior.getSiteCategoriesVersion()) {
-            return;
-        }
-        this.comparedSiteCategoriesVersion = this.geneticPrior.getSiteCategoriesVersion();
-
-        boolean isChanged = false;
-        for (int site = 0; site < this.siteCategories.length; site++) {
-            int category = categories.get(site);
-            if (category != this.siteCategories[site]) {
-                this.siteCategories[site] = category;
-                isChanged = true;
-            }
-        }
-
-        if (isChanged) {
+    /** Marks the sites of every category as stale if the snapshot of the categories changed since the last update. */
+    private void updateSitesOfCategory() {
+        long generation = this.siteRateCategories.getGeneration();
+        if (this.comparedGeneration != generation) {
+            this.comparedGeneration = generation;
             this.isSitesOfCategoryStale = true;
         }
     }
@@ -99,8 +88,8 @@ public final class SubstitutionProcess {
     private void rebuildSitesOfCategory() {
         this.isSitesOfCategoryStale = false;
         int[] counts = new int[this.numCategories];
-        for (int category : this.siteCategories) {
-            counts[category]++;
+        for (int site = 0; site < this.numSites; site++) {
+            counts[this.siteRateCategories.getCategory(site)]++;
         }
 
         this.sitesOfCategory = new int[this.numCategories][];
@@ -109,8 +98,8 @@ public final class SubstitutionProcess {
         }
 
         int[] fillCounts = new int[this.numCategories];
-        for (int site = 0; site < this.siteCategories.length; site++) {
-            int category = this.siteCategories[site];
+        for (int site = 0; site < this.numSites; site++) {
+            int category = this.siteRateCategories.getCategory(site);
             this.sitesOfCategory[category][fillCounts[category]++] = site;
         }
     }
@@ -123,9 +112,9 @@ public final class SubstitutionProcess {
         return this.numCategories;
     }
 
-    /** Returns the category of the given site as of the last update. */
+    /** Returns the category of the given site in the snapshot of the genetic prior, as of its last calculation. */
     public int getCategory(int site) {
-        return this.siteCategories[site];
+        return this.siteRateCategories.getCategory(site);
     }
 
     /** Returns the sites of the given category in increasing order as of the last update. */
@@ -153,11 +142,6 @@ public final class SubstitutionProcess {
     /** Returns the branch rate above the given node, which scales every category alike. */
     public double getBranchRate(Node node) {
         return this.geneticPrior.branchRateModel.getRateForBranch(node);
-    }
-
-    /** Returns the scale of Q on the branch above the given node for sites of the given category: the branch rate times the category rate. */
-    public double getRateScale(Node node, int category) {
-        return this.getBranchRate(node) * this.categoryRates[category];
     }
 
     /**

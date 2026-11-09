@@ -238,16 +238,8 @@ public class SiteHistorySampler {
      * descending height. The region must be the whole tree, as set by updateModel.
      */
     public List<List<Mutation>> sampleSiteHistory(int site) {
-        return this.sampleSiteHistory(site, this.process.getCategory(site));
-    }
-
-    /**
-     * Samples the history of the given site of the given category on the whole tree, like
-     * sampleSiteHistory, but for a category that the site does not have in the process.
-     */
-    public List<List<Mutation>> sampleSiteHistory(int site, int category) {
         List<List<Mutation>> regionHistory = this.createEmptyHistory();
-        this.sampleRegionSiteHistory(site, category, regionHistory);
+        this.sampleRegionSiteHistory(site, regionHistory);
 
         List<List<Mutation>> siteMutations = new ArrayList<>(this.tree.getNodeCount());
         for (int nodeNr = 0; nodeNr < this.tree.getNodeCount(); nodeNr++) {
@@ -266,14 +258,7 @@ public class SiteHistorySampler {
      * the reference and the sampled root state.
      */
     public void sampleRegionSiteHistory(int site, List<List<Mutation>> branchMutations) {
-        this.sampleRegionSiteHistory(site, this.process.getCategory(site), branchMutations);
-    }
-
-    /**
-     * Samples the history of the given site of the given category on the region, like
-     * sampleRegionSiteHistory, but for the given category instead of the category of the site.
-     */
-    public void sampleRegionSiteHistory(int site, int category, List<List<Mutation>> branchMutations) {
+        int category = this.process.getCategory(site);
         Node top = this.regionNodes[this.numRegionNodes - 1];
 
         // sample the node states: prune upwards, then sample downwards starting at the top
@@ -655,9 +640,10 @@ public class SiteHistorySampler {
     private void updateTransitionProbabilities(Node node) {
         int nodeNr = node.getNr();
         double branchLength = node.getParent().getHeight() - node.getHeight();
+        double branchRate = this.process.getBranchRate(node);
 
         for (int category = 0; category < this.rateScales.length; category++) {
-            this.rateScales[category][nodeNr] = this.process.getRateScale(node, category);
+            this.rateScales[category][nodeNr] = branchRate * this.process.getCategoryRate(category);
             double duration = this.rateScales[category][nodeNr] * branchLength;
 
             if (duration != this.durations[category][nodeNr]) {

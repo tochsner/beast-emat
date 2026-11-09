@@ -48,19 +48,12 @@ public class GeneticPrior extends GenericTreeLikelihood {
     // the log rates of mutating from one state to another, including the category rate, laid out by category, then by the from and to states
     double[] logMutationRates;
 
-    // the rate category of every site, which the states of the input hold and the calculation snapshots
-    IntVectorParam<?> siteRateCategories;
+    // the rate categories of the sites, which hold the snapshot of the last calculation
+    SiteRateCategories siteRateCategories;
     int numCategories;
-    int[] siteCategories;
-    int[] storedSiteCategories;
 
     // whether the categories of the sites differ from the snapshot of the last calculation
     boolean areSiteCategoriesChanged = false;
-
-    // the version of the categories, which operators increase whenever they set one, and the version last compared with the snapshot
-    private long siteCategoriesVersion;
-    private long comparedSiteCategoriesVersion = -1;
-    private boolean areSiteCategoriesChangedSinceStore = false;
 
     // relative changes of a total mutation rate below this are rounding from summing along a different path
     private static final double RATE_TOLERANCE = 1e-12;
@@ -125,26 +118,8 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
         // set up the rate categories of the sites
 
-        this.siteRateCategories = this.siteRateCategoriesInput.get();
         int numSites = this.alignment.getSiteCount();
-        this.siteCategories = new int[numSites];
-        this.storedSiteCategories = new int[numSites];
-
-        if (this.siteRateCategories == null) {
-            if (this.numCategories > 1) {
-                throw new IllegalArgumentException("siteRateCategories is required if the site model has more than one category.");
-            }
-        } else {
-            if (this.siteRateCategories.size() != numSites) {
-                throw new IllegalArgumentException("siteRateCategories should hold one category per site.");
-            }
-            for (int site = 0; site < numSites; site++) {
-                int category = this.siteRateCategories.get(site);
-                if (category < 0 || category >= this.numCategories) {
-                    throw new IllegalArgumentException("siteRateCategories should hold categories from 0 to " + (this.numCategories - 1) + ".");
-                }
-            }
-        }
+        this.siteRateCategories = new SiteRateCategories(this.siteRateCategoriesInput.get(), numSites, this.numCategories);
 
         int numNodes = this.tree.getNodeCount();
         this.totalMutationRatesPerNode = new double[numNodes];
@@ -177,7 +152,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
             this.logMutationRates = this.computeLogMutationRates();
         }
 
-        this.areSiteCategoriesChanged = this.updateSiteCategories();
+        this.areSiteCategoriesChanged = this.siteRateCategories.update();
 
         // check if we need to recompute everything
 
@@ -227,27 +202,6 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
         this.isInitialised = true;
         return this.logP;
-    }
-
-    /**
-     * Copies the current categories of the sites into the snapshot of the calculation, and
-     * returns whether any of them differs from the snapshot.
-     */
-    private boolean updateSiteCategories() {
-        if (this.siteRateCategories == null || this.comparedSiteCategoriesVersion == this.siteCategoriesVersion) {
-            return false;
-        }
-        this.comparedSiteCategoriesVersion = this.siteCategoriesVersion;
-
-        boolean isChanged = false;
-        for (int site = 0; site < this.siteCategories.length; site++) {
-            int category = this.siteRateCategories.get(site);
-            if (category != this.siteCategories[site]) {
-                this.siteCategories[site] = category;
-                isChanged = true;
-            }
-        }
-        return isChanged;
     }
 
     /** Marks those of the given nodes as dirty whose branch changed since the last calculation. */
@@ -453,7 +407,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
     /** Returns the offset of the log mutation rates of the category of the given site. */
     private int getCategoryRateOffset(int site) {
-        return this.siteCategories[site] * this.numStates * this.numStates;
+        return this.siteRateCategories.getCategory(site) * this.numStates * this.numStates;
     }
 
     /** Returns the rate of leaving the state on the given branch and site. */
@@ -463,23 +417,12 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
     /** Returns the rate of mutation the state from and to the given state on the given branch and site. */
     private double getMutationRate(Node node, int from, int to, int site) {
-        return this.rateMatrix[from * this.numStates + to] * this.categoryRates[this.siteCategories[site]];
+        return this.rateMatrix[from * this.numStates + to] * this.categoryRates[this.siteRateCategories.getCategory(site)];
     }
 
-    /** Returns the categories of the sites as held by the input, which is null without rate heterogeneity. */
-    public IntVectorParam<?> getSiteRateCategories() {
+    /** Returns the rate categories of the sites, which operators change and the substitution process reads. */
+    public SiteRateCategories getSiteRateCategories() {
         return this.siteRateCategories;
-    }
-
-    /** Records that the category of a site was set, so that the categories are compared with the snapshot again. */
-    public void markSiteCategoriesChanged() {
-        this.siteCategoriesVersion++;
-        this.areSiteCategoriesChangedSinceStore = true;
-    }
-
-    /** Returns the version of the categories, which changes whenever they may have changed. */
-    public long getSiteCategoriesVersion() {
-        return this.siteCategoriesVersion;
     }
 
     /** Returns the number of categories of the site model, which is one without rate heterogeneity. */
@@ -506,8 +449,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
     public void store() {
         System.arraycopy(this.totalMutationRatesPerNode, 0, this.storedTotalMutationRatesPerNode, 0, this.totalMutationRatesPerNode.length);
         System.arraycopy(this.branchLogPs, 0, this.storedBranchLogPs, 0, this.branchLogPs.length);
-        System.arraycopy(this.siteCategories, 0, this.storedSiteCategories, 0, this.siteCategories.length);
-        this.areSiteCategoriesChangedSinceStore = false;
+        this.siteRateCategories.store();
         super.store();
     }
 
@@ -522,15 +464,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
         this.storedBranchLogPs = branchLogPs;
 
         // the snapshot of the categories goes back with the branches, so that they match
-        int[] siteCategories = this.siteCategories;
-        this.siteCategories = this.storedSiteCategories;
-        this.storedSiteCategories = siteCategories;
-
-        // the categories of the state go back to the stored ones, so every reader of the categories has to compare them again
-        if (this.areSiteCategoriesChangedSinceStore) {
-            this.siteCategoriesVersion++;
-            this.areSiteCategoriesChangedSinceStore = false;
-        }
+        this.siteRateCategories.restore();
 
         super.restore();
     }
