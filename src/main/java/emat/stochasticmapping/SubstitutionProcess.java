@@ -32,6 +32,8 @@ public final class SubstitutionProcess {
 
     // the category of every site as of the last update, and the sites of every category in increasing order
     private final int[] siteCategories;
+    private long comparedSiteCategoriesVersion = -1;
+    private boolean isSitesOfCategoryStale = true;
     private int[][] sitesOfCategory;
 
     public SubstitutionProcess(GeneticPrior geneticPrior, TreeInterface tree, int numStates) {
@@ -41,7 +43,6 @@ public final class SubstitutionProcess {
         this.numCategories = geneticPrior.getNumCategories();
         this.categoryRates = new double[this.numCategories];
         this.siteCategories = new int[geneticPrior.getNumSites()];
-        this.rebuildSitesOfCategory();
     }
 
     /**
@@ -75,9 +76,10 @@ public final class SubstitutionProcess {
     /** Copies the categories of the sites from the prior, and rebuilds the sites of every category if any of them changed. */
     private void updateSiteCategories() {
         IntVectorParam<?> categories = this.geneticPrior.getSiteRateCategories();
-        if (categories == null) {
+        if (categories == null || this.comparedSiteCategoriesVersion == this.geneticPrior.getSiteCategoriesVersion()) {
             return;
         }
+        this.comparedSiteCategoriesVersion = this.geneticPrior.getSiteCategoriesVersion();
 
         boolean isChanged = false;
         for (int site = 0; site < this.siteCategories.length; site++) {
@@ -89,12 +91,13 @@ public final class SubstitutionProcess {
         }
 
         if (isChanged) {
-            this.rebuildSitesOfCategory();
+            this.isSitesOfCategoryStale = true;
         }
     }
 
     /** Lists the sites of every category in increasing order. */
     private void rebuildSitesOfCategory() {
+        this.isSitesOfCategoryStale = false;
         int[] counts = new int[this.numCategories];
         for (int category : this.siteCategories) {
             counts[category]++;
@@ -127,6 +130,9 @@ public final class SubstitutionProcess {
 
     /** Returns the sites of the given category in increasing order as of the last update. */
     public int[] getSitesOfCategory(int category) {
+        if (this.isSitesOfCategoryStale) {
+            this.rebuildSitesOfCategory();
+        }
         return this.sitesOfCategory[category];
     }
 

@@ -103,6 +103,8 @@ public class SiteHistorySampler {
     // reusable weights of the states of a node, from which its state is drawn
     final double[] stateWeights;
 
+    // per node, the log of the factors by which its partial likelihoods were rescaled
+
     public SiteHistorySampler(Mutations mutations, SubstitutionProcess process, StochasticMapping stochasticMapping) {
         this.mutations = mutations;
         this.process = process;
@@ -236,8 +238,16 @@ public class SiteHistorySampler {
      * descending height. The region must be the whole tree, as set by updateModel.
      */
     public List<List<Mutation>> sampleSiteHistory(int site) {
+        return this.sampleSiteHistory(site, this.process.getCategory(site));
+    }
+
+    /**
+     * Samples the history of the given site of the given category on the whole tree, like
+     * sampleSiteHistory, but for a category that the site does not have in the process.
+     */
+    public List<List<Mutation>> sampleSiteHistory(int site, int category) {
         List<List<Mutation>> regionHistory = this.createEmptyHistory();
-        this.sampleRegionSiteHistory(site, regionHistory);
+        this.sampleRegionSiteHistory(site, category, regionHistory);
 
         List<List<Mutation>> siteMutations = new ArrayList<>(this.tree.getNodeCount());
         for (int nodeNr = 0; nodeNr < this.tree.getNodeCount(); nodeNr++) {
@@ -256,8 +266,15 @@ public class SiteHistorySampler {
      * the reference and the sampled root state.
      */
     public void sampleRegionSiteHistory(int site, List<List<Mutation>> branchMutations) {
+        this.sampleRegionSiteHistory(site, this.process.getCategory(site), branchMutations);
+    }
+
+    /**
+     * Samples the history of the given site of the given category on the region, like
+     * sampleRegionSiteHistory, but for the given category instead of the category of the site.
+     */
+    public void sampleRegionSiteHistory(int site, int category, List<List<Mutation>> branchMutations) {
         Node top = this.regionNodes[this.numRegionNodes - 1];
-        int category = this.process.getCategory(site);
 
         // sample the node states: prune upwards, then sample downwards starting at the top
 
@@ -586,11 +603,14 @@ public class SiteHistorySampler {
             return;
         }
 
-        // rescale to avoid underflow on large trees
+        // rescale by the maximum to avoid underflow on large trees, unless the partial is zero everywhere
 
         double maxPartial = 0.0;
         for (double value : partial) {
             maxPartial = Math.max(maxPartial, value);
+        }
+        if (maxPartial == 0.0) {
+            return;
         }
         for (int state = 0; state < this.numStates; state++) {
             partial[state] /= maxPartial;

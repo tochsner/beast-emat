@@ -56,7 +56,9 @@ public class SiteHistoryGibbsOperator extends Operator {
 
     Mutations mutations;
     TreeInterface tree;
+    GeneticPrior geneticPrior;
     Sampler sampler;
+    SubstitutionProcess process;
     SiteHistorySampler siteHistorySampler;
 
     // the cumulative selection weights of the sites
@@ -66,9 +68,10 @@ public class SiteHistoryGibbsOperator extends Operator {
     public void initAndValidate() {
         this.mutations = this.mutationsInput.get();
         this.tree = this.mutations.getTree();
+        this.geneticPrior = this.geneticPriorInput.get();
         this.sampler = this.samplerInput.get();
-        SubstitutionProcess process = new SubstitutionProcess(this.geneticPriorInput.get(), this.tree, this.mutations.getAlignment().getMaxStateCount());
-        this.siteHistorySampler = new SiteHistorySampler(this.mutations, process, this.createStochasticMapping());
+        this.process = new SubstitutionProcess(this.geneticPrior, this.tree, this.mutations.getAlignment().getMaxStateCount());
+        this.siteHistorySampler = new SiteHistorySampler(this.mutations, this.process, this.createStochasticMapping());
         this.cumulativeSiteWeights = this.computeCumulativeSiteWeights();
     }
 

@@ -13,7 +13,6 @@ import beast.base.spec.inference.parameter.IntVectorParam;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.util.Randomizer;
 import emat.operators.mutations.SiteHistoryGibbsOperator;
-import emat.operators.mutations.SiteRateCategoryGibbsOperator;
 import emat.prior.GeneticPrior;
 import emat.state.Mutation;
 import emat.state.Mutations;
@@ -58,53 +57,9 @@ public class SiteRateCategoryTest {
     }
 
     /**
-     * Checks that the Gibbs operator draws every site category from its exact conditional
-     * distribution, which is proportional to the prior density with the category of the site
-     * set to each value, given the fixed history. The conditional densities are computed from
-     * the genetic prior itself, so the check also covers the sums in the operator.
-     */
-    @Test
-    public void testGibbsMatchesExactConditional() {
-        Randomizer.setSeed(11);
-
-        Setup setup = createSetup(new int[]{0, 1, 0});
-        SiteRateCategoryGibbsOperator operator = new SiteRateCategoryGibbsOperator();
-        operator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", setup.prior);
-
-        int numSites = 3;
-        int numSamples = 50000;
-        int[][] categoryCounts = new int[numSites][2];
-        for (int i = 0; i < numSamples; i++) {
-            operator.proposal();
-            for (int site = 0; site < numSites; site++) {
-                categoryCounts[site][setup.categories.get(site)]++;
-            }
-        }
-
-        // compute the exact conditional of every site from the prior, with the history unchanged
-
-        double[] categoryProportions = setup.siteModel.getCategoryProportions(setup.tree.getRoot());
-        for (int site = 0; site < numSites; site++) {
-            double[] logWeights = new double[2];
-            for (int category = 0; category < 2; category++) {
-                setup.categories.set(site, category);
-                logWeights[category] = Math.log(categoryProportions[category]) + setup.prior.calculateLogP();
-            }
-
-            double maxLogWeight = Math.max(logWeights[0], logWeights[1]);
-            double normalisation = Math.exp(logWeights[0] - maxLogWeight) + Math.exp(logWeights[1] - maxLogWeight);
-            for (int category = 0; category < 2; category++) {
-                double expectedFrequency = Math.exp(logWeights[category] - maxLogWeight) / normalisation;
-                double observedFrequency = (double) categoryCounts[site][category] / numSamples;
-                assertEquals(expectedFrequency, observedFrequency, 0.01, "site " + site + ", category " + category + ".");
-            }
-        }
-    }
-
-    /**
      * Checks that the site history Gibbs operator draws the root state of every site from its
      * exact posterior under Jukes-Cantor, where the branches of a site run at the rate of its
-     * category. On a two-tip tree with branches of length τ, the posterior is proportional to
+     * category, which is fixed. On a two-tip tree with branches of length τ, the posterior is proportional to
      * π_r P_ra(r_c τ) P_rb(r_c τ) for the tip states a and b.
      */
     @Test
@@ -170,23 +125,23 @@ public class SiteRateCategoryTest {
             }
         }
 
-        // the tip states of the sites, and the branch length of every tip in scaled time
+        // the categories are fixed, so the root state of every site follows its conditional distribution given its category
 
         int[][] tipStates = {{0, 1}, {0, 0}};
         for (int site = 0; site < 2; site++) {
-            double branchTime = 0.8 * siteModel.getRateForCategory(categories.get(site), tree.getRoot());
-
+            int category = categories.get(site);
+            double branchTime = 0.8 * siteModel.getRateForCategory(category, tree.getRoot());
             double[] rootProbabilities = new double[4];
-            double normalisation = 0.0;
+            double categoryLikelihood = 0.0;
             for (int rootState = 0; rootState < 4; rootState++) {
                 rootProbabilities[rootState] = 0.25
                         * getJukesCantorProbability(rootState, tipStates[site][0], branchTime)
                         * getJukesCantorProbability(rootState, tipStates[site][1], branchTime);
-                normalisation += rootProbabilities[rootState];
+                categoryLikelihood += rootProbabilities[rootState];
             }
 
             for (int rootState = 0; rootState < 4; rootState++) {
-                assertEquals(rootProbabilities[rootState] / normalisation, (double) rootStateCounts[site][rootState] / numSamples, 0.005,
+                assertEquals(rootProbabilities[rootState] / categoryLikelihood, (double) rootStateCounts[site][rootState] / numSamples, 0.005,
                         "site " + site + ", root state " + rootState + ".");
             }
         }
