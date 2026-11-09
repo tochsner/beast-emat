@@ -4,7 +4,7 @@ This project adds an implementation of Explicitly Annotated Mutation Trees (EMAT
 
 ## Preliminary Convergence Time
 
-Running time until an ESS of at least 200 is reached on all parameters. Median for five different seeds.
+Running time until an ESS of at least 200 is reached on all parameters. Median for five different seeds. HKY, exponential Coalescent tree prior, strict clock, no site-rate variation.
 
 
 | Dataset                   | Sequences | Nucleotide diversity (π) | Missing fraction | Runtime   |
