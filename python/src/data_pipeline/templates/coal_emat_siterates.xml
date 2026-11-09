@@ -41,14 +41,13 @@
             <stateNode id="ePopSize.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="0.3"/>
             <stateNode id="growthRate.t:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real" value="3.0E-4"/>
             <stateNode id="mutations.{{ID}}" spec="emat.state.Mutations" tree="@Tree.t:{{ID}}" alignment="@{{ID}}.observed"/>
-            <stateNode id="gammaShape.s:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="0.5"/>        </state>
+            <stateNode id="gammaShape.s:{{ID}}" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="0.5"/>
+        </state>
         <init id="RandomTree.t:{{ID}}" spec="RandomTree" estimate="false" initial="@Tree.t:{{ID}}" taxa="@{{ID}}">
             <populationModel id="ConstantPopulation0.t:{{ID}}" spec="ConstantPopulation">
                 <parameter id="randomPopSize.t:{{ID}}" spec="parameter.RealParameter" name="popSize">1.0</parameter>
             </populationModel>
         </init>
-        <init id="ClockRateInitialiser.{{ID}}" spec="emat.initalisation.ClockRateInitialiser" clockRate="@clockRate.c:{{ID}}" tree="@Tree.t:{{ID}}" alignment="@{{ID}}.observed"/>
-        <init id="ClosestPlacementTreeInitialiser.{{ID}}" spec="emat.initalisation.ClosestPlacementTreeInitialiser" clockRate="@clockRate.c:{{ID}}" tree="@Tree.t:{{ID}}" alignment="@{{ID}}.observed"/>
         <init id="ParsimonyMutationsInitialiser.{{ID}}" spec="emat.initalisation.ParsimonyMutationsInitialiser" mutations="@mutations.{{ID}}"/>
         <distribution id="posterior" spec="CompoundDistribution">
             <distribution id="prior" spec="CompoundDistribution">
@@ -118,9 +117,9 @@
             <up idref="growthRate.t:{{ID}}"/>
         </operator>
         <operator id="RootScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="10.0"/>
-        <operator id="MutationDirectedSprOperator.{{ID}}" spec="emat.operators.topology.MutationDirectedSprOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" fullExplorationProbability="0.01" weight="25.0" scaleWeightByLogNumTips="true" windowProbability="0.3" subtreeSelection="BRANCH_LENGTH"/>
+        <operator id="MutationDirectedSprOperator.{{ID}}" spec="emat.operators.topology.MutationDirectedSprOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" fullExplorationProbability="0.01" weight="25.0" scaleWeightByLogNumTips="true" windowProbability="0.3" subtreeSelection="BRANCH_LENGTH" sortedExplorationProbability="0.1" explorationRadius="3"/>
         <operator id="RootRatioScaleOperator.{{ID}}" spec="emat.operators.nodetimes.RootRatioScaleOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" weight="10.0"/>
-        <operator id="BatchNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.batch.BatchNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="10.0"/>
+        <operator id="BatchNodeDisplacementOperator.{{ID}}" spec="emat.operators.nodetimes.batch.BatchNodeDisplacementOperator" tree="@Tree.t:{{ID}}" mutations="@mutations.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="5.0"/>
         <operator id="GroupESSWeightAdaptationOperator.{{ID}}" spec="weightoptimization.GroupESSWeightAdaptationOperator" weight="45.0" maxWeightFactor="3.0">
             <operatorAdapter id="MutationCountAdapter.{{ID}}" spec="emat.adapters.MutationCountAdapter" mutations="@mutations.{{ID}}"/>
             <referenceAdapter id="TreeLengthAdapter.{{ID}}" spec="adapters.TreeLengthAdapter" tree="@Tree.t:{{ID}}"/>

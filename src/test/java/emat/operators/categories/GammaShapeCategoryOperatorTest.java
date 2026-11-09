@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class GammaShapeCategoryOperatorTest {
 
@@ -73,6 +74,52 @@ public class GammaShapeCategoryOperatorTest {
             double actualLogRatio = newLogJointPosterior - oldLogJointPosterior + logHastingsRatio;
             assertEquals(expectedLogRatio, actualLogRatio, 1e-8, "trial " + trial + ".");
         }
+    }
+
+    /**
+     * Checks that a rejected proposal restores the categories of the state. BEAST stores the
+     * calculation nodes only after the proposal, so the genetic prior is stored when the operator
+     * has already redrawn the categories, and the restore still has to bring back the old ones.
+     */
+    @Test
+    public void testRejectRestoresCategories() {
+        Randomizer.setSeed(11);
+
+        Setup setup = createSetup(new int[]{0, 1, 0});
+        GeneticPrior geneticPrior = createGeneticPrior(setup);
+        geneticPrior.calculateLogP();
+        GammaShapeCategoryOperator operator = new GammaShapeCategoryOperator();
+        operator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", geneticPrior,
+                "shape", setup.shape);
+
+        SiteRateCategories categories = geneticPrior.getSiteRateCategories();
+        int numSites = setup.categories.length;
+
+        int numChangedTrials = 0;
+        for (int trial = 0; trial < 200; trial++) {
+            int[] oldCategories = new int[numSites];
+            for (int site = 0; site < numSites; site++) {
+                oldCategories[site] = categories.getStateCategory(site);
+            }
+            double oldShape = setup.shape.get();
+
+            // the order of a rejected step of the MCMC: propose, store and calculate, then restore
+
+            if (operator.proposal() == Double.NEGATIVE_INFINITY) {
+                continue;
+            }
+            geneticPrior.store();
+            geneticPrior.calculateLogP();
+            geneticPrior.restore();
+            setup.shape.set(oldShape);
+
+            for (int site = 0; site < numSites; site++) {
+                assertEquals(oldCategories[site], categories.getStateCategory(site), "state category of site " + site + " in trial " + trial + ".");
+                assertEquals(oldCategories[site], categories.getCategory(site), "snapshot category of site " + site + " in trial " + trial + ".");
+            }
+            numChangedTrials++;
+        }
+        assertTrue(numChangedTrials > 0);
     }
 
     /**

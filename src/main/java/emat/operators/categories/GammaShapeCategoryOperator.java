@@ -13,11 +13,14 @@ import emat.state.Mutations;
 import emat.stochasticmapping.StochasticMapping;
 import emat.stochasticmapping.SubstitutionProcess;
 
+import java.text.DecimalFormat;
+
 @Description("Proposes a new shape of the gamma site rates on a log scale, and redraws the category of every site from " +
         "its conditional distribution under the new shape, as described by SiteCategoryPosterior. The Hastings ratio " +
         "is the ratio of the conditional probabilities of the old and the new categories, which cancels their terms " +
         "in the posterior. The move is therefore accepted with the ratio of the posteriors of the shape with the " +
         "categories integrated out, which does not suffer from the coupling between the shape and the categories. " +
+        "The half width of the proposal is tuned towards the target acceptance probability by the Robbins-Monro rule. " +
         "Requires a genetic prior with more than one rate category.")
 public class GammaShapeCategoryOperator extends Operator {
 
@@ -25,6 +28,11 @@ public class GammaShapeCategoryOperator extends Operator {
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model and holds the categories", Input.Validate.REQUIRED);
     final public Input<RealScalarParam<PositiveReal>> shapeInput = new Input<>("shape", "the shape of the gamma site rates", Input.Validate.REQUIRED);
     final public Input<Double> scaleFactorInput = new Input<>("scaleFactor", "the half width of the uniform proposal of the log shape", 0.5);
+    final public Input<Boolean> optimiseInput = new Input<>("optimise", "whether to tune the scale factor towards the target acceptance probability", true);
+    final public Input<Double> targetAcceptanceInput = new Input<>("targetAcceptance", "the acceptance probability the scale factor is tuned towards", 0.44);
+
+    private static final double MIN_SCALE_FACTOR = 1e-8;
+    private static final double MAX_SCALE_FACTOR = 10.0;
 
     Mutations mutations;
     TreeInterface tree;
@@ -37,8 +45,9 @@ public class GammaShapeCategoryOperator extends Operator {
 
     int numSites;
 
-    // reusable probabilities of the categories of a site
+    // reusable probabilities of the categories of a site, and the drawn categories of all sites
     double[] categoryProbabilities;
+    int[] drawnCategories;
 
     @Override
     public void initAndValidate() {
@@ -50,7 +59,7 @@ public class GammaShapeCategoryOperator extends Operator {
             throw new IllegalArgumentException("The genetic prior has a single rate category, so there are no categories to redraw.");
         }
         this.siteRateCategories = this.geneticPrior.getSiteRateCategories();
-        this.scaleFactor = this.scaleFactorInput.get();
+        this.setCoercableParameterValue(this.scaleFactorInput.get());
 
         int numStates = this.mutations.getAlignment().getMaxStateCount();
         this.process = new SubstitutionProcess(this.geneticPrior, this.tree, numStates);
@@ -58,6 +67,7 @@ public class GammaShapeCategoryOperator extends Operator {
 
         this.numSites = this.mutations.getReferenceSequence().length;
         this.categoryProbabilities = new double[this.posterior.getNumCategories()];
+        this.drawnCategories = new int[this.numSites];
     }
 
     /**
@@ -84,7 +94,15 @@ public class GammaShapeCategoryOperator extends Operator {
         this.shape.set(newShape);
         double logNewCategoryProbability = this.drawCategories();
 
-        return Math.log(factor) + logOldCategoryProbability - logNewCategoryProbability;
+        // an extreme shape can make the category probabilities degenerate, so such a proposal is
+        // rejected before the categories of the state change, as a failed proposal is not restored
+        double logHastingsRatio = Math.log(factor) + logOldCategoryProbability - logNewCategoryProbability;
+        if (Double.isNaN(logHastingsRatio)) {
+            return Double.NEGATIVE_INFINITY;
+        }
+
+        this.setDrawnCategories();
+        return logHastingsRatio;
     }
 
     /**
@@ -102,8 +120,8 @@ public class GammaShapeCategoryOperator extends Operator {
     }
 
     /**
-     * Draws the category of every site from its conditional distribution under the current shape,
-     * and returns the log probability of the drawn categories.
+     * Draws the category of every site from its conditional distribution under the current shape
+     * into the drawn categories, and returns the log probability of the drawn categories.
      */
     private double drawCategories() {
         this.updateProportions();
@@ -112,19 +130,69 @@ public class GammaShapeCategoryOperator extends Operator {
         for (int site = 0; site < this.numSites; site++) {
             this.posterior.computeProbabilities(site, this.categoryProbabilities);
             int category = StochasticMapping.sampleIndex(this.categoryProbabilities);
-            this.siteRateCategories.setStateCategory(site, category);
+            this.drawnCategories[site] = category;
             logProbability += this.posterior.computeLogProbability(site, category);
+        }
+        return logProbability;
+    }
+
+    /** Sets the drawn categories as the categories of the state. */
+    private void setDrawnCategories() {
+        for (int site = 0; site < this.numSites; site++) {
+            this.siteRateCategories.setStateCategory(site, this.drawnCategories[site]);
         }
 
         // the categories of all sites are drawn together, so they are marked as redrawn as a whole
         this.siteRateCategories.markRedrawn();
-        return logProbability;
     }
 
     /** Updates the rates of the process and the category proportions of the posterior under the current shape. */
     private void updateProportions() {
         this.process.update();
         this.posterior.setCategoryProportions(this.geneticPrior.siteModel.getCategoryProportions(this.tree.getRoot()));
+    }
+
+    /* Tuning */
+
+    /**
+     * Tunes the log of the scale factor by the Robbins-Monro rule towards the target acceptance
+     * probability. An undefined acceptance ratio carries no information about the step size, so it
+     * is skipped.
+     */
+    @Override
+    public void optimize(double logAlpha) {
+        if (this.optimiseInput.get() && !Double.isNaN(logAlpha)) {
+            double delta = this.calcDelta(logAlpha) + Math.log(this.getCoercableParameterValue());
+            this.setCoercableParameterValue(Math.exp(delta));
+        }
+    }
+
+    @Override
+    public double getTargetAcceptanceProbability() {
+        return this.targetAcceptanceInput.get();
+    }
+
+    @Override
+    public double getCoercableParameterValue() {
+        return this.scaleFactor;
+    }
+
+    @Override
+    public void setCoercableParameterValue(double value) {
+        this.scaleFactor = Math.max(Math.min(value, MAX_SCALE_FACTOR), MIN_SCALE_FACTOR);
+    }
+
+    @Override
+    public String getPerformanceSuggestion() {
+        double acceptanceProbability = this.m_nNrAccepted / (this.m_nNrAccepted + this.m_nNrRejected + 0.0);
+        double ratio = acceptanceProbability / this.getTargetAcceptanceProbability();
+        ratio = Math.max(Math.min(ratio, 2.0), 0.5);
+
+        DecimalFormat formatter = new DecimalFormat("#.###");
+        if (ratio < 0.75 || ratio > 1.25) {
+            return "Try setting scale factor to about " + formatter.format(this.getCoercableParameterValue() * ratio);
+        }
+        return "";
     }
 
 }

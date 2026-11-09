@@ -3,15 +3,17 @@ package emat.prior;
 /**
  * The rate categories of the sites of a genetic prior. Operators change the categories of the state
  * as a whole, and then mark them as redrawn. The genetic prior reads a snapshot of the categories,
- * which it updates in every calculation. The state and the snapshot are stored with the branches, so
- * that on restore the categories match the cached branches again. The generation counts the changes
- * of the snapshot, so that its readers can tell whether it changed.
+ * which it updates in every calculation. The snapshot is stored with the branches, so that on restore
+ * the categories match the cached branches again. BEAST stores the calculation nodes only after the
+ * proposal, when the state may already be redrawn, so the state is not stored itself. After every
+ * accepted or restored calculation the state equals the snapshot, so a restore copies the restored
+ * snapshot back into the state. The generation counts the changes of the snapshot, so that its
+ * readers can tell whether it changed.
  */
 public class SiteRateCategories {
 
     // the categories of the state, which operators change
-    private int[] stateCategories;
-    private int[] storedStateCategories;
+    private final int[] stateCategories;
 
     // the categories of the snapshot, which the cached branches were computed with
     private int[] siteCategories;
@@ -25,7 +27,6 @@ public class SiteRateCategories {
 
     public SiteRateCategories(int numSites) {
         this.stateCategories = new int[numSites];
-        this.storedStateCategories = new int[numSites];
         this.siteCategories = new int[numSites];
         this.storedSiteCategories = new int[numSites];
     }
@@ -72,25 +73,23 @@ public class SiteRateCategories {
         return this.generation;
     }
 
-    /** Stores the state and the snapshot, so that they can be restored with the branches. */
+    /** Stores the snapshot, so that it can be restored with the branches. */
     public void store() {
-        System.arraycopy(this.stateCategories, 0, this.storedStateCategories, 0, this.stateCategories.length);
         System.arraycopy(this.siteCategories, 0, this.storedSiteCategories, 0, this.siteCategories.length);
         this.isChangedSinceStore = false;
     }
 
     /**
-     * Restores the stored state and snapshot. The generation changes if the state was redrawn since it
-     * was stored, so that the readers of the snapshot compare it again.
+     * Restores the stored snapshot, and the state from it. The generation changes if the state was
+     * redrawn since it was stored, so that the readers of the snapshot compare it again.
      */
     public void restore() {
-        int[] stateCategories = this.stateCategories;
-        this.stateCategories = this.storedStateCategories;
-        this.storedStateCategories = stateCategories;
-
         int[] siteCategories = this.siteCategories;
         this.siteCategories = this.storedSiteCategories;
         this.storedSiteCategories = siteCategories;
+
+        System.arraycopy(this.siteCategories, 0, this.stateCategories, 0, this.stateCategories.length);
+        this.isChanged = false;
 
         if (this.isChangedSinceStore) {
             this.generation++;
