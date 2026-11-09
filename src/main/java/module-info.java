@@ -4,8 +4,6 @@ import emat.alignment.MissingSiteFilteredAlignment;
 import emat.benchmark.ExactHistoryInitialiser;
 import emat.benchmark.HistoryDistanceLogger;
 import emat.benchmark.TimedMCMC;
-import emat.initalisation.ClockRateInitialiser;
-import emat.initalisation.ClosestPlacementTreeInitialiser;
 import emat.initalisation.ParsimonyMutationsInitialiser;
 import emat.operators.mutations.BranchReformOperator;
 import emat.operators.nodetimes.warp.LearnedWarpOperator;
@@ -66,8 +64,6 @@ open module my.beast.example {
             MissingSiteFilteredAlignment,
             GeneticPrior,
             ParsimonyMutationsInitialiser,
-            ClosestPlacementTreeInitialiser,
-            ClockRateInitialiser,
             MutationTimeOperator,
             InnerNodeDisplacementOperator,
             BatchNodeDisplacementOperator,

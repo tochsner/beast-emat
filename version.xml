@@ -8,8 +8,6 @@
         <provider classname="emat.prior.BranchKindPrior"/>
         <provider classname="emat.operators.RepresentationSwitchOperator"/>
         <provider classname="emat.initalisation.ParsimonyMutationsInitialiser"/>
-        <provider classname="emat.initalisation.ClosestPlacementTreeInitialiser"/>
-        <provider classname="emat.initalisation.ClockRateInitialiser"/>
         <provider classname="emat.operators.mutations.MutationTimeOperator"/>
         <provider classname="emat.operators.mutations.SiteHistoryGibbsOperator"/>
         <provider classname="emat.operators.nodetimes.IidIntervalScaleOperator"/>

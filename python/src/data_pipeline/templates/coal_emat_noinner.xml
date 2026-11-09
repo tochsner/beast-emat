@@ -47,8 +47,6 @@
                 <parameter id="randomPopSize.t:{{ID}}" spec="parameter.RealParameter" name="popSize">1.0</parameter>
             </populationModel>
         </init>
-        <init id="ClockRateInitialiser.{{ID}}" spec="emat.initalisation.ClockRateInitialiser" clockRate="@clockRate.c:{{ID}}" tree="@Tree.t:{{ID}}" alignment="@{{ID}}.observed"/>
-        <init id="ClosestPlacementTreeInitialiser.{{ID}}" spec="emat.initalisation.ClosestPlacementTreeInitialiser" clockRate="@clockRate.c:{{ID}}" tree="@Tree.t:{{ID}}" alignment="@{{ID}}.observed"/>
         <init id="ParsimonyMutationsInitialiser.{{ID}}" spec="emat.initalisation.ParsimonyMutationsInitialiser" mutations="@mutations.{{ID}}"/>
         <distribution id="posterior" spec="CompoundDistribution">
             <distribution id="prior" spec="CompoundDistribution">
