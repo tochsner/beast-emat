@@ -1,20 +1,19 @@
 package emat.prior;
 
-import beast.base.spec.inference.parameter.IntVectorParam;
-
 /**
  * The rate categories of the sites of a genetic prior. Operators change the categories of the state
- * as a whole, and then mark them as redrawn. The genetic prior and the substitution process read a
- * snapshot of the categories, which the genetic prior updates in every calculation. The snapshot is
- * stored with the branches, so that on restore the categories match the cached branches again. The
- * generation counts the changes of the snapshot, so that its readers can tell whether it changed.
+ * as a whole, and then mark them as redrawn. The genetic prior reads a snapshot of the categories,
+ * which it updates in every calculation. The state and the snapshot are stored with the branches, so
+ * that on restore the categories match the cached branches again. The generation counts the changes
+ * of the snapshot, so that its readers can tell whether it changed.
  */
 public class SiteRateCategories {
 
-    // the categories of the state, which is null if the site model has a single category and no input is given
-    private final IntVectorParam<?> parameter;
+    // the categories of the state, which operators change
+    private int[] stateCategories;
+    private int[] storedStateCategories;
 
-    // the categories of the snapshot, and of the snapshot stored with the branches
+    // the categories of the snapshot, which the cached branches were computed with
     private int[] siteCategories;
     private int[] storedSiteCategories;
 
@@ -24,35 +23,11 @@ public class SiteRateCategories {
 
     private long generation = 0;
 
-    public SiteRateCategories(IntVectorParam<?> parameter, int numSites, int numCategories) {
-        this.parameter = parameter;
+    public SiteRateCategories(int numSites) {
+        this.stateCategories = new int[numSites];
+        this.storedStateCategories = new int[numSites];
         this.siteCategories = new int[numSites];
         this.storedSiteCategories = new int[numSites];
-
-        if (parameter == null) {
-            if (numCategories > 1) {
-                throw new IllegalArgumentException("siteRateCategories is required if the site model has more than one category.");
-            }
-        } else {
-            if (parameter.size() != numSites) {
-                throw new IllegalArgumentException("siteRateCategories should hold one category per site.");
-            }
-            for (int site = 0; site < numSites; site++) {
-                int category = parameter.get(site);
-                if (category < 0 || category >= numCategories) {
-                    throw new IllegalArgumentException("siteRateCategories should hold categories from 0 to " + (numCategories - 1) + ".");
-                }
-            }
-
-            // the snapshot starts with the categories of the state
-            this.isChanged = true;
-            this.update();
-        }
-    }
-
-    /** Returns whether the categories are held by the state, which is false if the site model has a single category and no input is given. */
-    public boolean hasParameter() {
-        return this.parameter != null;
     }
 
     /**
@@ -61,14 +36,12 @@ public class SiteRateCategories {
      * snapshot is copied as a whole.
      */
     public boolean update() {
-        if (this.parameter == null || !this.isChanged) {
+        if (!this.isChanged) {
             return false;
         }
         this.isChanged = false;
 
-        for (int site = 0; site < this.siteCategories.length; site++) {
-            this.siteCategories[site] = this.parameter.get(site);
-        }
+        System.arraycopy(this.stateCategories, 0, this.siteCategories, 0, this.siteCategories.length);
         this.generation++;
         return true;
     }
@@ -80,12 +53,12 @@ public class SiteRateCategories {
 
     /** Returns the category of the given site in the state, which may differ from the snapshot. */
     public int getStateCategory(int site) {
-        return this.parameter.get(site);
+        return this.stateCategories[site];
     }
 
     /** Sets the category of the given site in the state. The categories have to be marked as redrawn afterwards. */
     public void setStateCategory(int site, int category) {
-        this.parameter.set(site, category);
+        this.stateCategories[site] = category;
     }
 
     /** Marks the categories of the state as redrawn, so that the next update copies them into the snapshot. */
@@ -99,17 +72,22 @@ public class SiteRateCategories {
         return this.generation;
     }
 
-    /** Stores the snapshot, so that it can be restored with the branches. */
+    /** Stores the state and the snapshot, so that they can be restored with the branches. */
     public void store() {
+        System.arraycopy(this.stateCategories, 0, this.storedStateCategories, 0, this.stateCategories.length);
         System.arraycopy(this.siteCategories, 0, this.storedSiteCategories, 0, this.siteCategories.length);
         this.isChangedSinceStore = false;
     }
 
     /**
-     * Restores the stored snapshot. The state is restored to its stored categories as well, so the
-     * generation changes if the state was redrawn since it was stored.
+     * Restores the stored state and snapshot. The generation changes if the state was redrawn since it
+     * was stored, so that the readers of the snapshot compare it again.
      */
     public void restore() {
+        int[] stateCategories = this.stateCategories;
+        this.stateCategories = this.storedStateCategories;
+        this.storedStateCategories = stateCategories;
+
         int[] siteCategories = this.siteCategories;
         this.siteCategories = this.storedSiteCategories;
         this.storedSiteCategories = siteCategories;

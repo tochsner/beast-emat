@@ -13,7 +13,6 @@ import beast.base.spec.evolution.branchratemodel.Base;
 import beast.base.spec.evolution.branchratemodel.StrictClockModel;
 import beast.base.spec.evolution.likelihood.GenericTreeLikelihood;
 import beast.base.spec.evolution.sitemodel.SiteModel;
-import beast.base.spec.inference.parameter.IntVectorParam;
 import emat.state.Mutation;
 import emat.tree.IncrementalStoreTree;
 import emat.state.Mutations;
@@ -22,13 +21,11 @@ import java.util.Arrays;
 import java.util.List;
 
 @Description("Implements the genetic prior for EMATs. Each site has the rate of its category in the site model, " +
-        "given by siteRateCategories. Missations are not yet supported.")
+        "given by the categories of the prior. Missations are not yet supported.")
 public class GeneticPrior extends GenericTreeLikelihood {
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "", Input.Validate.REQUIRED);
 
-    final public Input<IntVectorParam<?>> siteRateCategoriesInput = new Input<>("siteRateCategories",
-            "the rate category of every site, indexed like the categories of the site model. Required if the site model has more than one category");
 
     TreeInterface tree;
     Alignment alignment;
@@ -119,7 +116,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
         // set up the rate categories of the sites
 
         int numSites = this.alignment.getSiteCount();
-        this.siteRateCategories = new SiteRateCategories(this.siteRateCategoriesInput.get(), numSites, this.numCategories);
+        this.siteRateCategories = new SiteRateCategories(numSites);
 
         int numNodes = this.tree.getNodeCount();
         this.totalMutationRatesPerNode = new double[numNodes];

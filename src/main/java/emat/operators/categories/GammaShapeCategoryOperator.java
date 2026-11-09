@@ -18,7 +18,7 @@ import emat.stochasticmapping.SubstitutionProcess;
         "is the ratio of the conditional probabilities of the old and the new categories, which cancels their terms " +
         "in the posterior. The move is therefore accepted with the ratio of the posteriors of the shape with the " +
         "categories integrated out, which does not suffer from the coupling between the shape and the categories. " +
-        "Requires a genetic prior with siteRateCategories.")
+        "Requires a genetic prior with more than one rate category.")
 public class GammaShapeCategoryOperator extends Operator {
 
     final public Input<Mutations> mutationsInput = new Input<>("mutations", "the mutations to operate on", Input.Validate.REQUIRED);
@@ -46,10 +46,10 @@ public class GammaShapeCategoryOperator extends Operator {
         this.tree = this.mutations.getTree();
         this.geneticPrior = this.geneticPriorInput.get();
         this.shape = this.shapeInput.get();
-        this.siteRateCategories = this.geneticPrior.getSiteRateCategories();
-        if (!this.siteRateCategories.hasParameter()) {
-            throw new IllegalArgumentException("The genetic prior has no siteRateCategories to redraw.");
+        if (this.geneticPrior.getNumCategories() < 2) {
+            throw new IllegalArgumentException("The genetic prior has a single rate category, so there are no categories to redraw.");
         }
+        this.siteRateCategories = this.geneticPrior.getSiteRateCategories();
         this.scaleFactor = this.scaleFactorInput.get();
 
         int numStates = this.mutations.getAlignment().getMaxStateCount();

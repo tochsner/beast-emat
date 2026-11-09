@@ -4,15 +4,14 @@ import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeParser;
-import beast.base.spec.domain.NonNegativeInt;
 import beast.base.spec.domain.PositiveReal;
 import beast.base.spec.evolution.branchratemodel.StrictClockModel;
 import beast.base.spec.evolution.sitemodel.SiteModel;
 import beast.base.spec.evolution.substitutionmodel.JukesCantor;
-import beast.base.spec.inference.parameter.IntVectorParam;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.util.Randomizer;
 import emat.prior.GeneticPrior;
+import emat.prior.SiteRateCategories;
 import emat.state.Mutation;
 import emat.state.Mutations;
 import org.junit.jupiter.api.Test;
@@ -28,7 +27,7 @@ public class GammaShapeCategoryOperatorTest {
 
     /** The objects of a genetic prior with three sites, two rate categories, a shape parameter and a fixed history. */
     private record Setup(Alignment alignment, TreeParser tree, SiteModel siteModel, RealScalarParam<PositiveReal> shape,
-                         StrictClockModel clockModel, IntVectorParam<NonNegativeInt> categories, Mutations mutations) {
+                         StrictClockModel clockModel, int[] categories, Mutations mutations) {
     }
 
     /**
@@ -44,8 +43,9 @@ public class GammaShapeCategoryOperatorTest {
         Randomizer.setSeed(7);
 
         Setup setup = createSetup(new int[]{0, 1, 0});
+        GeneticPrior geneticPrior = createGeneticPrior(setup);
         GammaShapeCategoryOperator operator = new GammaShapeCategoryOperator();
-        operator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", createGeneticPrior(setup),
+        operator.initByName("weight", 1.0, "mutations", setup.mutations, "geneticPrior", geneticPrior,
                 "shape", setup.shape);
 
         int numTrials = 200;
@@ -57,6 +57,12 @@ public class GammaShapeCategoryOperatorTest {
             double logHastingsRatio = operator.proposal();
             if (logHastingsRatio == Double.NEGATIVE_INFINITY) {
                 continue;
+            }
+
+            // the operator redraws the categories of its genetic prior, which the posteriors of the setup read
+            SiteRateCategories categories = geneticPrior.getSiteRateCategories();
+            for (int site = 0; site < setup.categories.length; site++) {
+                setup.categories[site] = categories.getStateCategory(site);
             }
 
             double newShape = setup.shape.get();
@@ -77,8 +83,8 @@ public class GammaShapeCategoryOperatorTest {
     private static double computeLogJointPosterior(Setup setup) {
         double[] categoryProportions = setup.siteModel.getCategoryProportions(setup.tree.getRoot());
         double logJointPosterior = createGeneticPrior(setup).calculateLogP();
-        for (int site = 0; site < setup.categories.size(); site++) {
-            logJointPosterior += Math.log(categoryProportions[setup.categories.get(site)]);
+        for (int site = 0; site < setup.categories.length; site++) {
+            logJointPosterior += Math.log(categoryProportions[setup.categories[site]]);
         }
         return logJointPosterior;
     }
@@ -86,26 +92,21 @@ public class GammaShapeCategoryOperatorTest {
     /**
      * Returns the log of the posterior of the current shape with the categories of all sites
      * summed out, which enumerates every assignment of the categories of the three sites and then
-     * restores the categories of the state.
+     * restores the categories of the setup.
      */
     private static double computeLogSummedPosterior(Setup setup) {
-        int numSites = setup.categories.size();
-        int[] originalCategories = new int[numSites];
-        for (int site = 0; site < numSites; site++) {
-            originalCategories[site] = setup.categories.get(site);
-        }
+        int numSites = setup.categories.length;
+        int[] originalCategories = setup.categories.clone();
 
         double[] logJointPosteriors = new double[1 << numSites];
         for (int assignment = 0; assignment < logJointPosteriors.length; assignment++) {
             for (int site = 0; site < numSites; site++) {
-                setup.categories.set(site, (assignment >> site) & 1);
+                setup.categories[site] = (assignment >> site) & 1;
             }
             logJointPosteriors[assignment] = computeLogJointPosterior(setup);
         }
 
-        for (int site = 0; site < numSites; site++) {
-            setup.categories.set(site, originalCategories[site]);
-        }
+        System.arraycopy(originalCategories, 0, setup.categories, 0, numSites);
 
         double maxLogJointPosterior = Double.NEGATIVE_INFINITY;
         for (double logJointPosterior : logJointPosteriors) {
@@ -118,7 +119,10 @@ public class GammaShapeCategoryOperatorTest {
         return maxLogJointPosterior + Math.log(sum);
     }
 
-    /** Creates a genetic prior on the objects of the setup, which computes every branch from scratch on its first calculation. */
+    /**
+     * Creates a genetic prior on the objects of the setup with the categories of the setup, which
+     * computes every branch from scratch on its first calculation.
+     */
     private static GeneticPrior createGeneticPrior(Setup setup) {
         GeneticPrior geneticPrior = new GeneticPrior();
         geneticPrior.initByName(
@@ -126,9 +130,14 @@ public class GammaShapeCategoryOperatorTest {
                 "tree", setup.tree,
                 "siteModel", setup.siteModel,
                 "branchRateModel", setup.clockModel,
-                "mutations", setup.mutations,
-                "siteRateCategories", setup.categories
+                "mutations", setup.mutations
         );
+
+        SiteRateCategories categories = geneticPrior.getSiteRateCategories();
+        for (int site = 0; site < setup.categories.length; site++) {
+            categories.setStateCategory(site, setup.categories[site]);
+        }
+        categories.markRedrawn();
         return geneticPrior;
     }
 
@@ -178,9 +187,7 @@ public class GammaShapeCategoryOperatorTest {
         StrictClockModel clockModel = new StrictClockModel();
         clockModel.initByName("clock.rate", new RealScalarParam<>(CLOCK_RATE, PositiveReal.INSTANCE));
 
-        IntVectorParam<NonNegativeInt> categories = new IntVectorParam<>(categoryValues, NonNegativeInt.INSTANCE);
-
-        return new Setup(alignment, tree, siteModel, shape, clockModel, categories, mutations);
+        return new Setup(alignment, tree, siteModel, shape, clockModel, categoryValues.clone(), mutations);
     }
 
     /** Returns the tip with the given taxon name. */

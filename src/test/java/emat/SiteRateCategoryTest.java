@@ -4,16 +4,15 @@ import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeParser;
-import beast.base.spec.domain.NonNegativeInt;
 import beast.base.spec.domain.PositiveReal;
 import beast.base.spec.evolution.branchratemodel.StrictClockModel;
 import beast.base.spec.evolution.sitemodel.SiteModel;
 import beast.base.spec.evolution.substitutionmodel.JukesCantor;
-import beast.base.spec.inference.parameter.IntVectorParam;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.util.Randomizer;
 import emat.operators.mutations.SiteHistoryGibbsOperator;
 import emat.prior.GeneticPrior;
+import emat.prior.SiteRateCategories;
 import emat.state.Mutation;
 import emat.state.Mutations;
 import org.junit.jupiter.api.Test;
@@ -31,7 +30,7 @@ public class SiteRateCategoryTest {
     private static final double TOTAL_LENGTH = 5.5;
 
     /** The objects of a genetic prior with three sites, two rate categories and a fixed history. */
-    private record Setup(TreeParser tree, SiteModel siteModel, IntVectorParam<?> categories, GeneticPrior prior, Mutations mutations) {
+    private record Setup(TreeParser tree, SiteModel siteModel, GeneticPrior prior, Mutations mutations) {
     }
 
     /**
@@ -96,17 +95,18 @@ public class SiteRateCategoryTest {
         StrictClockModel clockModel = new StrictClockModel();
         clockModel.initByName("clock.rate", new RealScalarParam<>(1.0, PositiveReal.INSTANCE));
 
-        IntVectorParam<NonNegativeInt> categories = new IntVectorParam<>(new int[]{0, 1}, NonNegativeInt.INSTANCE);
-
         GeneticPrior prior = new GeneticPrior();
         prior.initByName(
                 "data", alignment,
                 "tree", tree,
                 "siteModel", siteModel,
                 "branchRateModel", clockModel,
-                "mutations", mutations,
-                "siteRateCategories", categories
+                "mutations", mutations
         );
+
+        // the categories are set before the first calculation, which takes them over for the operator
+        SiteRateCategories categories = setCategories(prior, new int[]{0, 1});
+        prior.calculateLogP();
 
         SiteHistoryGibbsOperator operator = new SiteHistoryGibbsOperator();
         operator.initByName("weight", 1.0, "mutations", mutations, "geneticPrior", prior,
@@ -129,7 +129,7 @@ public class SiteRateCategoryTest {
 
         int[][] tipStates = {{0, 1}, {0, 0}};
         for (int site = 0; site < 2; site++) {
-            int category = categories.get(site);
+            int category = categories.getCategory(site);
             double branchTime = 0.8 * siteModel.getRateForCategory(category, tree.getRoot());
             double[] rootProbabilities = new double[4];
             double categoryLikelihood = 0.0;
@@ -210,19 +210,30 @@ public class SiteRateCategoryTest {
         StrictClockModel clockModel = new StrictClockModel();
         clockModel.initByName("clock.rate", new RealScalarParam<>(CLOCK_RATE, PositiveReal.INSTANCE));
 
-        IntVectorParam<NonNegativeInt> categories = new IntVectorParam<>(categoryValues, NonNegativeInt.INSTANCE);
-
         GeneticPrior prior = new GeneticPrior();
         prior.initByName(
                 "data", alignment,
                 "tree", tree,
                 "siteModel", siteModel,
                 "branchRateModel", clockModel,
-                "mutations", mutations,
-                "siteRateCategories", categories
+                "mutations", mutations
         );
+        setCategories(prior, categoryValues);
 
-        return new Setup(tree, siteModel, categories, prior, mutations);
+        return new Setup(tree, siteModel, prior, mutations);
+    }
+
+    /**
+     * Sets the categories of the sites of the given prior and marks them as redrawn, so that the
+     * next calculation of the prior takes them over. Returns the categories of the prior.
+     */
+    private static SiteRateCategories setCategories(GeneticPrior prior, int[] categoryValues) {
+        SiteRateCategories categories = prior.getSiteRateCategories();
+        for (int site = 0; site < categoryValues.length; site++) {
+            categories.setStateCategory(site, categoryValues[site]);
+        }
+        categories.markRedrawn();
+        return categories;
     }
 
     /** Returns the tip with the given taxon name. */
