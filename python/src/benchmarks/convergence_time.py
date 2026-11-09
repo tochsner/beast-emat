@@ -187,9 +187,7 @@ def load_log(log_path: Path) -> pd.DataFrame | None:
     # corrupted lines (e.g. partially written or interleaved ones) are dropped, whether they have too many fields,
     # too few fields or values that are not numbers
     try:
-        log_df = pd.read_csv(
-            log_path, comment="#", delimiter="\t", on_bad_lines="skip"
-        )
+        log_df = pd.read_csv(log_path, comment="#", delimiter="\t", on_bad_lines="skip")
     except (pd.errors.EmptyDataError, pd.errors.ParserError) as error:
         print(f"Skipping unreadable log file: {log_path.name} ({error})")
         return None
@@ -201,11 +199,7 @@ def load_log(log_path: Path) -> pd.DataFrame | None:
         log_df = log_df[log_df["Sample"] < next_sample]
 
     # Also skip if the log_df is empty after reading (empty header file, etc)
-    if (
-        log_df.empty
-        or "Sample" not in log_df.columns
-        or log_df["Sample"].iloc[-1] <= 0
-    ):
+    if log_df.empty or "Sample" not in log_df.columns or log_df["Sample"].iloc[-1] <= 0:
         print(f"Skipping log file (no data after parsing): {log_path.name}")
         return None
 
@@ -219,7 +213,9 @@ def get_mean_num_mutations(log_df: pd.DataFrame) -> float:
     """Returns the posterior mean number of mutations after the burn-in, or NaN if it is not logged."""
     if "mutations.count" not in log_df.columns:
         return float("nan")
-    return float(log_df["mutations.count"].iloc[int(len(log_df) * BURNIN_FRACTION) :].mean())
+    return float(
+        log_df["mutations.count"].iloc[int(len(log_df) * BURNIN_FRACTION) :].mean()
+    )
 
 
 def get_ess_trajectory(log_df: pd.DataFrame) -> pd.DataFrame | None:
@@ -459,7 +455,7 @@ def plot_running_time_against(
             "linewidth": 0.8,
             "shrinkB": 6,
         },
-        expand=(0.5, 1.5),
+        expand=(1.75, 1.75),
     )
 
     fig.savefig(
@@ -576,8 +572,12 @@ def plot_relative_convergence_time(
 
 def analyse_method(method: str, log_paths: dict[tuple[str, int], Path]) -> None:
     """Analyses all seeds of all experiments of a method and plots the results, prefixed with the method."""
-    log_results = {key: get_cached(log_path, analyse_log) for key, log_path in log_paths.items()}
-    log_results = {key: result for key, result in log_results.items() if result is not None}
+    log_results = {
+        key: get_cached(log_path, analyse_log) for key, log_path in log_paths.items()
+    }
+    log_results = {
+        key: result for key, result in log_results.items() if result is not None
+    }
     if not log_results:
         print(f"\n{method}: no usable runs, skipping")
         return
@@ -586,10 +586,14 @@ def analyse_method(method: str, log_paths: dict[tuple[str, int], Path]) -> None:
     alignment_stats = {}
     for experiment in sorted({experiment for experiment, _ in log_results}):
         try:
-            alignment_stats[experiment] = get_cached(XMLS_PATH / f"{method}_{experiment}.xml", get_alignment_stats)
+            alignment_stats[experiment] = get_cached(
+                XMLS_PATH / f"{method}_{experiment}.xml", get_alignment_stats
+            )
         except (ValueError, OSError) as error:
             print(f"Skipping experiment {method}_{experiment}: {error}")
-    log_results = {key: result for key, result in log_results.items() if key[0] in alignment_stats}
+    log_results = {
+        key: result for key, result in log_results.items() if key[0] in alignment_stats
+    }
     experiments = sorted(alignment_stats)
 
     # each experiment keeps the same color in all plots of the method
@@ -601,7 +605,9 @@ def analyse_method(method: str, log_paths: dict[tuple[str, int], Path]) -> None:
     )
     experiment_colors = dict(zip(experiments, palette))
 
-    ess_trajectories = {key: result["trajectory"] for key, result in log_results.items()}
+    ess_trajectories = {
+        key: result["trajectory"] for key, result in log_results.items()
+    }
 
     # the number of mutations is averaged over the seeds that log it
     experiment_stats = {}
@@ -613,7 +619,9 @@ def analyse_method(method: str, log_paths: dict[tuple[str, int], Path]) -> None:
         ]
         experiment_stats[experiment] = {
             **alignment_stats[experiment],
-            "num_mutations": float(np.mean(num_mutations)) if num_mutations else float("nan"),
+            "num_mutations": float(np.mean(num_mutations))
+            if num_mutations
+            else float("nan"),
         }
 
     convergence_df = get_convergence_df(ess_trajectories)
