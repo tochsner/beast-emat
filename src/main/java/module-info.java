@@ -60,6 +60,7 @@ open module my.beast.example {
     exports emat.tree;
     exports esat.helper;
     exports esat.initialisation;
+    exports esat.operators.nodetimes;
     exports esat.operators.states;
     exports esat.operators.topology;
     exports esat.prior;
@@ -104,5 +105,7 @@ open module my.beast.example {
             esat.prior.GeneticPrior,
             esat.initialisation.SampledStatesInitialiser,
             esat.operators.states.GlobalStateGibbsOperator,
-            esat.operators.topology.StateDirectedSprOperator;
+            esat.operators.topology.StateDirectedSprOperator,
+            esat.operators.nodetimes.RatioScaleOperator,
+            esat.operators.nodetimes.RootRatioScaleOperator;
 }

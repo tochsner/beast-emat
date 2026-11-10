@@ -8,6 +8,8 @@
         <provider classname="esat.initialisation.SampledStatesInitialiser"/>
         <provider classname="esat.operators.states.GlobalStateGibbsOperator"/>
         <provider classname="esat.operators.topology.StateDirectedSprOperator"/>
+        <provider classname="esat.operators.nodetimes.RatioScaleOperator"/>
+        <provider classname="esat.operators.nodetimes.RootRatioScaleOperator"/>
         <provider classname="emat.state.BranchAnnotations"/>
         <provider classname="emat.prior.GeneticPrior"/>
         <provider classname="emat.prior.BranchKindPrior"/>
