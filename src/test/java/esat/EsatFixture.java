@@ -19,7 +19,7 @@ import emat.tree.IncrementalStoreTree;
 import esat.helper.TipCompatibility;
 import esat.prior.GeneticPrior;
 import esat.state.NodeStates;
-import esat.state.StateChanges;
+import esat.state.BranchChanges;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -122,24 +122,23 @@ public record EsatFixture(Tree tree, Alignment alignment, NodeStates nodeStates,
         return sequences;
     }
 
-    /** Sets the states of every node to the given sequences, with the sequence of the root as the reference. */
+    /** Sets the states of every node to the given sequences. */
     public void initialiseStates(int[][] sequences) {
         int[] rootSequence = sequences[this.tree.getRoot().getNr()];
-        List<StateChanges> changes = new ArrayList<>();
+        List<BranchChanges> changes = new ArrayList<>();
         for (int nodeNr = 0; nodeNr < sequences.length; nodeNr++) {
-            changes.add(StateChanges.fromSequence(nodeNr, sequences[nodeNr], rootSequence));
+            Node node = this.tree.getNode(nodeNr);
+            changes.add(node.isRoot()
+                    ? BranchChanges.empty(nodeNr)
+                    : BranchChanges.fromSequences(nodeNr, sequences[node.getParent().getNr()], sequences[nodeNr]));
         }
         this.nodeStates.initialiseStates(rootSequence, changes);
     }
 
     /** Returns the full sequence of every node. */
     public int[][] getSequences() {
-        int[][] sequences = new int[this.tree.getNodeCount()][this.nodeStates.getNumSites()];
-        for (Node node : this.tree.getNodesAsArray()) {
-            for (int site = 0; site < sequences[node.getNr()].length; site++) {
-                sequences[node.getNr()][site] = this.nodeStates.getState(node, site);
-            }
-        }
+        int[][] sequences = new int[this.tree.getNodeCount()][];
+        this.nodeStates.visitStates((node, sequence) -> sequences[node.getNr()] = sequence.clone());
         return sequences;
     }
 
@@ -147,7 +146,7 @@ public record EsatFixture(Tree tree, Alignment alignment, NodeStates nodeStates,
     public boolean areTipsCompatible() {
         TipCompatibility tipCompatibility = this.geneticPrior.getTipCompatibility();
         for (Node tip : this.tree.getExternalNodes()) {
-            if (!tipCompatibility.isCompatible(tip, this.nodeStates.getChanges(tip), this.nodeStates.getReferenceSequence())) {
+            if (!tipCompatibility.isCompatible(tip, this.nodeStates.materializeState(tip))) {
                 return false;
             }
         }

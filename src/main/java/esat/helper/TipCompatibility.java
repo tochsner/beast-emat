@@ -4,7 +4,6 @@ import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.datatype.DataType;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
-import esat.state.StateChanges;
 
 import java.util.Arrays;
 
@@ -128,23 +127,15 @@ public final class TipCompatibility {
     }
 
     /**
-     * Returns whether the states of the given node, given by its changes compared to the root
-     * sequence, are compatible with its data at every site. Inner nodes are always compatible.
-     * This merges the constrained sites with the changes, so it takes O(C + m).
+     * Returns whether the given full sequence of the given node is compatible with its data at
+     * every site. Inner nodes are always compatible. This takes O(C) for C constrained sites.
      */
-    public boolean isCompatible(Node node, StateChanges changes, int[] rootSequence) {
+    public boolean isCompatible(Node node, int[] sequence) {
         int[] sites = this.constrainedSitesOfNode[node.getNr()];
         int[] masks = this.compatibleStatesOfNode[node.getNr()];
 
-        int j = 0;
         for (int i = 0; i < sites.length; i++) {
-            int site = sites[i];
-            while (j < changes.size() && changes.getSite(j) < site) {
-                j++;
-            }
-
-            int state = j < changes.size() && changes.getSite(j) == site ? changes.getState(j) : rootSequence[site];
-            if ((masks[i] & (1 << state)) == 0) {
+            if ((masks[i] & (1 << sequence[sites[i]])) == 0) {
                 return false;
             }
         }

@@ -18,7 +18,7 @@ import beast.base.util.Randomizer;
 import esat.helper.TipCompatibility;
 import esat.prior.GeneticPrior;
 import esat.state.NodeStates;
-import esat.state.StateChanges;
+import esat.state.BranchChanges;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -95,7 +95,7 @@ public class NodeStateSamplerTest {
                 int[] currentSequence = this.getSequence(fixture.nodeStates(), node);
                 assertEquals(
                         this.computeLogDensity(conditionals, currentSequence),
-                        fixture.sampler().computeLogDensity(node, this.toChanges(fixture, node, currentSequence)),
+                        fixture.sampler().computeLogDensity(node, this.toEdit(fixture, node, currentSequence)),
                         1e-9
                 );
 
@@ -106,7 +106,7 @@ public class NodeStateSamplerTest {
                 }
                 assertEquals(
                         this.computeLogDensity(conditionals, randomSequence),
-                        fixture.sampler().computeLogDensity(node, this.toChanges(fixture, node, randomSequence)),
+                        fixture.sampler().computeLogDensity(node, this.toEdit(fixture, node, randomSequence)),
                         1e-9
                 );
             }
@@ -124,7 +124,7 @@ public class NodeStateSamplerTest {
             double total = 0.0;
             for (int configuration = 0; configuration < 64; configuration++) {
                 int[] sequence = {configuration % 4, (configuration / 4) % 4, configuration / 16};
-                total += Math.exp(fixture.sampler().computeLogDensity(node, this.toChanges(fixture, node, sequence)));
+                total += Math.exp(fixture.sampler().computeLogDensity(node, this.toEdit(fixture, node, sequence)));
             }
             assertEquals(1.0, total, 1e-12, "Node " + node.getNr());
         }
@@ -173,14 +173,19 @@ public class NodeStateSamplerTest {
      */
     private void assertSamplesMatchConditionals(Fixture fixture, Node node) {
         double[][] conditionals = this.computeConditionals(fixture, node);
-        int[] reference = fixture.nodeStates().getReferenceSequence();
-        int numSites = reference.length;
+        int[] currentSequence = fixture.nodeStates().materializeState(node);
+        int numSites = currentSequence.length;
 
         long[][] counts = new long[numSites][NUM_STATES];
         for (int i = 0; i < NUM_SAMPLES; i++) {
-            StateChanges changes = fixture.sampler().sample(node);
+            StateEdit edit = fixture.sampler().sample(node);
+            int[] sampledSequence = currentSequence.clone();
+            for (int k = 0; k < edit.size(); k++) {
+                assertTrue(edit.states()[k] != currentSequence[edit.sites()[k]], "The edit must only list changed sites.");
+                sampledSequence[edit.sites()[k]] = edit.states()[k];
+            }
             for (int site = 0; site < numSites; site++) {
-                counts[site][changes.getStateOrDefault(site, reference[site])]++;
+                counts[site][sampledSequence[site]]++;
             }
         }
 
@@ -241,16 +246,12 @@ public class NodeStateSamplerTest {
             state.store(i);
 
             fixture.substitutionProcess().update();
-            StateChanges currentChanges = node.isRoot() ? StateChanges.empty(node.getNr()) : nodeStates.getChanges(node);
-            StateChanges sampledChanges = fixture.sampler().sample(node);
-            double logDensityRatio = fixture.sampler().computeLogDensity(node, sampledChanges)
-                    - fixture.sampler().computeLogDensity(node, currentChanges);
+            StateEdit currentEdit = new StateEdit(node.getNr(), new int[0], new int[0]);
+            StateEdit sampledEdit = fixture.sampler().sample(node);
+            double logDensityRatio = fixture.sampler().computeLogDensity(node, sampledEdit)
+                    - fixture.sampler().computeLogDensity(node, currentEdit);
 
-            if (node.isRoot()) {
-                nodeStates.applyRootStates(sampledChanges, this.operator);
-            } else {
-                nodeStates.applyChanges(node, sampledChanges, this.operator);
-            }
+            nodeStates.setStates(node, sampledEdit.sites(), sampledEdit.states(), this.operator);
 
             state.storeCalculationNodes();
             state.checkCalculationNodesDirtiness();
@@ -480,27 +481,37 @@ public class NodeStateSamplerTest {
         }
     }
 
-    /** Sets the states of every node to the given sequences, with the sequence of the root as the reference. */
+    /** Sets the states of every node to the given sequences. */
     private void initialiseStates(Fixture fixture, int[][] sequences) {
         int[] rootSequence = sequences[fixture.tree().getRoot().getNr()];
-        List<StateChanges> changes = new ArrayList<>();
+        List<BranchChanges> changes = new ArrayList<>();
         for (int nodeNr = 0; nodeNr < sequences.length; nodeNr++) {
-            changes.add(StateChanges.fromSequence(nodeNr, sequences[nodeNr], rootSequence));
+            Node node = fixture.tree().getNode(nodeNr);
+            changes.add(node.isRoot()
+                    ? BranchChanges.empty(nodeNr)
+                    : BranchChanges.fromSequences(nodeNr, sequences[node.getParent().getNr()], sequences[nodeNr]));
         }
         fixture.nodeStates().initialiseStates(rootSequence, changes);
     }
 
-    /** Returns the changes of the given node with the given sequence, relative to the current reference. */
-    private StateChanges toChanges(Fixture fixture, Node node, int[] sequence) {
-        return StateChanges.fromSequence(node.getNr(), sequence, fixture.nodeStates().getReferenceSequence());
+    /** Returns the edit of the current states of the given node that gives it the given sequence. */
+    private StateEdit toEdit(Fixture fixture, Node node, int[] sequence) {
+        int[] currentSequence = fixture.nodeStates().materializeState(node);
+        int[] sites = new int[sequence.length];
+        int[] states = new int[sequence.length];
+        int size = 0;
+        for (int site = 0; site < sequence.length; site++) {
+            if (sequence[site] != currentSequence[site]) {
+                sites[size] = site;
+                states[size] = sequence[site];
+                size++;
+            }
+        }
+        return StateEdit.ofSorted(node.getNr(), sites, states, size);
     }
 
     private int[] getSequence(NodeStates nodeStates, Node node) {
-        int[] sequence = new int[nodeStates.getNumSites()];
-        for (int site = 0; site < sequence.length; site++) {
-            sequence[site] = nodeStates.getState(node, site);
-        }
-        return sequence;
+        return nodeStates.materializeState(node);
     }
 
 }

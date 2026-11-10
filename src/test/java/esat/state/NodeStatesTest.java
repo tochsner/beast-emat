@@ -72,33 +72,34 @@ public class NodeStatesTest {
         this.random = new Random(7);
     }
 
-    /* StateChanges */
+    /* BranchChanges */
 
     @Test
-    public void testStateChangesAreSortedBySite() {
-        StateChanges changes = StateChanges.of(3, new int[]{9, 2, 5}, new int[]{1, 3, 0});
+    public void testBranchChangesAreSortedBySite() {
+        BranchChanges changes = BranchChanges.of(3, new int[]{9, 2, 5}, new int[]{0, 1, 2}, new int[]{1, 3, 0});
 
         assertEquals(3, changes.size());
         assertEquals(2, changes.getSite(0));
-        assertEquals(3, changes.getState(0));
+        assertEquals(1, changes.getFrom(0));
+        assertEquals(3, changes.getTo(0));
         assertEquals(9, changes.getSite(2));
-        assertEquals(1, changes.getState(2));
+        assertEquals(0, changes.getFrom(2));
+        assertEquals(1, changes.getTo(2));
 
         assertEquals(1, changes.indexOfSite(5));
         assertTrue(changes.indexOfSite(4) < 0);
-        assertEquals(0, changes.getStateOrDefault(5, 2));
-        assertEquals(2, changes.getStateOrDefault(4, 2));
 
-        assertThrows(IllegalArgumentException.class, () -> StateChanges.of(3, new int[]{1, 1}, new int[]{0, 2}));
-        assertThrows(IllegalArgumentException.class, () -> StateChanges.ofSorted(3, new int[]{4, 1}, new int[]{0, 2}, 2));
+        assertThrows(IllegalArgumentException.class, () -> BranchChanges.of(3, new int[]{1, 1}, new int[]{0, 0}, new int[]{2, 3}));
+        assertThrows(IllegalArgumentException.class, () -> BranchChanges.ofSorted(3, new int[]{4, 1}, new int[]{0, 0}, new int[]{2, 3}, 2));
+        assertThrows(IllegalArgumentException.class, () -> BranchChanges.ofSorted(3, new int[]{1}, new int[]{2}, new int[]{2}, 1));
     }
 
     /* Incremental updates */
 
     /**
-     * Applies random changes of nodes and of the root sequence, each in its own accepted
-     * proposal, and checks after every one that the node states match the expected sequences
-     * and the counts match a computation from the full sequences.
+     * Sets random states of nodes and of the root, each in its own accepted proposal, and
+     * checks after every one that the node states match the expected sequences and the counts
+     * match a computation from the full sequences.
      */
     @Test
     public void testRandomChangesKeepCountsConsistent() {
@@ -152,45 +153,89 @@ public class NodeStatesTest {
         }
     }
 
-    /** Changes the states of a random non-root node or the root sequence, and updates the expected sequences. */
+    /** Sets random states of a random node or of the root at random sites, and updates the expected sequences. */
     private void applyRandomChange(int[][] expectedSequences) {
         Node[] nodes = this.tree.getNodesAsArray();
         Node node = nodes[this.random.nextInt(nodes.length)];
-        int numSites = this.nodeStates.getNumSites();
 
-        if (node.isRoot()) {
-            int numChangedSites = this.random.nextInt(numSites + 1);
-            int[] sites = this.drawDistinctSites(numChangedSites);
-            int[] states = new int[numChangedSites];
-            for (int i = 0; i < numChangedSites; i++) {
-                states[i] = this.random.nextInt(NUM_STATES);
-                expectedSequences[node.getNr()][sites[i]] = states[i];
+        int[] sites = this.drawSortedSites(this.random.nextInt(this.nodeStates.getNumSites() + 1));
+        int[] states = new int[sites.length];
+        for (int i = 0; i < sites.length; i++) {
+            states[i] = this.random.nextInt(NUM_STATES);
+            expectedSequences[node.getNr()][sites[i]] = states[i];
+        }
+        this.nodeStates.setStates(node, sites, states, this.operator);
+    }
+
+    private int[] drawSortedSites(int numSites) {
+        return this.random.ints(0, this.nodeStates.getNumSites()).distinct().limit(numSites).sorted().toArray();
+    }
+
+    @Test
+    public void testSetStatesRejectsInvalidInput() {
+        Node tip = this.getTip("A");
+        assertThrows(IllegalArgumentException.class, () -> this.nodeStates.setStates(tip, new int[]{3, 1}, new int[]{0, 0}, this.operator));
+        assertThrows(IllegalArgumentException.class, () -> this.nodeStates.setStates(tip, new int[]{1}, new int[]{NUM_STATES}, this.operator));
+        assertThrows(IllegalArgumentException.class, () -> this.nodeStates.setStates(tip, new int[]{this.nodeStates.getNumSites()}, new int[]{0}, this.operator));
+    }
+
+    /* Lookups */
+
+    @Test
+    public void testStateLookupsMatchSequences() {
+        int[][] expectedSequences = this.getSequences();
+        for (int i = 0; i < 100; i++) {
+            this.applyRandomChange(expectedSequences);
+        }
+        this.nodeStates.setEverythingDirty(false);
+
+        for (Node node : this.tree.getNodesAsArray()) {
+            assertArrayEquals(expectedSequences[node.getNr()], this.nodeStates.materializeState(node));
+            for (int site = 0; site < this.nodeStates.getNumSites(); site++) {
+                assertEquals(expectedSequences[node.getNr()][site], this.nodeStates.getState(node, site));
             }
-            this.nodeStates.applyRootStates(sites, states, this.operator);
-        } else {
-            int[] sequence = expectedSequences[node.getNr()];
-            for (int site : this.drawDistinctSites(this.random.nextInt(numSites + 1))) {
-                sequence[site] = this.random.nextInt(NUM_STATES);
-            }
-            StateChanges changes = StateChanges.fromSequence(node.getNr(), sequence, this.nodeStates.getReferenceSequence());
-            this.nodeStates.applyChanges(node, changes, this.operator);
         }
     }
 
-    private int[] drawDistinctSites(int numSites) {
-        List<Integer> sites = new ArrayList<>();
-        for (int site = 0; site < this.nodeStates.getNumSites(); site++) {
-            sites.add(site);
+    /** Composes the changes along the path between random pairs of nodes, which can be any two nodes of the tree. */
+    @Test
+    public void testPairwiseCountsAndChangesMatchSequences() {
+        int[][] expectedSequences = this.getSequences();
+        for (int i = 0; i < 200; i++) {
+            this.applyRandomChange(expectedSequences);
         }
-        Collections.shuffle(sites, this.random);
-        return sites.subList(0, numSites).stream().mapToInt(Integer::intValue).toArray();
+        this.nodeStates.setEverythingDirty(false);
+
+        Node[] nodes = this.tree.getNodesAsArray();
+        int[] counts = new int[NUM_STATES * NUM_STATES];
+        for (Node upper : nodes) {
+            for (Node lower : nodes) {
+                int[] upperSequence = expectedSequences[upper.getNr()];
+                int[] lowerSequence = expectedSequences[lower.getNr()];
+
+                int[] expectedCounts = new int[NUM_STATES * NUM_STATES];
+                for (int site = 0; site < upperSequence.length; site++) {
+                    expectedCounts[upperSequence[site] * NUM_STATES + lowerSequence[site]]++;
+                }
+
+                this.nodeStates.countTransitions(upper, lower, counts);
+                assertArrayEquals(expectedCounts, counts, "Counts from " + upper.getNr() + " to " + lower.getNr());
+
+                BranchChanges changes = this.nodeStates.composeChanges(upper, lower);
+                BranchChanges expectedChanges = BranchChanges.fromSequences(lower.getNr(), upperSequence, lowerSequence);
+                assertTrue(expectedChanges.hasSameEntries(changes), "Changes from " + upper.getNr() + " to " + lower.getNr());
+            }
+        }
     }
 
     /* Topology changes */
 
-    /** Swaps two tips between their parents and checks that marking their branches as changed recomputes the counts. */
+    /**
+     * Swaps two tips between their parents and checks that installing the changes composed
+     * before the move keeps all states and recomputes the counts.
+     */
     @Test
-    public void testMarkBranchChangedAfterTopologyChange() {
+    public void testSetBranchChangesAfterTopologyChange() {
         int[][] expectedSequences = this.getSequences();
         for (int i = 0; i < 50; i++) {
             this.applyRandomChange(expectedSequences);
@@ -202,14 +247,18 @@ public class NodeStatesTest {
         Node parentA = tipA.getParent();
         Node parentC = tipC.getParent();
 
+        BranchChanges changesA = this.nodeStates.composeChanges(parentC, tipA);
+        BranchChanges changesC = this.nodeStates.composeChanges(parentA, tipC);
+
         parentA.removeChild(tipA);
         parentC.removeChild(tipC);
         parentA.addChild(tipC);
         parentC.addChild(tipA);
 
-        this.nodeStates.markBranchChanged(tipA, this.operator);
-        this.nodeStates.markBranchChanged(tipC, this.operator);
+        this.nodeStates.setBranchChanges(tipA, changesA, this.operator);
+        this.nodeStates.setBranchChanges(tipC, changesC, this.operator);
 
+        assertSequencesEqual(expectedSequences, this.getSequences());
         this.assertCountsConsistent();
         assertTrue(this.nodeStates.isDirty(tipA));
         assertTrue(this.nodeStates.isDirty(tipC));
@@ -254,17 +303,16 @@ public class NodeStatesTest {
         Node tipA = this.getTip("A");
         Node inner = tipA.getParent();
 
-        int[] sequence = getSequences(this.nodeStates, this.tree)[inner.getNr()];
-        sequence[0] = (sequence[0] + 1) % NUM_STATES;
-        this.nodeStates.applyChanges(inner, StateChanges.fromSequence(inner.getNr(), sequence, this.nodeStates.getReferenceSequence()), this.operator);
+        int newInnerState = (this.nodeStates.getState(inner, 0) + 1) % NUM_STATES;
+        this.nodeStates.setStates(inner, new int[]{0}, new int[]{newInnerState}, this.operator);
 
         Set<Integer> expectedDirty = new HashSet<>(List.of(inner.getNr(), inner.getChild(0).getNr(), inner.getChild(1).getNr()));
         assertEquals(expectedDirty, this.getDirtyNodeNrs());
         this.nodeStates.setEverythingDirty(false);
 
         Node root = this.tree.getRoot();
-        int newRootState = (this.nodeStates.getReferenceSequence()[3] + 1) % NUM_STATES;
-        this.nodeStates.applyRootStates(new int[]{3}, new int[]{newRootState}, this.operator);
+        int newRootState = (this.nodeStates.getRootSequence()[3] + 1) % NUM_STATES;
+        this.nodeStates.setStates(root, new int[]{3}, new int[]{newRootState}, this.operator);
 
         expectedDirty = new HashSet<>(List.of(root.getNr(), root.getChild(0).getNr(), root.getChild(1).getNr()));
         assertEquals(expectedDirty, this.getDirtyNodeNrs());
@@ -286,39 +334,70 @@ public class NodeStatesTest {
         return nodeNrs;
     }
 
+    /** Only tips whose states were set directly are marked for a compatibility check, and every tip after a replacement of all states. */
+    @Test
+    public void testPendingCompatibilityChecks() {
+        // the states are clean after the set up
+        assertFalse(this.nodeStates.isEveryCheckPending());
+        assertEquals(0, this.nodeStates.getCheckNodeCount());
+
+        Node tipA = this.getTip("A");
+        this.nodeStates.setStates(tipA.getParent(), new int[]{0}, new int[]{(this.nodeStates.getState(tipA.getParent(), 0) + 1) % NUM_STATES}, this.operator);
+        assertEquals(0, this.nodeStates.getCheckNodeCount());
+
+        this.nodeStates.setStates(tipA, new int[]{1}, new int[]{(this.nodeStates.getState(tipA, 1) + 1) % NUM_STATES}, this.operator);
+        assertEquals(1, this.nodeStates.getCheckNodeCount());
+        assertEquals(tipA.getNr(), this.nodeStates.getCheckNodeNrs()[0]);
+        this.nodeStates.setEverythingDirty(false);
+        assertEquals(0, this.nodeStates.getCheckNodeCount());
+
+        this.nodeStates.setBranchChanges(tipA, this.nodeStates.getChanges(tipA), this.operator);
+        assertEquals(1, this.nodeStates.getCheckNodeCount());
+        this.nodeStates.setEverythingDirty(false);
+
+        int[][] sequences = this.drawSequences();
+        this.nodeStates.initialiseStates(sequences[this.tree.getRoot().getNr()], this.getChanges(sequences));
+        assertTrue(this.nodeStates.isEveryCheckPending());
+    }
+
     /* Initialisation */
 
     @Test
     public void testInitialiseStatesFromSequences() {
-        int numSites = this.nodeStates.getNumSites();
         int rootNr = this.tree.getRoot().getNr();
 
-        int[][] sequences = new int[this.tree.getNodeCount()][numSites];
-        for (int[] sequence : sequences) {
-            for (int site = 0; site < numSites; site++) {
-                sequence[site] = this.random.nextInt(NUM_STATES);
-            }
-        }
-
-        List<StateChanges> changes = new ArrayList<>();
-        for (int nodeNr = 0; nodeNr < sequences.length; nodeNr++) {
-            changes.add(StateChanges.fromSequence(nodeNr, sequences[nodeNr], sequences[rootNr]));
-        }
+        int[][] sequences = this.drawSequences();
+        List<BranchChanges> changes = this.getChanges(sequences);
         this.nodeStates.initialiseStates(sequences[rootNr], changes);
 
         assertSequencesEqual(sequences, this.getSequences());
         this.assertCountsConsistent();
 
-        // the root must not differ from the root sequence
-        List<StateChanges> invalidChanges = new ArrayList<>(changes);
-        invalidChanges.set(rootNr, StateChanges.fromSequence(rootNr, sequences[0], sequences[rootNr]));
+        // the root has no parent to differ from
+        List<BranchChanges> invalidChanges = new ArrayList<>(changes);
+        invalidChanges.set(rootNr, BranchChanges.fromSequences(rootNr, sequences[0], sequences[rootNr]));
         assertThrows(RuntimeException.class, () -> this.nodeStates.initialiseStates(sequences[rootNr], invalidChanges));
+    }
+
+    /** A change must start in the state of the parent at its site. */
+    @Test
+    public void testInitialiseStatesRejectsInconsistentChanges() {
+        int[][] sequences = this.drawSequences();
+        int rootNr = this.tree.getRoot().getNr();
+
+        Node tip = this.getTip("A");
+        int site = 0;
+        int wrongFromState = (sequences[tip.getParent().getNr()][site] + 1) % NUM_STATES;
+        int toState = (wrongFromState + 1) % NUM_STATES;
+
+        List<BranchChanges> changes = this.getChanges(sequences);
+        changes.set(tip.getNr(), BranchChanges.of(tip.getNr(), new int[]{site}, new int[]{wrongFromState}, new int[]{toState}));
+        assertThrows(RuntimeException.class, () -> this.nodeStates.initialiseStates(sequences[rootNr], changes));
     }
 
     /** Replaces all states within proposals, which a restore must revert and an accept must keep consistent. */
     @Test
     public void testReplaceStatesWithinProposal() {
-        int numSites = this.nodeStates.getNumSites();
         int rootNr = this.tree.getRoot().getNr();
 
         for (int step = 0; step < 100; step++) {
@@ -326,18 +405,8 @@ public class NodeStatesTest {
             int[][] countsBefore = this.copyCounts();
             int[] rootStateCountsBefore = this.nodeStates.getRootStateCounts().clone();
 
-            int[][] sequences = new int[this.tree.getNodeCount()][numSites];
-            for (int[] sequence : sequences) {
-                for (int site = 0; site < numSites; site++) {
-                    sequence[site] = this.random.nextInt(NUM_STATES);
-                }
-            }
-            StateChanges[] changes = new StateChanges[sequences.length];
-            for (int nodeNr = 0; nodeNr < sequences.length; nodeNr++) {
-                changes[nodeNr] = StateChanges.fromSequence(nodeNr, sequences[nodeNr], sequences[rootNr]);
-            }
-
-            this.nodeStates.replaceStates(sequences[rootNr], changes, this.operator);
+            int[][] sequences = this.drawSequences();
+            this.nodeStates.replaceStates(sequences[rootNr], this.getChanges(sequences).toArray(new BranchChanges[0]), this.operator);
             assertTrue(this.nodeStates.isEveryBranchDirty());
             assertSequencesEqual(sequences, this.getSequences());
             this.assertCountsConsistent();
@@ -356,24 +425,143 @@ public class NodeStatesTest {
         }
     }
 
+    /** Returns random full sequences for every node. */
+    private int[][] drawSequences() {
+        int[][] sequences = new int[this.tree.getNodeCount()][this.nodeStates.getNumSites()];
+        for (int[] sequence : sequences) {
+            for (int site = 0; site < sequence.length; site++) {
+                sequence[site] = this.random.nextInt(NUM_STATES);
+            }
+        }
+        return sequences;
+    }
+
+    /** Returns the changes of every node relative to its parent, which are empty for the root. */
+    private List<BranchChanges> getChanges(int[][] sequences) {
+        List<BranchChanges> changes = new ArrayList<>();
+        for (int nodeNr = 0; nodeNr < sequences.length; nodeNr++) {
+            Node node = this.tree.getNode(nodeNr);
+            changes.add(node.isRoot()
+                    ? BranchChanges.empty(nodeNr)
+                    : BranchChanges.fromSequences(nodeNr, sequences[node.getParent().getNr()], sequences[nodeNr]));
+        }
+        return changes;
+    }
+
+    /**
+     * Replaces the states at a random subset of sites within a proposal, so that the root
+     * states change at some of them and only some nodes change. The states must equal the
+     * expected sequences, the counts must match a computation from scratch, every node whose
+     * states change must be dirty, and a restore must bring back the old states.
+     */
+    @Test
+    public void testReplaceStatesAtSitesWithinProposal() {
+        int numSites = this.nodeStates.getNumSites();
+        int rootNr = this.tree.getRoot().getNr();
+
+        for (int step = 0; step < 200; step++) {
+            int[][] sequencesBefore = this.getSequences();
+            int[][] countsBefore = this.copyCounts();
+            int[] rootStateCountsBefore = this.nodeStates.getRootStateCounts().clone();
+
+            // draw ascending sites, and new states for a random subset of the nodes at them
+
+            int[] sites = this.drawSortedSites(1 + this.random.nextInt(numSites));
+            int[][] sequences = new int[sequencesBefore.length][];
+            for (int nodeNr = 0; nodeNr < sequences.length; nodeNr++) {
+                sequences[nodeNr] = sequencesBefore[nodeNr].clone();
+                if (this.random.nextInt(3) == 0) {
+                    for (int site : sites) {
+                        sequences[nodeNr][site] = this.random.nextInt(NUM_STATES);
+                    }
+                }
+            }
+
+            int[] rootStates = new int[sites.length];
+            for (int i = 0; i < sites.length; i++) {
+                rootStates[i] = sequences[rootNr][sites[i]];
+            }
+
+            // the changes at the sites relative to the new states of the parent
+            BranchChanges[] changesAtSites = new BranchChanges[sequences.length];
+            for (Node node : this.tree.getNodesAsArray()) {
+                if (node.isRoot()) {
+                    changesAtSites[node.getNr()] = BranchChanges.empty(node.getNr());
+                    continue;
+                }
+
+                int[] parentSequence = sequences[node.getParent().getNr()];
+                int[] changedSites = new int[sites.length];
+                int[] fromStates = new int[sites.length];
+                int[] toStates = new int[sites.length];
+                int size = 0;
+                for (int site : sites) {
+                    if (sequences[node.getNr()][site] != parentSequence[site]) {
+                        changedSites[size] = site;
+                        fromStates[size] = parentSequence[site];
+                        toStates[size] = sequences[node.getNr()][site];
+                        size++;
+                    }
+                }
+                changesAtSites[node.getNr()] = BranchChanges.ofSorted(node.getNr(), changedSites, fromStates, toStates, size);
+            }
+
+            this.nodeStates.replaceStatesAtSites(sites, rootStates, changesAtSites, this.operator);
+            assertSequencesEqual(sequences, this.getSequences());
+            this.assertCountsConsistent();
+            for (Node node : this.tree.getNodesAsArray()) {
+                if (!Arrays.equals(sequencesBefore[node.getNr()], sequences[node.getNr()])) {
+                    assertTrue(this.nodeStates.isDirty(node), "node " + node.getNr() + " changed but is clean");
+                }
+            }
+            assertEquals(0, this.nodeStates.getCheckNodeCount());
+
+            if (this.random.nextBoolean()) {
+                this.nodeStates.restoreStateNode();
+                this.nodeStates.restore();
+
+                assertSequencesEqual(sequencesBefore, this.getSequences());
+                assertArrayEquals(rootStateCountsBefore, this.nodeStates.getRootStateCounts());
+                assertTrue(Arrays.deepEquals(countsBefore, this.copyCounts()));
+            }
+
+            this.nodeStates.setEverythingDirty(false);
+            this.assertCountsConsistent();
+        }
+    }
+
+    /** Changes at a site that is not replaced, or unsorted sites, are rejected. */
+    @Test
+    public void testReplaceStatesAtSitesRejectsInvalidInput() {
+        int numNodes = this.tree.getNodeCount();
+        // BEAST numbers the leaves first
+        int leafNr = 0;
+        int[] root = this.nodeStates.getRootSequence();
+
+        BranchChanges[] changes = new BranchChanges[numNodes];
+        for (int nodeNr = 0; nodeNr < numNodes; nodeNr++) {
+            changes[nodeNr] = BranchChanges.empty(nodeNr);
+        }
+        changes[leafNr] = BranchChanges.of(leafNr, new int[]{2}, new int[]{root[2]}, new int[]{(root[2] + 1) % NUM_STATES});
+        BranchChanges[] outsideChanges = changes;
+        assertThrows(IllegalArgumentException.class,
+                () -> this.nodeStates.replaceStatesAtSites(new int[]{1}, new int[]{root[1]}, outsideChanges, this.operator));
+
+        changes[leafNr] = BranchChanges.empty(leafNr);
+        assertThrows(IllegalArgumentException.class,
+                () -> this.nodeStates.replaceStatesAtSites(new int[]{3, 1}, new int[]{root[3], root[1]}, changes, this.operator));
+    }
+
     /* Brute force reference */
 
     private int[][] getSequences() {
         return getSequences(this.nodeStates, this.tree);
     }
 
-    /** Returns the full sequence of every node, built from the root sequence and the changes of the node. */
+    /** Returns the full sequence of every node, as visited from the root down. */
     private static int[][] getSequences(NodeStates nodeStates, Tree tree) {
         int[][] sequences = new int[tree.getNodeCount()][];
-        for (Node node : tree.getNodesAsArray()) {
-            int[] sequence = nodeStates.getReferenceSequence().clone();
-            StateChanges changes = nodeStates.getChanges(node);
-            for (int i = 0; i < changes.size(); i++) {
-                assertTrue(changes.getState(i) != nodeStates.getReferenceSequence()[changes.getSite(i)]);
-                sequence[changes.getSite(i)] = changes.getState(i);
-            }
-            sequences[node.getNr()] = sequence;
-        }
+        nodeStates.visitStates((node, sequence) -> sequences[node.getNr()] = sequence.clone());
         return sequences;
     }
 
@@ -402,7 +590,7 @@ public class NodeStatesTest {
             expectedRootStateCounts[state]++;
         }
         assertArrayEquals(expectedRootStateCounts, this.nodeStates.getRootStateCounts());
-        assertArrayEquals(rootSequence, this.nodeStates.getReferenceSequence());
+        assertArrayEquals(rootSequence, this.nodeStates.getRootSequence());
 
         int expectedDifferenceCount = 0;
         for (Node node : this.tree.getNodesAsArray()) {
@@ -421,19 +609,15 @@ public class NodeStatesTest {
             }
 
             assertArrayEquals(expectedCounts, this.nodeStates.getTransitionCounts(node), "Counts above node " + node.getNr());
+
+            int[] expectedStateCounts = new int[NUM_STATES];
+            for (int state : nodeSequence) {
+                expectedStateCounts[state]++;
+            }
+            assertArrayEquals(expectedStateCounts, this.nodeStates.getStateCounts(node), "State counts of node " + node.getNr());
         }
 
         assertEquals(expectedDifferenceCount, this.nodeStates.getDifferenceCount());
-
-        int expectedChangeCount = 0;
-        for (int[] sequence : sequences) {
-            for (int site = 0; site < sequence.length; site++) {
-                if (sequence[site] != rootSequence[site]) {
-                    expectedChangeCount++;
-                }
-            }
-        }
-        assertEquals(expectedChangeCount, this.nodeStates.getChangeCount());
     }
 
     private static void assertSequencesEqual(int[][] expected, int[][] actual) {

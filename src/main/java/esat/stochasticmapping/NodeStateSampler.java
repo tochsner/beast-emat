@@ -3,8 +3,8 @@ package esat.stochasticmapping;
 import beast.base.evolution.tree.Node;
 import beast.base.util.Randomizer;
 import esat.helper.TipCompatibility;
+import esat.state.BranchChanges;
 import esat.state.NodeStates;
-import esat.state.StateChanges;
 
 import java.util.Arrays;
 
@@ -19,16 +19,16 @@ import java.util.Arrays;
  * frequencies in every row for the root, P_c that of the branch above child c, and the mask
  * restricts the latent states of a tip to those compatible with its data.
  * <p>
- * Sites at which the neighbours disagree are found by merging their change lists and drawn
- * exactly. At a site at which every neighbour is in the same state a, the conditional only
+ * Sites at which the neighbours disagree are found by merging the change lists of the branches
+ * around the node and drawn exactly. At a site at which every neighbour is in the same state a, the conditional only
  * depends on a, and leaves a with probability ε_a. Such sites are visited with the bound
  * r = max_a ε_a by geometric skipping, and a visited site leaves a with probability ε_a / r.
  * This thinning samples the exact conditional, so the cost scales with the number of changes
  * instead of the number of sites, without an approximation.
  * <p>
  * The sampler reads the model from the substitution process, which has to be updated before.
- * The sampled states are returned as changes relative to the current reference sequence, also
- * for the root.
+ * The sampled states are returned as an edit of the current states of the node, which only
+ * lists the sites whose state changes.
  */
 public class NodeStateSampler {
 
@@ -55,10 +55,9 @@ public class NodeStateSampler {
     private double logSkipProbability;
 
     // scratch space for the neighbour lists, the weights of a single site and the sampled changes
-    private StateChanges[] neighbourChanges = new StateChanges[0];
+    private BranchChanges[] neighbourChanges = new BranchChanges[0];
     private final ChangeListMerge merge = new ChangeListMerge();
     private final double[] siteWeights;
-    private final int[] referenceStateCounts;
     private final int[] sampledSites;
     private final int[] sampledStates;
     private int numSampledSites;
@@ -82,7 +81,6 @@ public class NodeStateSampler {
         this.leaveProbabilities = new double[this.numStates];
 
         this.siteWeights = new double[this.numStates];
-        this.referenceStateCounts = new int[this.numStates];
         this.sampledSites = new int[this.numSites];
         this.sampledStates = new int[this.numSites];
     }
@@ -91,11 +89,11 @@ public class NodeStateSampler {
 
     /**
      * Samples the states of the given node from their full conditional given its neighbours
-     * and returns them as changes relative to the current reference sequence. They are applied
-     * by NodeStates.applyRootStates for the root and by NodeStates.applyChanges otherwise.
-     * The observed sites of a tip keep their current states, only its latent sites are sampled.
+     * and returns them as an edit of its current states, which is applied by
+     * NodeStates.setStates. The observed sites of a tip keep their current states, only its
+     * latent sites are sampled.
      */
-    public StateChanges sample(Node node) {
+    public StateEdit sample(Node node) {
         this.prepareNode(node);
         return node.isLeaf() ? this.sampleTip(node) : this.sampleInnerNode(node);
     }
@@ -158,24 +156,25 @@ public class NodeStateSampler {
 
     /**
      * Samples an inner node or the root in one ascending pass over two streams of sites: the
-     * sites at which some neighbour differs from the reference, from merging their changes,
-     * and the sites visited by the thinning.
+     * sites at which some neighbour differs from the node, from merging their changes, and the
+     * sites visited by the thinning, where every neighbour is in the current state of the node.
      */
-    private StateChanges sampleInnerNode(Node node) {
-        int[] reference = this.nodeStates.getReferenceSequence();
+    private StateEdit sampleInnerNode(Node node) {
         boolean hasParent = !node.isRoot();
-        int numNeighbours = this.collectNeighbourChanges(node, null);
-        this.merge.reset(this.neighbourChanges, numNeighbours, reference);
+        int numNeighbours = this.collectNeighbourChanges(node);
+        this.merge.reset(this.neighbourChanges, numNeighbours, hasParent);
         this.numSampledSites = 0;
 
         int mergedSite = this.merge.nextSite();
         long visitedSite = this.findNextVisitedSite(-1, this.numSites);
         while (mergedSite != Integer.MAX_VALUE || visitedSite < this.numSites) {
             int site;
+            int currentState;
             int state;
 
             if (mergedSite <= visitedSite) {
                 site = mergedSite;
+                currentState = this.merge.getCurrentState();
                 int agreedState = this.findAgreedState(numNeighbours);
                 if (agreedState < 0) {
                     state = this.drawDisagreeingState(hasParent, node.getChildCount());
@@ -190,40 +189,37 @@ public class NodeStateSampler {
                 }
                 mergedSite = this.merge.nextSite();
             } else {
-                // every neighbour is in its reference state
+                // every neighbour is in the current state of the node
                 site = (int) visitedSite;
-                state = this.drawThinnedState(reference[site]);
+                currentState = this.nodeStates.getState(node, site);
+                state = this.drawThinnedState(currentState);
                 visitedSite = this.findNextVisitedSite(visitedSite, this.numSites);
             }
 
-            if (state != reference[site]) {
+            if (state != currentState) {
                 this.appendSampledState(site, state);
             }
         }
 
-        return StateChanges.ofSorted(node.getNr(), this.sampledSites, this.sampledStates, this.numSampledSites);
+        return StateEdit.ofSorted(node.getNr(), this.sampledSites, this.sampledStates, this.numSampledSites);
     }
 
     /**
-     * Collects the changes of the parent, unless the node is the root, and of the children of
-     * the given node, followed by the given extra changes if they are not null. Returns the
-     * number of neighbours, without the extra changes.
+     * Collects the changes of the branch above the given node, unless it is the root, and of
+     * the branches above its children. Returns the number of lists.
      */
-    private int collectNeighbourChanges(Node node, StateChanges extraChanges) {
-        int capacity = node.getChildCount() + 2;
+    private int collectNeighbourChanges(Node node) {
+        int capacity = node.getChildCount() + 1;
         if (this.neighbourChanges.length < capacity) {
-            this.neighbourChanges = new StateChanges[capacity];
+            this.neighbourChanges = new BranchChanges[capacity];
         }
 
         int numNeighbours = 0;
         if (!node.isRoot()) {
-            this.neighbourChanges[numNeighbours++] = this.nodeStates.getChanges(node.getParent());
+            this.neighbourChanges[numNeighbours++] = this.nodeStates.getChanges(node);
         }
         for (Node child : node.getChildren()) {
             this.neighbourChanges[numNeighbours++] = this.nodeStates.getChanges(child);
-        }
-        if (extraChanges != null) {
-            this.neighbourChanges[numNeighbours] = extraChanges;
         }
         return numNeighbours;
     }
@@ -305,28 +301,19 @@ public class NodeStateSampler {
      * on the state of the parent, are thinned over the indices of the missing sites. The
      * observed sites keep their current states.
      */
-    private StateChanges sampleTip(Node tip) {
-        int[] reference = this.nodeStates.getReferenceSequence();
-        StateChanges parentChanges = this.nodeStates.getChanges(tip.getParent());
-        StateChanges tipChanges = this.nodeStates.getChanges(tip);
+    private StateEdit sampleTip(Node tip) {
+        Node parent = tip.getParent();
+        BranchChanges tipChanges = this.nodeStates.getChanges(tip);
         int[] missingSites = this.tipCompatibility.getMissingSites(tip);
         int[] ambiguousSites = this.tipCompatibility.getAmbiguousSites(tip);
         int[] ambiguousStates = this.tipCompatibility.getAmbiguousStates(tip);
         this.numSampledSites = 0;
 
-        // keep the observed sites
-
-        for (int i = 0; i < tipChanges.size(); i++) {
-            if (!this.tipCompatibility.isLatent(tip, tipChanges.getSite(i))) {
-                this.appendSampledState(tipChanges.getSite(i), tipChanges.getState(i));
-            }
-        }
-
         // draw the ambiguous sites exactly
 
         for (int i = 0; i < ambiguousSites.length; i++) {
             int site = ambiguousSites[i];
-            int parentState = parentChanges.getStateOrDefault(site, reference[site]);
+            int parentState = this.nodeStates.getState(parent, site);
 
             double total = 0.0;
             for (int state = 0; state < this.numStates; state++) {
@@ -336,37 +323,44 @@ public class NodeStateSampler {
             }
 
             int state = Categorical.drawState(this.siteWeights, 0, this.numStates, total);
-            if (state != reference[site]) {
+            if (state != this.nodeStates.getState(tip, site)) {
                 this.appendSampledState(site, state);
             }
         }
 
-        // thin the missing sites, whose unvisited sites take the state of the parent, which only differs from the reference at the changes of the parent
+        // thin the missing sites, whose unvisited sites take the state of the parent, which the tip only differs from at its changes
 
-        int parentIndex = this.findNextMissingChange(parentChanges, 0, missingSites);
+        int changeIndex = this.findNextMissingChange(tipChanges, 0, missingSites);
         long visitedIndex = this.findNextVisitedSite(-1, missingSites.length);
-        while (parentIndex < parentChanges.size() || visitedIndex < missingSites.length) {
-            int parentSite = parentIndex < parentChanges.size() ? parentChanges.getSite(parentIndex) : Integer.MAX_VALUE;
+        while (changeIndex < tipChanges.size() || visitedIndex < missingSites.length) {
+            int changeSite = changeIndex < tipChanges.size() ? tipChanges.getSite(changeIndex) : Integer.MAX_VALUE;
             int visitedSite = visitedIndex < missingSites.length ? missingSites[(int) visitedIndex] : Integer.MAX_VALUE;
-            int site = Math.min(parentSite, visitedSite);
+            int site = Math.min(changeSite, visitedSite);
 
-            int state = reference[site];
-            if (parentSite == site) {
-                state = parentChanges.getState(parentIndex);
-                parentIndex = this.findNextMissingChange(parentChanges, parentIndex + 1, missingSites);
+            int currentState;
+            int parentState;
+            if (changeSite == site) {
+                currentState = tipChanges.getTo(changeIndex);
+                parentState = tipChanges.getFrom(changeIndex);
+                changeIndex = this.findNextMissingChange(tipChanges, changeIndex + 1, missingSites);
+            } else {
+                currentState = this.nodeStates.getState(tip, site);
+                parentState = currentState;
             }
+
+            int state = parentState;
             if (visitedSite == site) {
-                state = this.drawThinnedState(state);
+                state = this.drawThinnedState(parentState);
                 visitedIndex = this.findNextVisitedSite(visitedIndex, missingSites.length);
             }
 
-            if (state != reference[site]) {
+            if (state != currentState) {
                 this.appendSampledState(site, state);
             }
         }
 
-        // the three parts are disjoint, but not sorted together
-        return StateChanges.of(
+        // the two parts are disjoint, but not sorted together
+        return StateEdit.of(
                 tip.getNr(),
                 Arrays.copyOf(this.sampledSites, this.numSampledSites),
                 Arrays.copyOf(this.sampledStates, this.numSampledSites)
@@ -374,7 +368,7 @@ public class NodeStateSampler {
     }
 
     /** Returns the index of the first change at or after the given index whose site is missing, or the number of changes. */
-    private int findNextMissingChange(StateChanges changes, int index, int[] missingSites) {
+    private int findNextMissingChange(BranchChanges changes, int index, int[] missingSites) {
         while (index < changes.size() && Arrays.binarySearch(missingSites, changes.getSite(index)) < 0) {
             index++;
         }
@@ -384,37 +378,49 @@ public class NodeStateSampler {
     /* Density */
 
     /**
-     * Returns the log probability with which the sampler draws the given states of the given
-     * node, given as changes relative to the current reference sequence. This is the sum over
-     * the sites of the log full conditional. For a tip, it is the density of its latent sites,
-     * and negative infinity if the states are not compatible with its data.
+     * Returns the log probability with which the sampler draws the given edit of the states of
+     * the given node. This is the sum over the sites of the log full conditional. For a tip, it
+     * is the density of its latent sites, and negative infinity if the new states are not
+     * compatible with its data.
      */
-    public double computeLogDensity(Node node, StateChanges changes) {
-        if (changes.getNodeNr() != node.getNr()) {
-            throw new IllegalArgumentException("Changes are annotated with a different node.");
+    public double computeLogDensity(Node node, StateEdit edit) {
+        if (edit.nodeNr() != node.getNr()) {
+            throw new IllegalArgumentException("Edit is annotated with a different node.");
         }
 
         this.prepareNode(node);
-        return node.isLeaf() ? this.computeTipLogDensity(node, changes) : this.computeInnerNodeLogDensity(node, changes);
+        return node.isLeaf() ? this.computeTipLogDensity(node, edit) : this.computeInnerNodeLogDensity(node, edit);
     }
 
     /**
-     * Merges the changes of the neighbours with the given changes. Every merged site
-     * contributes its own log conditional, and every other site is in the reference state
-     * like all neighbours, so these sites only contribute through their number per state.
+     * Merges the changes of the neighbours with the edit. Every merged site contributes its own
+     * log conditional, and so does every other edited site, where all neighbours are in the
+     * current state of the node. The remaining sites keep their state like all neighbours, so
+     * they only contribute through their number per state.
      */
-    private double computeInnerNodeLogDensity(Node node, StateChanges changes) {
-        int[] reference = this.nodeStates.getReferenceSequence();
+    private double computeInnerNodeLogDensity(Node node, StateEdit edit) {
         boolean hasParent = !node.isRoot();
-        int numNeighbours = this.collectNeighbourChanges(node, changes);
-        this.merge.reset(this.neighbourChanges, numNeighbours + 1, reference);
-        Arrays.fill(this.referenceStateCounts, 0);
+        int numNeighbours = this.collectNeighbourChanges(node);
+        this.merge.reset(this.neighbourChanges, numNeighbours, hasParent);
+
+        // the number of sites per current state of the node that are not merged or edited
+        int[] numUntouchedSites = this.nodeStates.getStateCounts(node);
 
         double logDensity = 0.0;
+        int editIndex = 0;
         for (int site = this.merge.nextSite(); site != Integer.MAX_VALUE; site = this.merge.nextSite()) {
-            this.referenceStateCounts[reference[site]]++;
+            // edited sites before this one are not merged
+            while (editIndex < edit.size() && edit.sites()[editIndex] < site) {
+                logDensity += this.computeUnmergedEditLogDensity(node, edit, editIndex++, numUntouchedSites);
+            }
 
-            int state = this.merge.getState(numNeighbours);
+            int currentState = this.merge.getCurrentState();
+            int state = currentState;
+            if (editIndex < edit.size() && edit.sites()[editIndex] == site) {
+                state = edit.states()[editIndex++];
+            }
+            numUntouchedSites[currentState]--;
+
             int agreedState = this.findAgreedState(numNeighbours);
             if (agreedState < 0) {
                 double total = this.computeSiteWeights(hasParent, node.getChildCount());
@@ -423,15 +429,23 @@ public class NodeStateSampler {
                 logDensity += this.computeAgreedLogProbability(agreedState, state);
             }
         }
+        while (editIndex < edit.size()) {
+            logDensity += this.computeUnmergedEditLogDensity(node, edit, editIndex++, numUntouchedSites);
+        }
 
-        int[] rootStateCounts = this.nodeStates.getRootStateCounts();
         for (int state = 0; state < this.numStates; state++) {
-            int numUnmergedSites = rootStateCounts[state] - this.referenceStateCounts[state];
-            if (numUnmergedSites != 0) {
-                logDensity += numUnmergedSites * this.computeAgreedLogProbability(state, state);
+            if (numUntouchedSites[state] != 0) {
+                logDensity += numUntouchedSites[state] * this.computeAgreedLogProbability(state, state);
             }
         }
         return logDensity;
+    }
+
+    /** Returns the log conditional of the edit at the given index, at a site where all neighbours are in the current state of the node, and takes the site out of the given counts. */
+    private double computeUnmergedEditLogDensity(Node node, StateEdit edit, int editIndex, int[] numUntouchedSites) {
+        int currentState = this.nodeStates.getState(node, edit.sites()[editIndex]);
+        numUntouchedSites[currentState]--;
+        return this.computeAgreedLogProbability(currentState, edit.states()[editIndex]);
     }
 
     /** Returns the log conditional of the given state at a site at which the neighbours agree in the given state. */
@@ -440,26 +454,36 @@ public class NodeStateSampler {
         return Math.log(weight / this.totalWeights[agreedState]);
     }
 
-    /** Sums the log conditionals over the latent sites of the given tip, which costs O((M + A) log m). */
-    private double computeTipLogDensity(Node tip, StateChanges changes) {
-        int[] reference = this.nodeStates.getReferenceSequence();
-        if (!this.tipCompatibility.isCompatible(tip, changes, reference)) {
-            return Double.NEGATIVE_INFINITY;
+    /**
+     * Sums the log conditionals over the latent sites of the given tip, which costs O(L) for
+     * the sequences of the tip and of its parent. The current states of the tip must be
+     * compatible with its data, so only the edited sites are checked.
+     */
+    private double computeTipLogDensity(Node tip, StateEdit edit) {
+        for (int i = 0; i < edit.size(); i++) {
+            int mask = this.tipCompatibility.getCompatibleStates(tip, edit.sites()[i]);
+            if ((mask & (1 << edit.states()[i])) == 0) {
+                return Double.NEGATIVE_INFINITY;
+            }
         }
 
-        StateChanges parentChanges = this.nodeStates.getChanges(tip.getParent());
+        int[] parentSequence = this.nodeStates.materializeState(tip.getParent());
+        int[] tipSequence = this.nodeStates.materializeState(tip);
+        for (int i = 0; i < edit.size(); i++) {
+            tipSequence[edit.sites()[i]] = edit.states()[i];
+        }
+
         double logDensity = 0.0;
 
         for (int site : this.tipCompatibility.getMissingSites(tip)) {
-            int parentState = parentChanges.getStateOrDefault(site, reference[site]);
-            logDensity += this.computeAgreedLogProbability(parentState, changes.getStateOrDefault(site, reference[site]));
+            logDensity += this.computeAgreedLogProbability(parentSequence[site], tipSequence[site]);
         }
 
         int[] ambiguousSites = this.tipCompatibility.getAmbiguousSites(tip);
         int[] ambiguousStates = this.tipCompatibility.getAmbiguousStates(tip);
         for (int i = 0; i < ambiguousSites.length; i++) {
             int site = ambiguousSites[i];
-            int parentState = parentChanges.getStateOrDefault(site, reference[site]);
+            int parentState = parentSequence[site];
 
             double total = 0.0;
             for (int state = 0; state < this.numStates; state++) {
@@ -468,7 +492,7 @@ public class NodeStateSampler {
                 }
             }
 
-            int state = changes.getStateOrDefault(site, reference[site]);
+            int state = tipSequence[site];
             logDensity += Math.log(this.upperProbabilities[parentState * this.numStates + state] / total);
         }
 

@@ -8,21 +8,26 @@ import beast.base.evolution.tree.Tree;
 import beast.base.util.Randomizer;
 import emat.operators.topology.mdspr.BranchLengthSubtreeSelector;
 import esat.prior.GeneticPrior;
+import esat.state.BranchChanges;
 import esat.state.NodeStates;
+import esat.stochasticmapping.NodeStateSampler;
+import esat.stochasticmapping.StateEdit;
 import esat.stochasticmapping.SubstitutionProcess;
 import org.apache.commons.statistics.distribution.BetaDistribution;
 
 import java.util.Arrays;
 
 @Description("Regrafts a subtree, picked proportional to the length of the branch above it, together with its parent " +
-        "onto another branch, keeping all node states. Each branch of the pruned tree is scored by the genetic prior " +
+        "onto another branch, and redraws the states of the parent from their full conditional given its new neighbours. " +
+        "All other node states are kept. Each branch of the pruned tree is scored by the genetic prior " +
         "of attaching the parent at its midpoint relative to not attaching it there, which makes the choice of the " +
         "branch an approximate Gibbs step. Most proposals only consider the branches within a geometric number of " +
         "steps of the current attachment point. The height of the parent on the new branch is drawn from a Beta " +
-        "distribution given by the differences of its states to the states at both ends. The root is never changed.")
+        "distribution given by the differences of its states to the states at both ends, which are the states before the " +
+        "redraw. The root is never changed.")
 public class StateDirectedSprOperator extends TreeOperator {
 
-    final public Input<NodeStates> nodeStatesInput = new Input<>("nodeStates", "the node states, which the move keeps", Input.Validate.REQUIRED);
+    final public Input<NodeStates> nodeStatesInput = new Input<>("nodeStates", "the node states, of which the move redraws those of the parent of the pruned subtree", Input.Validate.REQUIRED);
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model", Input.Validate.REQUIRED);
     final public Input<Double> fullExplorationProbabilityInput = new Input<>("fullExplorationProbability", "the probability of considering every branch instead of the neighbourhood of the current attachment point", 0.01);
     final public Input<Double> windowProbabilityInput = new Input<>("windowProbability", "the parameter q of the radius 1 + j of the neighbourhood, with j geometric with probability q^j (1 - q). " +
@@ -33,6 +38,7 @@ public class StateDirectedSprOperator extends TreeOperator {
     Tree tree;
     NodeStates nodeStates;
     SubstitutionProcess substitutionProcess;
+    NodeStateSampler nodeStateSampler;
     BranchLengthSubtreeSelector subtreeSelector;
 
     int numStates;
@@ -71,6 +77,7 @@ public class StateDirectedSprOperator extends TreeOperator {
         this.tree = this.treeInput.get();
         this.nodeStates = this.nodeStatesInput.get();
         this.substitutionProcess = new SubstitutionProcess(this.geneticPriorInput.get());
+        this.nodeStateSampler = new NodeStateSampler(this.nodeStates, this.substitutionProcess);
         this.subtreeSelector = new BranchLengthSubtreeSelector(this.tree);
 
         this.numStates = this.nodeStates.getNumStates();
@@ -107,11 +114,14 @@ public class StateDirectedSprOperator extends TreeOperator {
 
     /**
      * Moves P with the subtree below X onto a branch of the pruned tree, i.e. the tree
-     * without X and P in which G–P–S is joined into G–S. The branch is drawn proportional to
-     * its score among the candidates, and the height of P on it from a Beta distribution. The
-     * pruned tree and therefore the scores are the same before and after the move, so the
-     * reverse move draws the current branch from the candidates around the new one with the
-     * same radius. As the radius is a symmetric distance, they include the current branch.
+     * without X and P in which G–P–S is joined into G–S, and redraws the states of P from
+     * their full conditional given its new neighbours. The branch is drawn proportional to its
+     * score among the candidates, and the height of P on it from a Beta distribution, both
+     * given the states of P before the move. The pruned tree is the same before and after the
+     * move, so the reverse move draws the current branch from the candidates around the new
+     * one with the same radius, which include the current branch as the radius is a symmetric
+     * distance. Its scores are those of the pruned tree with the redrawn states of P, and it
+     * redraws the old states of P from their full conditional given the old neighbours.
      */
     @Override
     public double proposal() {
@@ -142,19 +152,29 @@ public class StateDirectedSprOperator extends TreeOperator {
         }
         double logForwardHeightDensity = this.computeLogHeightDensity(newSibling, newParentHeight);
 
-        // the reverse move draws the current branch and height from the new attachment point
+        // the reverse move redraws the current states of P given its current neighbours
 
-        this.exploreBranches(newSibling, radius);
-        double logBackwardTotalScore = this.computeLogTotalScore();
-        double logBackwardBranchProbability = this.logScores[this.sibling.getNr()] - logBackwardTotalScore;
-        double logBackwardHeightDensity = this.computeLogHeightDensity(this.sibling, this.parent.getHeight());
+        Node oldSibling = this.sibling;
+        double oldParentHeight = this.parent.getHeight();
+        double logBackwardStateDensity = this.nodeStateSampler.computeLogDensity(this.parent, this.createEmptyEdit());
 
         this.regraft(newSibling, newParentHeight);
+        double logForwardStateDensity = this.redrawParentStates();
+
+        // the reverse move draws the old branch and height from the new attachment point, scoring with the new states of P
+
+        this.sibling = newSibling;
+        this.startProposal();
+        this.exploreBranches(newSibling, radius);
+        double logBackwardTotalScore = this.computeLogTotalScore();
+        double logBackwardBranchProbability = this.logScores[oldSibling.getNr()] - logBackwardTotalScore;
+        double logBackwardHeightDensity = this.computeLogHeightDensity(oldSibling, oldParentHeight);
         double logBackwardPickProbability = this.subtreeSelector.computeLogProbability(x);
 
         return (logBackwardPickProbability - logForwardPickProbability)
                 + (logBackwardBranchProbability - logForwardBranchProbability)
-                + (logBackwardHeightDensity - logForwardHeightDensity);
+                + (logBackwardHeightDensity - logForwardHeightDensity)
+                + (logBackwardStateDensity - logForwardStateDensity);
     }
 
     /** Starts a new stamp for the cached scores, which only need resetting once the counter runs out. */
@@ -369,25 +389,48 @@ public class StateDirectedSprOperator extends TreeOperator {
 
     /**
      * Moves P with the subtree below X onto the branch above the given node at the given
-     * height, and recomputes the transition counts of the branches whose parent changes. If
-     * the node is the current sibling, only the height of P changes.
+     * height, and rewrites the changes of the branches whose parent changes, which keeps all
+     * node states. If the node is the current sibling, only the height of P changes.
      */
     private void regraft(Node newSibling, double newParentHeight) {
-        if (newSibling != this.sibling) {
-            Node grandparent = this.parent.getParent();
-            Node newGrandparent = this.getPrunedParent(newSibling);
-
-            this.replace(grandparent, this.parent, this.sibling);
-            this.replace(this.parent, this.sibling, newSibling);
-            this.replace(newGrandparent, newSibling, this.parent);
+        if (newSibling == this.sibling) {
+            this.parent.setHeight(newParentHeight);
+            return;
         }
+
+        Node grandparent = this.parent.getParent();
+        Node newGrandparent = this.getPrunedParent(newSibling);
+
+        // the new changes are composed along paths of the tree before the move
+        BranchChanges newParentChanges = this.nodeStates.composeChanges(newGrandparent, this.parent);
+        BranchChanges newSiblingChanges = this.nodeStates.composeChanges(this.parent, newSibling);
+        BranchChanges siblingChanges = this.nodeStates.composeChanges(grandparent, this.sibling);
+
+        this.replace(grandparent, this.parent, this.sibling);
+        this.replace(this.parent, this.sibling, newSibling);
+        this.replace(newGrandparent, newSibling, this.parent);
         this.parent.setHeight(newParentHeight);
 
-        if (newSibling != this.sibling) {
-            this.nodeStates.markBranchChanged(this.parent, this);
-            this.nodeStates.markBranchChanged(newSibling, this);
-            this.nodeStates.markBranchChanged(this.sibling, this);
-        }
+        // the counts of a branch use the state counts of its parent, so P comes first
+        this.nodeStates.setBranchChanges(this.parent, newParentChanges, this);
+        this.nodeStates.setBranchChanges(newSibling, newSiblingChanges, this);
+        this.nodeStates.setBranchChanges(this.sibling, siblingChanges, this);
+    }
+
+    /** Returns an edit that keeps the current states of P, whose density is that of drawing them. */
+    private StateEdit createEmptyEdit() {
+        return new StateEdit(this.parent.getNr(), new int[0], new int[0]);
+    }
+
+    /**
+     * Draws the states of P from their full conditional given the states of its parent and
+     * children, applies them, and returns the log density with which they were drawn.
+     */
+    private double redrawParentStates() {
+        StateEdit edit = this.nodeStateSampler.sample(this.parent);
+        double logDensity = this.nodeStateSampler.computeLogDensity(this.parent, edit);
+        this.nodeStates.setStates(this.parent, edit.sites(), edit.states(), this);
+        return logDensity;
     }
 
     /** Returns the parent of the given node in the pruned tree, where S hangs directly below G. */

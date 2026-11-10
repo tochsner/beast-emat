@@ -187,6 +187,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
         for (int i = 0; i < this.numDirtyNodes; i++) {
             this.updateBranch(this.tree.getNode(this.dirtyNodeNrs[i]));
         }
+        this.updateTipCompatibilities();
 
         if (isEverythingDirty || this.nodeStates.isDirty(root)) {
             double oldRootLogP = this.rootLogP;
@@ -263,21 +264,13 @@ public class GeneticPrior extends GenericTreeLikelihood {
         }
     }
 
-    /**
-     * Recomputes the contribution of the branch above the given node and adds its change to
-     * the running sum. The compatibility of a tip is only rechecked if its states may have
-     * changed.
-     */
+    /** Recomputes the contribution of the branch above the given node and adds its change to the running sum. */
     private void updateBranch(Node node) {
         int nodeNr = node.getNr();
 
         double oldBranchLogP = this.branchLogPs[nodeNr];
         this.branchLogPs[nodeNr] = node.isRoot() ? 0.0 : this.computeBranchLogP(node);
         this.summedLogP += this.branchLogPs[nodeNr] - oldBranchLogP;
-
-        if (node.isLeaf() && (!this.isInitialised || this.nodeStates.isDirty(node))) {
-            this.updateTipCompatibility(node);
-        }
     }
 
     /** Computes Σ N_ab log P_ab(d) over the transition counts of the branch above the given non-root node. */
@@ -295,11 +288,30 @@ public class GeneticPrior extends GenericTreeLikelihood {
         return branchLogP;
     }
 
-    private void updateTipCompatibility(Node tip) {
+    /**
+     * Rechecks the compatibility of the tips whose states may have become incompatible with
+     * their data, which is every tip if all states were replaced. The samplers of the states
+     * only draw compatible states, so they do not mark any tip.
+     */
+    private void updateTipCompatibilities() {
+        if (!this.isInitialised || this.nodeStates.isEveryCheckPending()) {
+            this.nodeStates.visitStates((node, sequence) -> {
+                if (node.isLeaf()) {
+                    this.updateTipCompatibility(node, sequence);
+                }
+            });
+            return;
+        }
+
+        for (int i = 0; i < this.nodeStates.getCheckNodeCount(); i++) {
+            Node tip = this.tree.getNode(this.nodeStates.getCheckNodeNrs()[i]);
+            this.updateTipCompatibility(tip, this.nodeStates.materializeState(tip));
+        }
+    }
+
+    private void updateTipCompatibility(Node tip, int[] sequence) {
         boolean wasCompatible = this.isTipCompatible[tip.getNr()];
-        boolean isCompatible = this.tipCompatibility.isCompatible(
-                tip, this.nodeStates.getChanges(tip), this.nodeStates.getReferenceSequence()
-        );
+        boolean isCompatible = this.tipCompatibility.isCompatible(tip, sequence);
 
         this.isTipCompatible[tip.getNr()] = isCompatible;
         if (wasCompatible && !isCompatible) {

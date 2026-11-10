@@ -104,7 +104,7 @@ open module my.beast.example {
             NodeStates,
             esat.prior.GeneticPrior,
             esat.initialisation.SampledStatesInitialiser,
-            esat.operators.states.GlobalStateGibbsOperator,
+            esat.operators.states.PatternStateGibbsOperator,
             esat.operators.topology.StateDirectedSprOperator,
             esat.operators.nodetimes.RatioScaleOperator,
             esat.operators.nodetimes.RootRatioScaleOperator;

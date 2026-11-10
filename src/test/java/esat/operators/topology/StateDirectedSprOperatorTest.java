@@ -9,8 +9,12 @@ import beast.base.inference.Operator;
 import beast.base.inference.State;
 import beast.base.util.Randomizer;
 import esat.EsatFixture;
+import esat.prior.GeneticPrior;
+import esat.state.BranchChanges;
 import esat.state.NodeStates;
 import esat.stochasticmapping.GlobalStateSampler;
+import esat.stochasticmapping.NodeStateSampler;
+import esat.stochasticmapping.StateEdit;
 import esat.stochasticmapping.SubstitutionProcess;
 import org.junit.jupiter.api.Test;
 
@@ -129,10 +133,11 @@ public class StateDirectedSprOperatorTest {
     /* Posterior */
 
     /**
-     * Compares the operator with a uniform SPR on the genetic prior alone with fixed states.
-     * Both chains move the topology and the heights of the inner nodes other than the root,
-     * so they must agree on the mean tree length and the frequencies of the most frequent
-     * topologies, within the Monte Carlo error from batch means.
+     * Compares the operator with a uniform SPR that also redraws the states of the moved
+     * parent from their full conditional, on the genetic prior alone. The tips and the root
+     * keep their states. Both chains move the topology and the heights of the inner nodes
+     * other than the root, so they must agree on the mean tree length and the frequencies of
+     * the most frequent topologies, within the Monte Carlo error from batch means.
      */
     @Test
     public void testAgreesWithUniformSpr() {
@@ -143,7 +148,12 @@ public class StateDirectedSprOperatorTest {
         this.initialiseSampledStates(fixture);
 
         UniformSprOperator uniformOperator = new UniformSprOperator();
-        uniformOperator.initByName("tree", fixture.tree(), "nodeStates", fixture.nodeStates(), "weight", 1.0);
+        uniformOperator.initByName(
+                "tree", fixture.tree(),
+                "nodeStates", fixture.nodeStates(),
+                "geneticPrior", fixture.geneticPrior(),
+                "weight", 1.0
+        );
         Chain referenceChain = this.runPosteriorChain(fixture, uniformOperator, numSteps, 14);
         Chain operatorChain = this.runPosteriorChain(fixture, this.createOperator(fixture, 0.01, 0.8, false), numSteps, 13);
 
@@ -313,12 +323,15 @@ public class StateDirectedSprOperatorTest {
     /**
      * Prunes a uniformly chosen subtree whose parent is not the root and regrafts it with its
      * parent on a uniformly chosen branch of the pruned tree whose top is older than the
-     * subtree, at a uniform height. The numbers of subtrees and branches do not change under
-     * the move, so the Hastings ratio is the ratio of the lengths of the new and old ranges.
+     * subtree, at a uniform height, and redraws the states of the parent from their full
+     * conditional given its new neighbours. The numbers of subtrees and branches do not change
+     * under the move, so the Hastings ratio is the ratio of the lengths of the new and old
+     * ranges and of the densities of the old and new states of the parent.
      */
     public static class UniformSprOperator extends TreeOperator {
 
         final public Input<NodeStates> nodeStatesInput = new Input<>("nodeStates", "", Input.Validate.REQUIRED);
+        final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "", Input.Validate.REQUIRED);
 
         @Override
         public void initAndValidate() {
@@ -362,19 +375,34 @@ public class StateDirectedSprOperatorTest {
             double newHeight = newLower + Randomizer.nextDouble() * (newUpper - newLower);
 
             NodeStates nodeStates = this.nodeStatesInput.get();
+            SubstitutionProcess substitutionProcess = new SubstitutionProcess(this.geneticPriorInput.get());
+            substitutionProcess.update();
+            NodeStateSampler sampler = new NodeStateSampler(nodeStates, substitutionProcess);
+            double logBackwardStateDensity = sampler.computeLogDensity(parent, new StateEdit(parent.getNr(), new int[0], new int[0]));
+
             if (newSibling != sibling) {
+                BranchChanges newParentChanges = nodeStates.composeChanges(newGrandparent, parent);
+                BranchChanges newSiblingChanges = nodeStates.composeChanges(parent, newSibling);
+                BranchChanges siblingChanges = nodeStates.composeChanges(grandparent, sibling);
+
                 this.replace(grandparent, parent, sibling);
                 this.replace(parent, sibling, newSibling);
                 this.replace(newGrandparent, newSibling, parent);
-            }
-            parent.setHeight(newHeight);
-            if (newSibling != sibling) {
-                nodeStates.markBranchChanged(parent, this);
-                nodeStates.markBranchChanged(newSibling, this);
-                nodeStates.markBranchChanged(sibling, this);
+                parent.setHeight(newHeight);
+
+                nodeStates.setBranchChanges(parent, newParentChanges, this);
+                nodeStates.setBranchChanges(newSibling, newSiblingChanges, this);
+                nodeStates.setBranchChanges(sibling, siblingChanges, this);
+            } else {
+                parent.setHeight(newHeight);
             }
 
-            return Math.log(newUpper - newLower) - Math.log(oldUpper - oldLower);
+            StateEdit edit = sampler.sample(parent);
+            double logForwardStateDensity = sampler.computeLogDensity(parent, edit);
+            nodeStates.setStates(parent, edit.sites(), edit.states(), this);
+
+            return Math.log(newUpper - newLower) - Math.log(oldUpper - oldLower)
+                    + logBackwardStateDensity - logForwardStateDensity;
         }
 
         private boolean isInSubtree(Node node, Node subtreeRoot) {

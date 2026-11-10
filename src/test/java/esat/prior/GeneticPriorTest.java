@@ -20,10 +20,11 @@ import beast.base.spec.inference.parameter.SimplexParam;
 import emat.tree.IncrementalStoreTree;
 import esat.helper.TipCompatibility;
 import esat.state.NodeStates;
-import esat.state.StateChanges;
+import esat.state.BranchChanges;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 import java.util.function.Supplier;
@@ -192,7 +193,7 @@ public class GeneticPriorTest {
         sequence[0] = 1;
 
         geneticPrior.store();
-        nodeStates.applyChanges(tipA, StateChanges.fromSequence(tipA.getNr(), sequence, nodeStates.getReferenceSequence()), this.operator);
+        this.setSequence(nodeStates, tipA, sequence);
         assertEquals(Double.NEGATIVE_INFINITY, geneticPrior.calculateLogP());
 
         nodeStates.restoreStateNode();
@@ -291,14 +292,14 @@ public class GeneticPriorTest {
                 sequence[site] = this.random.nextInt(NUM_STATES);
             }
         }
-        nodeStates.applyChanges(node, StateChanges.fromSequence(node.getNr(), sequence, nodeStates.getReferenceSequence()), this.operator);
+        this.setSequence(nodeStates, node, sequence);
         return "inner node change";
     }
 
     private String proposeRootChange(Fixture fixture) {
         int numSites = fixture.nodeStates().getNumSites();
         int site = this.random.nextInt(numSites);
-        fixture.nodeStates().applyRootStates(new int[]{site}, new int[]{this.random.nextInt(NUM_STATES)}, this.operator);
+        fixture.nodeStates().setStates(fixture.tree().getRoot(), new int[]{site}, new int[]{this.random.nextInt(NUM_STATES)}, this.operator);
         return "root change";
     }
 
@@ -314,7 +315,7 @@ public class GeneticPriorTest {
                 ? this.random.nextInt(NUM_STATES)
                 : this.drawCompatibleState(tipCompatibility.getCompatibleStates(tip, site));
 
-        nodeStates.applyChanges(tip, StateChanges.fromSequence(tip.getNr(), sequence, nodeStates.getReferenceSequence()), this.operator);
+        this.setSequence(nodeStates, tip, sequence);
         return "tip change";
     }
 
@@ -419,23 +420,38 @@ public class GeneticPriorTest {
         }
     }
 
-    /** Sets the states of every node to the given sequences, with the sequence of the root as the reference. */
+    /** Sets the states of every node to the given sequences. */
     private void initialiseStates(Fixture fixture, int[][] sequences) {
         int[] rootSequence = sequences[fixture.tree().getRoot().getNr()];
-        List<StateChanges> changes = new ArrayList<>();
+        List<BranchChanges> changes = new ArrayList<>();
         for (int nodeNr = 0; nodeNr < sequences.length; nodeNr++) {
-            changes.add(StateChanges.fromSequence(nodeNr, sequences[nodeNr], rootSequence));
+            Node node = fixture.tree().getNode(nodeNr);
+            changes.add(node.isRoot()
+                    ? BranchChanges.empty(nodeNr)
+                    : BranchChanges.fromSequences(nodeNr, sequences[node.getParent().getNr()], sequences[nodeNr]));
         }
         fixture.nodeStates().initialiseStates(rootSequence, changes);
         assertTrue(fixture.nodeStates().isEveryBranchDirty());
     }
 
-    private int[] getSequence(NodeStates nodeStates, Node node) {
-        int[] sequence = new int[nodeStates.getNumSites()];
+    /** Sets the states of the given node to the given sequence, keeping those of every other node. */
+    private void setSequence(NodeStates nodeStates, Node node, int[] sequence) {
+        int[] current = nodeStates.materializeState(node);
+        int[] sites = new int[sequence.length];
+        int[] states = new int[sequence.length];
+        int size = 0;
         for (int site = 0; site < sequence.length; site++) {
-            sequence[site] = nodeStates.getState(node, site);
+            if (sequence[site] != current[site]) {
+                sites[size] = site;
+                states[size] = sequence[site];
+                size++;
+            }
         }
-        return sequence;
+        nodeStates.setStates(node, Arrays.copyOf(sites, size), Arrays.copyOf(states, size), this.operator);
+    }
+
+    private int[] getSequence(NodeStates nodeStates, Node node) {
+        return nodeStates.materializeState(node);
     }
 
     private Node getTip(Tree tree, String taxon) {

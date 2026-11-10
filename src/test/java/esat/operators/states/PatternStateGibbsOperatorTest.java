@@ -8,8 +8,8 @@ import beast.base.util.Randomizer;
 import esat.EsatFixture;
 import esat.prior.GeneticPrior;
 import esat.state.NodeStates;
-import esat.state.StateChanges;
 import esat.stochasticmapping.NodeStateSampler;
+import esat.stochasticmapping.StateEdit;
 import esat.stochasticmapping.SubstitutionProcess;
 import org.junit.jupiter.api.Test;
 
@@ -20,7 +20,7 @@ import java.util.Random;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-public class GlobalStateGibbsOperatorTest {
+public class PatternStateGibbsOperatorTest {
 
     private static final String NEWICK = "(((A:0.3,B:0.3):0.4,(C:0.5,D:0.5):0.2):0.3,(E:0.6,F:0.6):0.4);";
 
@@ -48,7 +48,7 @@ public class GlobalStateGibbsOperatorTest {
         NodeStates nodeStates = fixture.nodeStates();
         GeneticPrior geneticPrior = fixture.geneticPrior();
 
-        GlobalStateGibbsOperator operator = new GlobalStateGibbsOperator();
+        PatternStateGibbsOperator operator = new PatternStateGibbsOperator();
         operator.initByName("nodeStates", nodeStates, "geneticPrior", geneticPrior, "weight", 1.0);
         operator.setOperatorSchedule(new OperatorSchedule());
 
@@ -70,16 +70,11 @@ public class GlobalStateGibbsOperatorTest {
 
             if (this.random.nextBoolean()) {
                 assertEquals(Double.POSITIVE_INFINITY, operator.proposal());
-                assertTrue(nodeStates.isEveryBranchDirty());
             } else {
                 Node node = fixture.tree().getNode(this.random.nextInt(fixture.tree().getNodeCount()));
                 substitutionProcess.update();
-                StateChanges changes = nodeStateSampler.sample(node);
-                if (node.isRoot()) {
-                    nodeStates.applyRootStates(changes, EsatFixture.NO_OPERATOR);
-                } else {
-                    nodeStates.applyChanges(node, changes, EsatFixture.NO_OPERATOR);
-                }
+                StateEdit edit = nodeStateSampler.sample(node);
+                nodeStates.setStates(node, edit.sites(), edit.states(), EsatFixture.NO_OPERATOR);
             }
 
             state.storeCalculationNodes();
