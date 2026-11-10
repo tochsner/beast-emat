@@ -61,6 +61,7 @@ open module my.beast.example {
     exports esat.helper;
     exports esat.initialisation;
     exports esat.operators.states;
+    exports esat.operators.topology;
     exports esat.prior;
     exports esat.state;
     exports esat.stochasticmapping;
@@ -102,5 +103,6 @@ open module my.beast.example {
             NodeStates,
             esat.prior.GeneticPrior,
             esat.initialisation.SampledStatesInitialiser,
-            esat.operators.states.GlobalStateGibbsOperator;
+            esat.operators.states.GlobalStateGibbsOperator,
+            esat.operators.topology.StateDirectedSprOperator;
 }

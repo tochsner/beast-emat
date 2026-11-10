@@ -329,7 +329,15 @@ public class GeneticPrior extends GenericTreeLikelihood {
      * which keeps the small transition probabilities of short branches accurate.
      */
     public void getTransitionProbabilities(Node node, double[] transitionProbabilities) {
-        double branchLength = node.getParent().getHeight() - node.getHeight();
+        this.getTransitionProbabilities(node, node.getParent().getHeight() - node.getHeight(), transitionProbabilities);
+    }
+
+    /**
+     * Writes the transition probabilities of a branch of the given length into the given
+     * array, at the rate of the branch above the given node, as above. This evaluates
+     * branches that a proposal considers but that are not in the tree.
+     */
+    public void getTransitionProbabilities(Node node, double branchLength, double[] transitionProbabilities) {
         double distance = this.categoryRate * this.branchRateModel.getRateForBranch(node) * branchLength;
 
         for (int k = 0; k < this.numStates; k++) {

@@ -37,6 +37,15 @@ public final class SubstitutionProcess {
         this.geneticPrior.getTransitionProbabilities(node, transitionProbabilities);
     }
 
+    /**
+     * Writes the transition probabilities of a branch of the given length at the rate of the
+     * branch above the given node into the given array, row-major by the state at its top.
+     */
+    public void getTransitionProbabilities(Node node, double branchLength, double[] transitionProbabilities) {
+        this.checkUpdated();
+        this.geneticPrior.getTransitionProbabilities(node, branchLength, transitionProbabilities);
+    }
+
     public double[] getFrequencies() {
         this.checkUpdated();
         return this.frequencies;

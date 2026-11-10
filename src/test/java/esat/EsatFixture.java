@@ -2,6 +2,8 @@ package esat;
 
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;
+import beast.base.evolution.alignment.Taxon;
+import beast.base.evolution.alignment.TaxonSet;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeParser;
@@ -13,6 +15,7 @@ import beast.base.spec.evolution.substitutionmodel.Frequencies;
 import beast.base.spec.evolution.substitutionmodel.HKY;
 import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.spec.inference.parameter.SimplexParam;
+import emat.tree.IncrementalStoreTree;
 import esat.helper.TipCompatibility;
 import esat.prior.GeneticPrior;
 import esat.state.NodeStates;
@@ -44,13 +47,30 @@ public record EsatFixture(Tree tree, Alignment alignment, NodeStates nodeStates,
     };
 
     public static EsatFixture create(String newick, List<Sequence> sequences) {
+        return create(parseTree(newick), sequences);
+    }
+
+    public static TreeParser parseTree(String newick) {
         TreeParser tree = new TreeParser();
         tree.initByName(
                 "newick", newick,
                 "IsLabelledNewick", true,
                 "adjustTipHeights", false
         );
+        return tree;
+    }
 
+    /** Returns the tree of the given newick string as a tree that only stores its changed nodes. */
+    public static IncrementalStoreTree parseIncrementalTree(String newick) {
+        TreeParser parsedTree = parseTree(newick);
+        List<Taxon> taxa = parsedTree.getTaxonset().asStringList().stream().map(Taxon::new).toList();
+        IncrementalStoreTree tree = new IncrementalStoreTree();
+        tree.initByName("taxonset", new TaxonSet(taxa));
+        tree.assignFrom(parsedTree);
+        return tree;
+    }
+
+    public static EsatFixture create(Tree tree, List<Sequence> sequences) {
         Alignment alignment = new Alignment();
         alignment.initByName("sequence", sequences, "dataType", "nucleotide");
 

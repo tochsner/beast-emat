@@ -141,29 +141,38 @@ public class NodeStates extends StateNode {
      */
     private int[] computeTransitionCounts(Node node) {
         int[] counts = new int[this.numStates * this.numStates];
+        this.countTransitions(node.getParent(), node, counts);
+        return counts;
+    }
+
+    /**
+     * Writes the transition counts between the states of any two nodes into the given array,
+     * row-major by the state of the upper node, as if a branch ran between them. This merges
+     * their changes, so it takes O(m_upper + m_lower).
+     */
+    public void countTransitions(Node upper, Node lower, int[] counts) {
+        Arrays.fill(counts, 0);
         for (int state = 0; state < this.numStates; state++) {
             counts[state * this.numStates + state] = this.rootStateCounts[state];
         }
 
-        StateChanges parentChanges = this.changesAtNode[node.getParent().getNr()];
-        StateChanges nodeChanges = this.changesAtNode[node.getNr()];
+        StateChanges upperChanges = this.changesAtNode[upper.getNr()];
+        StateChanges lowerChanges = this.changesAtNode[lower.getNr()];
 
         int i = 0;
         int j = 0;
-        while (i < parentChanges.size() || j < nodeChanges.size()) {
-            int parentSite = i < parentChanges.size() ? parentChanges.getSite(i) : Integer.MAX_VALUE;
-            int nodeSite = j < nodeChanges.size() ? nodeChanges.getSite(j) : Integer.MAX_VALUE;
-            int site = Math.min(parentSite, nodeSite);
+        while (i < upperChanges.size() || j < lowerChanges.size()) {
+            int upperSite = i < upperChanges.size() ? upperChanges.getSite(i) : Integer.MAX_VALUE;
+            int lowerSite = j < lowerChanges.size() ? lowerChanges.getSite(j) : Integer.MAX_VALUE;
+            int site = Math.min(upperSite, lowerSite);
 
             int rootState = this.referenceSequence[site];
-            int parentState = parentSite == site ? parentChanges.getState(i++) : rootState;
-            int nodeState = nodeSite == site ? nodeChanges.getState(j++) : rootState;
+            int upperState = upperSite == site ? upperChanges.getState(i++) : rootState;
+            int lowerState = lowerSite == site ? lowerChanges.getState(j++) : rootState;
 
             counts[rootState * this.numStates + rootState]--;
-            counts[parentState * this.numStates + nodeState]++;
+            counts[upperState * this.numStates + lowerState]++;
         }
-
-        return counts;
     }
 
     /* State Management */
