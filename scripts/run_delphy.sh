@@ -10,7 +10,7 @@ set -euo pipefail
 # flags (e.g. --v0-threads) can be passed with DELPHY_FLAGS.
 
 FASTAS=(
-    rsva.fasta
+    h3n2.fasta
 )
 
 cd "$(dirname "$(realpath "$0")")/.."
@@ -25,7 +25,7 @@ mkdir -p "$out"
 for fasta in "${FASTAS[@]}"; do
     name=coal_delphy_$(basename "$fasta" .fasta)-$seed
     tips=$(grep -c '^>' "data/fasta/$fasta")
-    steps=$((tips * 10000000))
+    steps=$((tips * 100000000))
     echo "running $fasta ($tips tips, $steps steps) with seed $seed"
 
     "$delphy" \
