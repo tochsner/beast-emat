@@ -102,6 +102,13 @@ public class NodeStates extends StateNode {
     private Node[] upwardNodes;
     private Node[] downwardNodes;
 
+    // a copy of the states at the touched sites of a first path, for counts over two paths that start at the same node
+    private int[] sidePathStamps;
+    private int sidePathStamp;
+    private int[] sidePathFirstStates;
+    private int[] sidePathLastStates;
+    private int[] sidePathSites;
+
     // scratch space for the state counts of a node and for the flags of the nodes that a replacement changes
     private int[] stateCounts;
     private boolean[] haveChangesChanged;
@@ -277,6 +284,65 @@ public class NodeStates extends StateNode {
                 counts[from * this.numStates + to]++;
             }
         }
+    }
+
+    /**
+     * Writes the number of sites in each triple of states (d, c, x) of the given top, bottom
+     * and side node into the given array of size K^3, indexed by (d K + c) K + x. The nodes can
+     * be any three nodes of the tree, e.g. the ends of a branch and a node to attach to it.
+     * This composes the changes along the paths from the top to the side and to the bottom
+     * node, so it takes O(the sizes of the changes on both paths).
+     */
+    public void countTriples(Node top, Node bottom, Node side, int[] counts) {
+        if (this.sidePathStamps == null) {
+            this.sidePathStamps = new int[this.numSites];
+            this.sidePathFirstStates = new int[this.numSites];
+            this.sidePathLastStates = new int[this.numSites];
+            this.sidePathSites = new int[this.numSites];
+        }
+
+        // keep the states of the side node at the sites touched by its path, as the second path reuses the buffers
+
+        int numSideSites = this.composePath(top, side);
+        this.sidePathStamp++;
+        for (int i = 0; i < numSideSites; i++) {
+            int site = this.pathSites[i];
+            this.sidePathStamps[site] = this.sidePathStamp;
+            this.sidePathFirstStates[site] = this.pathFirstStates[site];
+            this.sidePathLastStates[site] = this.pathLastStates[site];
+            this.sidePathSites[i] = site;
+        }
+
+        // every site starts in the triple of its state at the top
+
+        Arrays.fill(counts, 0);
+        this.computeStateCounts(top, this.stateCounts);
+        for (int state = 0; state < this.numStates; state++) {
+            counts[this.getTripleIndex(state, state, state)] = this.stateCounts[state];
+        }
+
+        int numBottomSites = this.composePath(top, bottom);
+        for (int i = 0; i < numBottomSites; i++) {
+            int site = this.pathSites[i];
+            int topState = this.pathFirstStates[site];
+            int sideState = this.sidePathStamps[site] == this.sidePathStamp ? this.sidePathLastStates[site] : topState;
+            counts[this.getTripleIndex(topState, topState, topState)]--;
+            counts[this.getTripleIndex(topState, this.pathLastStates[site], sideState)]++;
+        }
+
+        // the sites touched only by the path to the side keep the top state at the bottom
+        for (int i = 0; i < numSideSites; i++) {
+            int site = this.sidePathSites[i];
+            if (this.pathStamps[site] != this.pathStamp) {
+                int topState = this.sidePathFirstStates[site];
+                counts[this.getTripleIndex(topState, topState, topState)]--;
+                counts[this.getTripleIndex(topState, topState, this.sidePathLastStates[site])]++;
+            }
+        }
+    }
+
+    private int getTripleIndex(int topState, int bottomState, int sideState) {
+        return (topState * this.numStates + bottomState) * this.numStates + sideState;
     }
 
     /**

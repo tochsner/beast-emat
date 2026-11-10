@@ -19,19 +19,27 @@ import java.util.Arrays;
 
 @Description("Regrafts a subtree, picked proportional to the length of the branch above it, together with its parent " +
         "onto another branch, and redraws the states of the parent from their full conditional given its new neighbours. " +
-        "All other node states are kept. Each branch of the pruned tree is scored by the genetic prior " +
-        "of attaching the parent at its midpoint relative to not attaching it there, which makes the choice of the " +
-        "branch an approximate Gibbs step. Most proposals only consider the branches within a geometric number of " +
-        "steps of the current attachment point. The height of the parent on the new branch is drawn from a Beta " +
-        "distribution given by the differences of its states to the states at both ends, which are the states before the " +
-        "redraw. The root is never changed.")
+        "All other node states are kept. Each branch of the pruned tree is scored by the genetic prior of attaching " +
+        "the parent at its midpoint, summed over the states of the parent, relative to not attaching it there, which " +
+        "makes the choice of the branch an approximate Gibbs step that does not depend on the current states of the " +
+        "parent. Most proposals only consider the branches in a neighbourhood of the current attachment " +
+        "point, either within a radius or through branches at which the subtree differs from both ends at few sites. " +
+        "The height of the parent on the new branch is drawn from a Beta distribution given by the changes " +
+        "above and below the parent if it took the majority state of its three neighbours. The root is never changed.")
 public class StateDirectedSprOperator extends TreeOperator {
+
+    public enum Neighbourhood {
+        RADIUS,
+        DIFFERENCES
+    }
 
     final public Input<NodeStates> nodeStatesInput = new Input<>("nodeStates", "the node states, of which the move redraws those of the parent of the pruned subtree", Input.Validate.REQUIRED);
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model", Input.Validate.REQUIRED);
     final public Input<Double> fullExplorationProbabilityInput = new Input<>("fullExplorationProbability", "the probability of considering every branch instead of the neighbourhood of the current attachment point", 0.01);
-    final public Input<Double> windowProbabilityInput = new Input<>("windowProbability", "the parameter q of the radius 1 + j of the neighbourhood, with j geometric with probability q^j (1 - q). " +
-            "The radius counts the steps between branches that meet at a node", 0.5);
+    final public Input<Neighbourhood> neighbourhoodInput = new Input<>("neighbourhood", "the neighbourhood of the current attachment point that a local proposal considers: RADIUS takes the branches " +
+            "within 1 + j steps between branches that meet at a node, DIFFERENCES the branches connected to the current one through branches at which X differs from both ends at no more than " +
+            "max(1, N) + j sites, where N is that number at the current branch", Neighbourhood.RADIUS, Neighbourhood.values());
+    final public Input<Double> windowProbabilityInput = new Input<>("windowProbability", "the parameter q of the size of the neighbourhood, which grows by j geometric with probability q^j (1 - q)", 0.5);
     final public Input<Double> annealingInput = new Input<>("annealing", "the power f to which the scores of the branches and the density of the height are raised, which makes the proposals less eager", 0.8);
     final public Input<Boolean> scaleWeightBySqrtNumTipsInput = new Input<>("scaleWeightBySqrtNumTips", "whether to scale the weight by the square root of the number of tips n, so that the operator is selected with weight * sqrt(n). Otherwise, the weight is used as given", false);
 
@@ -42,6 +50,7 @@ public class StateDirectedSprOperator extends TreeOperator {
     BranchLengthSubtreeSelector subtreeSelector;
 
     int numStates;
+    Neighbourhood neighbourhood;
     double fullExplorationProbability;
     double windowProbability;
     double annealing;
@@ -54,12 +63,13 @@ public class StateDirectedSprOperator extends TreeOperator {
     Node parent;
     Node sibling;
 
-    // per node: the proposal that scored the branch above it, its log score, and the differences of P to the top and to the bottom of the branch
+    // per node: the proposal that scored the branch above it, its log score, the changes above and below P attached to it, and the sites at which X differs from both ends
     int proposalStamp;
     int[] scoreStamps;
     double[] logScores;
     int[] upperNumDifferences;
     int[] lowerNumDifferences;
+    int[] subtreeNumDifferences;
 
     // per node: the exploration that reached the branch above it, and the reached branches in the order of their distance with that distance
     int explorationStamp;
@@ -68,9 +78,12 @@ public class StateDirectedSprOperator extends TreeOperator {
     int[] candidateDistances;
     int numCandidates;
 
-    // scratch space for transition counts and probabilities
-    int[] counts;
-    double[] transitionProbabilities;
+    // scratch space for the number of sites per triple of states of the top, the bottom and X, and for the transition probabilities
+    int[] tripleCounts;
+    double[] upperProbabilities;
+    double[] lowerProbabilities;
+    double[] sideProbabilities;
+    double[] untakenProbabilities;
 
     @Override
     public void initAndValidate() {
@@ -81,6 +94,7 @@ public class StateDirectedSprOperator extends TreeOperator {
         this.subtreeSelector = new BranchLengthSubtreeSelector(this.tree);
 
         this.numStates = this.nodeStates.getNumStates();
+        this.neighbourhood = this.neighbourhoodInput.get();
         this.fullExplorationProbability = this.fullExplorationProbabilityInput.get();
         this.windowProbability = this.windowProbabilityInput.get();
         this.annealing = this.annealingInput.get();
@@ -98,12 +112,16 @@ public class StateDirectedSprOperator extends TreeOperator {
         this.logScores = new double[numNodes];
         this.upperNumDifferences = new int[numNodes];
         this.lowerNumDifferences = new int[numNodes];
+        this.subtreeNumDifferences = new int[numNodes];
         this.explorationStamps = new int[numNodes];
         this.candidates = new Node[numNodes];
         this.candidateDistances = new int[numNodes];
 
-        this.counts = new int[this.numStates * this.numStates];
-        this.transitionProbabilities = new double[this.numStates * this.numStates];
+        this.tripleCounts = new int[this.numStates * this.numStates * this.numStates];
+        this.upperProbabilities = new double[this.numStates * this.numStates];
+        this.lowerProbabilities = new double[this.numStates * this.numStates];
+        this.sideProbabilities = new double[this.numStates * this.numStates];
+        this.untakenProbabilities = new double[this.numStates * this.numStates];
     }
 
     /** Returns the weight, scaled by the square root of the number of tips if requested. */
@@ -117,11 +135,12 @@ public class StateDirectedSprOperator extends TreeOperator {
      * without X and P in which G–P–S is joined into G–S, and redraws the states of P from
      * their full conditional given its new neighbours. The branch is drawn proportional to its
      * score among the candidates, and the height of P on it from a Beta distribution, both
-     * given the states of P before the move. The pruned tree is the same before and after the
-     * move, so the reverse move draws the current branch from the candidates around the new
-     * one with the same radius, which include the current branch as the radius is a symmetric
-     * distance. Its scores are those of the pruned tree with the redrawn states of P, and it
-     * redraws the old states of P from their full conditional given the old neighbours.
+     * of which only depend on the pruned tree and X, not on the states of P. The pruned tree
+     * is the same before and after the move, so the reverse move draws the current branch from
+     * the candidates around the new one with the same limit and the same scores. Within a
+     * radius, these include the current branch as the radius is a symmetric distance, and a
+     * difference neighbourhood is the same from all of its branches. The reverse move redraws
+     * the old states of P from their full conditional given the old neighbours.
      */
     @Override
     public double proposal() {
@@ -137,14 +156,20 @@ public class StateDirectedSprOperator extends TreeOperator {
         this.substitutionProcess.update();
         this.startProposal();
 
-        int radius = Randomizer.nextDouble() < this.fullExplorationProbability ? Integer.MAX_VALUE : this.drawRadius();
+        boolean isFullExploration = Randomizer.nextDouble() < this.fullExplorationProbability;
+        int limit = isFullExploration ? Integer.MAX_VALUE : this.drawLimit();
 
         // draw the new branch and the new height of P on it
 
-        this.exploreBranches(this.sibling, radius);
+        this.exploreBranches(this.sibling, limit);
         double logForwardTotalScore = this.computeLogTotalScore();
         Node newSibling = this.drawCandidate(logForwardTotalScore);
         double logForwardBranchProbability = this.logScores[newSibling.getNr()] - logForwardTotalScore;
+
+        double logLimitRatio = isFullExploration ? 0.0 : this.computeLogLimitRatio(newSibling);
+        if (logLimitRatio == Double.NEGATIVE_INFINITY) {
+            return Double.NEGATIVE_INFINITY;
+        }
 
         double newParentHeight = this.drawHeight(newSibling);
         if (!this.isInsideBranch(newSibling, newParentHeight)) {
@@ -161,17 +186,17 @@ public class StateDirectedSprOperator extends TreeOperator {
         this.regraft(newSibling, newParentHeight);
         double logForwardStateDensity = this.redrawParentStates();
 
-        // the reverse move draws the old branch and height from the new attachment point, scoring with the new states of P
+        // the reverse move draws the old branch and height from the new attachment point, whose scores are cached
 
         this.sibling = newSibling;
-        this.startProposal();
-        this.exploreBranches(newSibling, radius);
+        this.exploreBranches(newSibling, limit);
         double logBackwardTotalScore = this.computeLogTotalScore();
         double logBackwardBranchProbability = this.logScores[oldSibling.getNr()] - logBackwardTotalScore;
         double logBackwardHeightDensity = this.computeLogHeightDensity(oldSibling, oldParentHeight);
         double logBackwardPickProbability = this.subtreeSelector.computeLogProbability(x);
 
         return (logBackwardPickProbability - logForwardPickProbability)
+                + logLimitRatio
                 + (logBackwardBranchProbability - logForwardBranchProbability)
                 + (logBackwardHeightDensity - logForwardHeightDensity)
                 + (logBackwardStateDensity - logForwardStateDensity);
@@ -186,25 +211,62 @@ public class StateDirectedSprOperator extends TreeOperator {
         this.proposalStamp++;
     }
 
-    /** Draws the radius 1 + j of a local exploration, with j geometric with probability q^j (1 - q). */
-    private int drawRadius() {
+    /**
+     * Draws the limit of a local exploration: the radius 1 + j, or the number max(1, N) + j of
+     * sites at which X may differ from both ends of a candidate, where N is that number at the
+     * current branch. In both, j is geometric with probability q^j (1 - q).
+     */
+    private int drawLimit() {
+        int numAdditionalSteps = this.drawNumAdditionalSteps();
+        if (this.neighbourhood == Neighbourhood.RADIUS) {
+            return 1 + numAdditionalSteps;
+        }
+
+        this.scoreBranch(this.sibling);
+        return (int) Math.min((long) Math.max(1, this.subtreeNumDifferences[this.sibling.getNr()]) + numAdditionalSteps, Integer.MAX_VALUE - 1);
+    }
+
+    private int drawNumAdditionalSteps() {
         if (this.windowProbability == 0.0) {
-            return 1;
+            return 0;
         }
 
         double numAdditionalSteps = Math.floor(Math.log(Randomizer.nextDouble()) / Math.log(this.windowProbability));
-        return 1 + (int) Math.min(numAdditionalSteps, this.tree.getNodeCount());
+        return (int) Math.min(numAdditionalSteps, this.tree.getNodeCount());
+    }
+
+    /**
+     * Returns the log ratio of the probabilities of drawing the limit of the reverse and of the
+     * forward exploration. The radius is drawn independently of the attachment point, but the
+     * reverse move has to draw the same difference limit from the new branch, with j' = T -
+     * max(1, N'), which gives the factor q^(max(1, N) - max(1, N')). With q = 0, a move that
+     * changes max(1, N) cannot be reversed.
+     */
+    private double computeLogLimitRatio(Node newSibling) {
+        if (this.neighbourhood == Neighbourhood.RADIUS) {
+            return 0.0;
+        }
+
+        int oldMinLimit = Math.max(1, this.subtreeNumDifferences[this.sibling.getNr()]);
+        int newMinLimit = Math.max(1, this.subtreeNumDifferences[newSibling.getNr()]);
+        if (oldMinLimit == newMinLimit) {
+            return 0.0;
+        }
+        return this.windowProbability == 0.0 ? Double.NEGATIVE_INFINITY : (oldMinLimit - newMinLimit) * Math.log(this.windowProbability);
     }
 
     /* Exploration */
 
     /**
-     * Collects the candidate branches of the pruned tree within the given number of steps of
-     * the branch above the given node, breadth-first, and scores them. A step goes to a branch
-     * that meets the current one at its top or at its bottom. Only branches whose top is older
-     * than X are candidates, which form a connected part of the pruned tree around its root.
+     * Collects the candidate branches of the pruned tree around the branch above the given
+     * node, breadth-first, and scores them. A step goes to a branch that meets the current one
+     * at its top or at its bottom. Only branches whose top is older than X are candidates,
+     * which form a connected part of the pruned tree around its root. The limit is the radius
+     * in steps, or the number of sites at which X may differ from both ends of a candidate,
+     * where the exploration only continues through candidates. The start must be within the
+     * limit. Both neighbourhoods are the same from every candidate with the same limit.
      */
-    private void exploreBranches(Node start, int radius) {
+    private void exploreBranches(Node start, int limit) {
         if (this.explorationStamp == Integer.MAX_VALUE) {
             Arrays.fill(this.explorationStamps, 0);
             this.explorationStamp = 0;
@@ -212,32 +274,36 @@ public class StateDirectedSprOperator extends TreeOperator {
         this.explorationStamp++;
         this.numCandidates = 0;
 
-        this.visitBranch(start, 0);
+        this.visitBranch(start, 0, limit);
         for (int next = 0; next < this.numCandidates; next++) {
             Node node = this.candidates[next];
             int distance = this.candidateDistances[next];
-            if (distance >= radius) {
+            if (this.neighbourhood == Neighbourhood.RADIUS && distance >= limit) {
                 continue;
             }
 
             // the branches meeting at the top, including the one above the top
             Node top = this.getPrunedParent(node);
             for (Node child : top.getChildren()) {
-                this.visitBranch(this.getPrunedChild(child), distance + 1);
+                this.visitBranch(this.getPrunedChild(child), distance + 1, limit);
             }
             if (!top.isRoot()) {
-                this.visitBranch(top, distance + 1);
+                this.visitBranch(top, distance + 1, limit);
             }
 
             // the branches meeting at the bottom
             for (Node child : node.getChildren()) {
-                this.visitBranch(this.getPrunedChild(child), distance + 1);
+                this.visitBranch(this.getPrunedChild(child), distance + 1, limit);
             }
         }
     }
 
-    /** Adds the branch above the given node as a candidate at the given distance, unless it was reached before or lies below X. */
-    private void visitBranch(Node node, int distance) {
+    /**
+     * Adds the branch above the given node as a candidate at the given distance, unless it was
+     * reached before, lies below X, or X differs from both of its ends at more sites than the
+     * given limit of a difference neighbourhood.
+     */
+    private void visitBranch(Node node, int distance, int limit) {
         if (this.explorationStamps[node.getNr()] == this.explorationStamp) {
             return;
         }
@@ -247,10 +313,18 @@ public class StateDirectedSprOperator extends TreeOperator {
             return;
         }
 
+        this.scoreBranch(node);
+        if (this.neighbourhood == Neighbourhood.DIFFERENCES && this.subtreeNumDifferences[node.getNr()] > limit) {
+            return;
+        }
+
         this.candidates[this.numCandidates] = node;
         this.candidateDistances[this.numCandidates] = distance;
         this.numCandidates++;
+    }
 
+    /** Scores the branch above the given node unless the current proposal already did. */
+    private void scoreBranch(Node node) {
         if (this.scoreStamps[node.getNr()] != this.proposalStamp) {
             this.scoreStamps[node.getNr()] = this.proposalStamp;
             this.logScores[node.getNr()] = this.computeLogScore(node);
@@ -260,63 +334,84 @@ public class StateDirectedSprOperator extends TreeOperator {
     /**
      * Computes the log score of attaching P at the midpoint of the branch above the given node
      * of the pruned tree, between its top D and its bottom C. The genetic prior of the pruned
-     * tree with P attached there is the product over all branches of the pruned tree, with the
-     * term of D–C replaced by those of D–P, P–C and P–X. The product over all branches is the
-     * same for every candidate, so the score is the ratio of the replacing terms to the
-     * replaced one, raised to the annealing power. It also records the differences of P to D
-     * and to C, which shape the density of the height.
+     * tree with P attached there, summed over the states of P, is the product over all
+     * branches of the pruned tree, with the term of D–C replaced by Π_sites Σ_p P_DP(d, p)
+     * P_PC(p, c) P_PX(p, x). The product over all branches is the same for every candidate, so
+     * the score is the ratio of the replacing term to the replaced one, raised to the
+     * annealing power. The sites only enter through the number of sites in each triple of
+     * states (d, c, x), so the score does not depend on the states of P.
      */
     private double computeLogScore(Node node) {
         Node top = this.getPrunedParent(node);
         double lowerHeight = Math.max(node.getHeight(), this.x.getHeight());
         double midHeight = 0.5 * (lowerHeight + top.getHeight());
 
-        this.nodeStates.countTransitions(top, this.parent, this.counts);
-        this.upperNumDifferences[node.getNr()] = this.countDifferences(this.counts);
-        double logTakenProbability = this.computeLogBranchProbability(this.counts, this.parent, top.getHeight() - midHeight);
+        this.nodeStates.countTriples(top, node, this.x, this.tripleCounts);
+        this.countMajorityChanges(node);
 
-        this.nodeStates.countTransitions(this.parent, node, this.counts);
-        this.lowerNumDifferences[node.getNr()] = this.countDifferences(this.counts);
-        logTakenProbability += this.computeLogBranchProbability(this.counts, node, midHeight - node.getHeight());
+        // the rate of a branch is that of the node below it, so the branch above P has the rate of P
+        this.substitutionProcess.getTransitionProbabilities(this.parent, top.getHeight() - midHeight, this.upperProbabilities);
+        this.substitutionProcess.getTransitionProbabilities(node, midHeight - node.getHeight(), this.lowerProbabilities);
+        this.substitutionProcess.getTransitionProbabilities(this.x, midHeight - this.x.getHeight(), this.sideProbabilities);
+        this.substitutionProcess.getTransitionProbabilities(node, top.getHeight() - node.getHeight(), this.untakenProbabilities);
 
-        logTakenProbability += this.computeLogBranchProbability(
-                this.nodeStates.getTransitionCounts(this.x), this.x, midHeight - this.x.getHeight()
-        );
+        int k = this.numStates;
+        double logRatio = 0.0;
+        for (int topState = 0; topState < k; topState++) {
+            for (int bottomState = 0; bottomState < k; bottomState++) {
+                for (int sideState = 0; sideState < k; sideState++) {
+                    int count = this.tripleCounts[(topState * k + bottomState) * k + sideState];
+                    if (count == 0) {
+                        continue;
+                    }
 
-        // the branch above S joins the branches above P and S, so its counts are not in the node states
-        int[] untakenCounts = this.nodeStates.getTransitionCounts(node);
-        if (node == this.sibling) {
-            this.nodeStates.countTransitions(top, node, this.counts);
-            untakenCounts = this.counts;
-        }
-        double logUntakenProbability = this.computeLogBranchProbability(untakenCounts, node, top.getHeight() - node.getHeight());
-
-        return this.annealing * (logTakenProbability - logUntakenProbability);
-    }
-
-    /** Computes Σ N_ab log P_ab for the given counts on a branch of the given length at the rate of the branch above the given node. */
-    private double computeLogBranchProbability(int[] counts, Node rateNode, double branchLength) {
-        this.substitutionProcess.getTransitionProbabilities(rateNode, branchLength, this.transitionProbabilities);
-
-        double logProbability = 0.0;
-        for (int i = 0; i < counts.length; i++) {
-            if (counts[i] != 0) {
-                logProbability += counts[i] * Math.log(this.transitionProbabilities[i]);
-            }
-        }
-        return logProbability;
-    }
-
-    private int countDifferences(int[] counts) {
-        int numDifferences = 0;
-        for (int from = 0; from < this.numStates; from++) {
-            for (int to = 0; to < this.numStates; to++) {
-                if (from != to) {
-                    numDifferences += counts[from * this.numStates + to];
+                    double takenProbability = 0.0;
+                    for (int parentState = 0; parentState < k; parentState++) {
+                        takenProbability += this.upperProbabilities[topState * k + parentState]
+                                * this.lowerProbabilities[parentState * k + bottomState]
+                                * this.sideProbabilities[parentState * k + sideState];
+                    }
+                    logRatio += count * (Math.log(takenProbability) - Math.log(this.untakenProbabilities[topState * k + bottomState]));
                 }
             }
         }
-        return numDifferences;
+
+        return this.annealing * logRatio;
+    }
+
+    /**
+     * Counts the changes above and below P on the branch above the given node if P took the
+     * majority state of the top, the bottom and X at every site, or the state of the top if
+     * all three differ. These shape the density of the height of P. It also counts the sites at
+     * which X differs from both ends, which bound the difference neighbourhood.
+     */
+    private void countMajorityChanges(Node node) {
+        int k = this.numStates;
+        int numUpperChanges = 0;
+        int numLowerChanges = 0;
+        int numSubtreeDifferences = 0;
+
+        for (int topState = 0; topState < k; topState++) {
+            for (int bottomState = 0; bottomState < k; bottomState++) {
+                for (int sideState = 0; sideState < k; sideState++) {
+                    int count = this.tripleCounts[(topState * k + bottomState) * k + sideState];
+                    int parentState = bottomState == sideState ? bottomState : topState;
+                    if (topState != parentState) {
+                        numUpperChanges += count;
+                    }
+                    if (parentState != bottomState) {
+                        numLowerChanges += count;
+                    }
+                    if (sideState != topState && sideState != bottomState) {
+                        numSubtreeDifferences += count;
+                    }
+                }
+            }
+        }
+
+        this.upperNumDifferences[node.getNr()] = numUpperChanges;
+        this.lowerNumDifferences[node.getNr()] = numLowerChanges;
+        this.subtreeNumDifferences[node.getNr()] = numSubtreeDifferences;
     }
 
     /** Returns log Σ exp(log score) over the candidates of the last exploration. */
@@ -351,9 +446,9 @@ public class StateDirectedSprOperator extends TreeOperator {
 
     /**
      * Draws the height of P on the branch above the given node within [max(t_C, t_X), t_D]. Its
-     * relative position u from the bottom is Beta(f b + 1, f a + 1) with a and b the differences
-     * of P to the top and to the bottom, which is the density of the position when a changes
-     * fall above P and b below it uniformly along the branch.
+     * relative position u from the bottom is Beta(f b + 1, f a + 1) with a and b the changes
+     * above and below P from countMajorityChanges, which is the density of the position when a
+     * changes fall above P and b below it uniformly along the branch.
      */
     private double drawHeight(Node node) {
         double alpha = this.annealing * this.lowerNumDifferences[node.getNr()] + 1.0;

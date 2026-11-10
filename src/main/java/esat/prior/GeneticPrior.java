@@ -39,6 +39,12 @@ public class GeneticPrior extends GenericTreeLikelihood {
     // the running total drifts by rounding, so it is re-summed from the branches after this many incremental updates
     private static final int RESUM_INTERVAL = 1000;
 
+    /** The coefficients 1/n! of x^(n-2) in the Taylor series of (exp(x) - 1 - x) / x^2. */
+    private static final double[] TAYLOR_COEFFICIENTS = {
+            1.0 / 2.0, 1.0 / 6.0, 1.0 / 24.0, 1.0 / 120.0, 1.0 / 720.0, 1.0 / 5040.0, 1.0 / 40320.0,
+            1.0 / 362880.0, 1.0 / 3628800.0, 1.0 / 39916800.0, 1.0 / 479001600.0, 1.0 / 6227020800.0, 1.0 / 87178291200.0
+    };
+
     TreeInterface tree;
     Alignment alignment;
     NodeStates nodeStates;
@@ -353,7 +359,7 @@ public class GeneticPrior extends GenericTreeLikelihood {
         double distance = this.categoryRate * this.branchRateModel.getRateForBranch(node) * branchLength;
 
         for (int k = 0; k < this.numStates; k++) {
-            this.scaledExponentials[k] = Math.expm1(this.eigenValues[k] * distance);
+            this.scaledExponentials[k] = computeExpm1(this.eigenValues[k] * distance);
         }
 
         for (int from = 0; from < this.numStates; from++) {
@@ -366,6 +372,23 @@ public class GeneticPrior extends GenericTreeLikelihood {
                 transitionProbabilities[from * this.numStates + to] = probability;
             }
         }
+    }
+
+    /**
+     * Computes exp(x) - 1 without cancellation. Math.expm1 is accurate too, but several times
+     * slower than Math.exp, which the JVM intrinsifies. Near zero, the Taylor series is accurate
+     * to machine precision after a few terms, and elsewhere the subtraction loses nothing.
+     */
+    private static double computeExpm1(double x) {
+        if (Math.abs(x) >= 0.5) {
+            return Math.exp(x) - 1.0;
+        }
+
+        double sum = TAYLOR_COEFFICIENTS[TAYLOR_COEFFICIENTS.length - 1];
+        for (int order = TAYLOR_COEFFICIENTS.length - 2; order >= 0; order--) {
+            sum = TAYLOR_COEFFICIENTS[order] + sum * x;
+        }
+        return x * (1.0 + x * sum);
     }
 
     /**

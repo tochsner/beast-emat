@@ -228,6 +228,35 @@ public class NodeStatesTest {
         }
     }
 
+    /** Counts the triples of states of all triples of nodes, which can be any three nodes of the tree, including repeated ones. */
+    @Test
+    public void testTripleCountsMatchSequences() {
+        int[][] expectedSequences = this.getSequences();
+        for (int i = 0; i < 200; i++) {
+            this.applyRandomChange(expectedSequences);
+        }
+        this.nodeStates.setEverythingDirty(false);
+
+        Node[] nodes = this.tree.getNodesAsArray();
+        int[] counts = new int[NUM_STATES * NUM_STATES * NUM_STATES];
+        for (Node top : nodes) {
+            for (Node bottom : nodes) {
+                for (Node side : nodes) {
+                    int[] expectedCounts = new int[counts.length];
+                    for (int site = 0; site < expectedSequences[top.getNr()].length; site++) {
+                        int topState = expectedSequences[top.getNr()][site];
+                        int bottomState = expectedSequences[bottom.getNr()][site];
+                        int sideState = expectedSequences[side.getNr()][site];
+                        expectedCounts[(topState * NUM_STATES + bottomState) * NUM_STATES + sideState]++;
+                    }
+
+                    this.nodeStates.countTriples(top, bottom, side, counts);
+                    assertArrayEquals(expectedCounts, counts, "Triples of " + top.getNr() + ", " + bottom.getNr() + ", " + side.getNr());
+                }
+            }
+        }
+    }
+
     /* Topology changes */
 
     /**
