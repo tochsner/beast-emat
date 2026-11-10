@@ -244,8 +244,15 @@ public class NodeStates extends StateNode {
      * the root.
      */
     public void applyRootStates(int[] sites, int[] states, Operator operator) {
+        this.applyRootStates(StateChanges.of(this.tree.getRoot().getNr(), sites, states), operator);
+    }
+
+    /**
+     * Sets the states of the root at the sites of the given changes, which are relative to the
+     * current reference sequence. Every other node keeps its states, as above.
+     */
+    public void applyRootStates(StateChanges rootStates, Operator operator) {
         Node root = this.tree.getRoot();
-        StateChanges rootStates = StateChanges.of(root.getNr(), sites, states);
 
         // keep the sites whose root state changes, in ascending order
 
@@ -378,22 +385,36 @@ public class NodeStates extends StateNode {
         if (this.hasStoredStates) {
             throw new IllegalStateException("Cannot initialise the states during a proposal.");
         }
+
+        this.setAllStates(rootSequence, changesAtNode.toArray(new StateChanges[0]));
+        this.storeStates();
+    }
+
+    /**
+     * Replaces the root sequence and the changes of every node within a proposal of the given
+     * operator, and recomputes every transition count. The changes of the root must be empty.
+     * The new counts are fresh arrays, so the stored state stays intact.
+     */
+    public void replaceStates(int[] rootSequence, StateChanges[] changesAtNode, Operator operator) {
+        this.startEditing(operator);
+        this.setAllStates(rootSequence, changesAtNode);
+    }
+
+    private void setAllStates(int[] rootSequence, StateChanges[] changesAtNode) {
         if (rootSequence.length != this.numSites) {
             throw new IllegalArgumentException("Expected a root sequence with " + this.numSites + " sites.");
         }
-        if (changesAtNode.size() != this.numNodes) {
+        if (changesAtNode.length != this.numNodes) {
             throw new IllegalArgumentException("Expected changes for " + this.numNodes + " nodes.");
         }
 
         this.referenceSequence = rootSequence.clone();
         for (int nodeNr = 0; nodeNr < this.numNodes; nodeNr++) {
-            this.changesAtNode[nodeNr] = changesAtNode.get(nodeNr);
+            this.changesAtNode[nodeNr] = changesAtNode[nodeNr];
             this.checkChanges(nodeNr);
         }
         this.recomputeAllCounts();
         this.markEveryBranchDirty();
-
-        this.storeStates();
     }
 
     /* Copy on Write */

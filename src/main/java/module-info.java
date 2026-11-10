@@ -58,7 +58,12 @@ open module my.beast.example {
     exports emat.state;
     exports emat.stochasticmapping;
     exports emat.tree;
+    exports esat.helper;
+    exports esat.initialisation;
+    exports esat.operators.states;
+    exports esat.prior;
     exports esat.state;
+    exports esat.stochasticmapping;
 
     provides beast.base.core.BEASTInterface with
             Mutations,
@@ -94,5 +99,8 @@ open module my.beast.example {
             TimedMCMC,
             HistoryDistanceLogger,
             ExactHistoryInitialiser,
-            NodeStates;
+            NodeStates,
+            esat.prior.GeneticPrior,
+            esat.initialisation.SampledStatesInitialiser,
+            esat.operators.states.GlobalStateGibbsOperator;
 }

@@ -315,6 +315,47 @@ public class NodeStatesTest {
         assertThrows(RuntimeException.class, () -> this.nodeStates.initialiseStates(sequences[rootNr], invalidChanges));
     }
 
+    /** Replaces all states within proposals, which a restore must revert and an accept must keep consistent. */
+    @Test
+    public void testReplaceStatesWithinProposal() {
+        int numSites = this.nodeStates.getNumSites();
+        int rootNr = this.tree.getRoot().getNr();
+
+        for (int step = 0; step < 100; step++) {
+            int[][] sequencesBefore = this.getSequences();
+            int[][] countsBefore = this.copyCounts();
+            int[] rootStateCountsBefore = this.nodeStates.getRootStateCounts().clone();
+
+            int[][] sequences = new int[this.tree.getNodeCount()][numSites];
+            for (int[] sequence : sequences) {
+                for (int site = 0; site < numSites; site++) {
+                    sequence[site] = this.random.nextInt(NUM_STATES);
+                }
+            }
+            StateChanges[] changes = new StateChanges[sequences.length];
+            for (int nodeNr = 0; nodeNr < sequences.length; nodeNr++) {
+                changes[nodeNr] = StateChanges.fromSequence(nodeNr, sequences[nodeNr], sequences[rootNr]);
+            }
+
+            this.nodeStates.replaceStates(sequences[rootNr], changes, this.operator);
+            assertTrue(this.nodeStates.isEveryBranchDirty());
+            assertSequencesEqual(sequences, this.getSequences());
+            this.assertCountsConsistent();
+
+            if (this.random.nextBoolean()) {
+                this.nodeStates.restoreStateNode();
+                this.nodeStates.restore();
+
+                assertSequencesEqual(sequencesBefore, this.getSequences());
+                assertArrayEquals(rootStateCountsBefore, this.nodeStates.getRootStateCounts());
+                assertTrue(Arrays.deepEquals(countsBefore, this.copyCounts()));
+            }
+
+            this.nodeStates.setEverythingDirty(false);
+            this.assertCountsConsistent();
+        }
+    }
+
     /* Brute force reference */
 
     private int[][] getSequences() {

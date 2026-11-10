@@ -4,6 +4,9 @@
     <service type="beast.base.core.BEASTInterface">
         <provider classname="emat.state.Mutations"/>
         <provider classname="esat.state.NodeStates"/>
+        <provider classname="esat.prior.GeneticPrior"/>
+        <provider classname="esat.initialisation.SampledStatesInitialiser"/>
+        <provider classname="esat.operators.states.GlobalStateGibbsOperator"/>
         <provider classname="emat.state.BranchAnnotations"/>
         <provider classname="emat.prior.GeneticPrior"/>
         <provider classname="emat.prior.BranchKindPrior"/>
