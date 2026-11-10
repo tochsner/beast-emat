@@ -31,6 +31,7 @@ import emat.prior.GeneticPrior;
 import emat.state.Mutations;
 import emat.tree.IncrementalStoreTree;
 import emat.tree.InsertionSortTreeIntervals;
+import esat.state.NodeStates;
 
 open module my.beast.example {
     requires beast.pkgmgmt;
@@ -57,6 +58,7 @@ open module my.beast.example {
     exports emat.state;
     exports emat.stochasticmapping;
     exports emat.tree;
+    exports esat.state;
 
     provides beast.base.core.BEASTInterface with
             Mutations,
@@ -91,5 +93,6 @@ open module my.beast.example {
             MutationCountAdapter,
             TimedMCMC,
             HistoryDistanceLogger,
-            ExactHistoryInitialiser;
+            ExactHistoryInitialiser,
+            NodeStates;
 }
