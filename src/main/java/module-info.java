@@ -109,5 +109,6 @@ open module my.beast.example {
             esat.operators.topology.StateDirectedSprOperator,
             esat.operators.nodetimes.RatioScaleOperator,
             esat.operators.nodetimes.RootRatioScaleOperator,
-            esat.operators.nodetimes.BatchNodeDisplacementOperator;
+            esat.operators.nodetimes.BatchNodeDisplacementOperator,
+            esat.operators.nodetimes.RootScaleOperator;
 }

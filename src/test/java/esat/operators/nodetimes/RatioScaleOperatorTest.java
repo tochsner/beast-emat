@@ -82,7 +82,17 @@ public class RatioScaleOperatorTest {
         this.assertBatchMatchesExactPosterior(true, true);
     }
 
+    /** The root scale operator moves the root only, so the inner nodes move with the batch operator. */
+    @Test
+    public void testRootScaleWithBatchNodeDisplacementMatchesExactPosterior() {
+        this.assertBatchMatchesExactPosterior(false, true, true);
+    }
+
     private void assertBatchMatchesExactPosterior(boolean learnTreePrior, boolean interpolate) {
+        this.assertBatchMatchesExactPosterior(learnTreePrior, interpolate, false);
+    }
+
+    private void assertBatchMatchesExactPosterior(boolean learnTreePrior, boolean interpolate, boolean useRootScale) {
         Randomizer.setSeed(34);
         EsatFixture fixture = EsatFixture.create(NEWICK, SEQUENCES);
         SubstitutionProcess substitutionProcess = new SubstitutionProcess(fixture.geneticPrior());
@@ -96,7 +106,7 @@ public class RatioScaleOperatorTest {
         BatchNodeDisplacementOperator batchOperator = new BatchNodeDisplacementOperator();
         batchOperator.initByName("tree", fixture.tree(), "geneticPrior", fixture.geneticPrior(), "batchSize", 2, "optimise", false,
                 "learnTreePrior", learnTreePrior, "interpolateGeneticPrior", interpolate, "treePriorWarmUp", 200, "weight", 1.0);
-        RootRatioScaleOperator rootOperator = new RootRatioScaleOperator();
+        TreeOperator rootOperator = useRootScale ? new RootScaleOperator() : new RootRatioScaleOperator();
         rootOperator.initByName("tree", fixture.tree(), "optimise", false, "scaleFactor", 0.5, "weight", 1.0);
 
         double[] sampledMeans = this.runChain(fixture, new TreeOperator[]{rootOperator, rootOperator, batchOperator, batchOperator});
