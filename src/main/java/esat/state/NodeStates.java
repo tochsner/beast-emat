@@ -143,6 +143,7 @@ public class NodeStates extends StateNode {
         this.isCheckPending = new boolean[this.numNodes];
         this.checkNodeNrs = new int[this.numNodes];
         this.markEveryBranchDirty();
+        this.markEveryCheckPending();
 
         this.storedChangesAtNode = new BranchChanges[this.numNodes];
         this.storedTransitionCounts = new int[this.numNodes][];
@@ -206,7 +207,8 @@ public class NodeStates extends StateNode {
         while (stackSize > 0) {
             Node node = stack[--stackSize];
             this.preorder[numCollected++] = node;
-            for (Node child : node.getChildren()) {
+            for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
+                Node child = node.getChild(childIndex);
                 stack[stackSize++] = child;
             }
         }
@@ -569,7 +571,8 @@ public class NodeStates extends StateNode {
     /**
      * Installs the given changes for the given non-root node and recomputes the transition
      * counts above it from them. This is meant for a change of the parent of the node, e.g. by
-     * a topology move, where the changes were composed before the move. Parents must be
+     * a topology move, where the changes were composed before the move, so the states of the
+     * node stay the same and a tip is not rechecked against its data. Parents must be
      * installed before their children if both change, as the counts use the state counts of the parent.
      */
     public void setBranchChanges(Node node, BranchChanges changes, Operator operator) {
@@ -584,9 +587,6 @@ public class NodeStates extends StateNode {
         this.changesAtNode[node.getNr()] = changes;
         this.transitionCounts[node.getNr()] = this.computeBranchCounts(node);
         this.markBranchDirty(node.getNr());
-        if (node.isLeaf()) {
-            this.markCheckPending(node.getNr());
-        }
     }
 
     private void markBranchDirty(int nodeNr) {
@@ -653,6 +653,7 @@ public class NodeStates extends StateNode {
 
         this.recomputeAllCounts();
         this.markEveryBranchDirty();
+        this.markEveryCheckPending();
     }
 
     /**
@@ -1132,6 +1133,7 @@ public class NodeStates extends StateNode {
     public void setEverythingDirty(boolean isDirty) {
         this.setSomethingIsDirty(isDirty);
         if (isDirty) {
+            // the states are unchanged, so the tips stay compatible with their data
             this.markEveryBranchDirty();
         } else {
             this.cleanBranches();
@@ -1143,7 +1145,10 @@ public class NodeStates extends StateNode {
         Arrays.fill(this.isBranchDirty, true);
         this.isEveryBranchDirty = true;
         this.numDirtyNodes = 0;
+    }
 
+    /** Marks the states of every tip for a check against its data, as all states were replaced. */
+    private void markEveryCheckPending() {
         Arrays.fill(this.isCheckPending, true);
         this.isEveryCheckPending = true;
         this.numCheckNodes = 0;
@@ -1290,6 +1295,7 @@ public class NodeStates extends StateNode {
         System.arraycopy(source.changesAtNode, 0, this.changesAtNode, 0, this.numNodes);
         this.recomputeAllCounts();
         this.markEveryBranchDirty();
+        this.markEveryCheckPending();
         this.setSomethingIsDirty(false);
     }
 
@@ -1319,6 +1325,7 @@ public class NodeStates extends StateNode {
         this.isCheckPending = new boolean[this.numNodes];
         this.checkNodeNrs = new int[this.numNodes];
         this.markEveryBranchDirty();
+        this.markEveryCheckPending();
     }
 
     /* Loggable methods */

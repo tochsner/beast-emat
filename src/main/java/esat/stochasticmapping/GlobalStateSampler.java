@@ -53,8 +53,10 @@ public class GlobalStateSampler {
     // the nodes in preorder, so that every parent comes before its children
     private final Node[] nodesInPreorder;
 
-    // per node: the transition probabilities of the branch above it, and its partials of the patterns of the current block
+    // per node: the transition probabilities of the branch above it, the distance they were computed for, and its partials of the patterns of the current block
     private final double[][] transitionProbabilities;
+    private final double[] transitionDistances;
+    private int transitionModelVersion;
     private final double[][] partials;
 
     // per node: the state at the current site, and the sampled sites and states at which it differs from its parent, with the state of the parent
@@ -105,6 +107,8 @@ public class GlobalStateSampler {
         this.nodesInPreorder = new Node[this.numNodes];
 
         this.transitionProbabilities = new double[this.numNodes][this.numStates * this.numStates];
+        this.transitionDistances = new double[this.numNodes];
+        Arrays.fill(this.transitionDistances, Double.NaN);
         this.partials = new double[this.numNodes][this.blockSize * this.numStates];
 
         this.siteStates = new int[this.numNodes];
@@ -189,12 +193,25 @@ public class GlobalStateSampler {
         return new Sample(rootSequence, changesAtNode);
     }
 
-    /** Collects the nodes in preorder and computes the transition probabilities of every branch. */
+    /**
+     * Collects the nodes in preorder and computes the transition probabilities of every branch,
+     * unless the branch has the same distance as when they were last computed under the same model.
+     */
     private void prepareTree() {
         this.collectNodesInPreorder();
+
+        boolean hasModelChanged = this.transitionModelVersion != this.substitutionProcess.getModelVersion();
+        this.transitionModelVersion = this.substitutionProcess.getModelVersion();
+
         for (Node node : this.nodesInPreorder) {
-            if (!node.isRoot()) {
-                this.substitutionProcess.getTransitionProbabilities(node, this.transitionProbabilities[node.getNr()]);
+            if (node.isRoot()) {
+                continue;
+            }
+
+            double distance = this.substitutionProcess.computeDistance(node);
+            if (hasModelChanged || distance != this.transitionDistances[node.getNr()]) {
+                this.substitutionProcess.computeTransitionProbabilities(distance, this.transitionProbabilities[node.getNr()]);
+                this.transitionDistances[node.getNr()] = distance;
             }
         }
     }
@@ -209,7 +226,8 @@ public class GlobalStateSampler {
         while (stackSize > 0) {
             Node node = stack[--stackSize];
             this.nodesInPreorder[numCollected++] = node;
-            for (Node child : node.getChildren()) {
+            for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
+                Node child = node.getChild(childIndex);
                 stack[stackSize++] = child;
             }
         }
@@ -235,7 +253,8 @@ public class GlobalStateSampler {
                 }
             } else {
                 Arrays.fill(nodePartials, 0, numBlockPatterns * this.numStates, 1.0);
-                for (Node child : node.getChildren()) {
+                for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
+                    Node child = node.getChild(childIndex);
                     this.multiplyChildPartials(nodePartials, child, numBlockPatterns);
                 }
             }

@@ -41,7 +41,13 @@ SEQUENCE_PATTERN = re.compile(r'<sequence\b[^>]*\bvalue="([^"]*)"')
 TARGET_ESS = 200
 BURNIN_FRACTION = 0.1
 NUM_POINTS = 20
-INCLUDED_METHODS = {"coal_emat", "sbd_emat", "coal_emat_uniform_reform", "coal_delphy"}
+INCLUDED_METHODS = {
+    "coal_emat",
+    "coal_esat",
+    "sbd_emat",
+    "coal_emat_uniform_reform",
+    "coal_delphy",
+}
 EXCLUDED_EXPERIMENTS = {"sars20000", "wnv", "ncbisc2"}
 
 # Delphy logs name some columns differently than BEAST logs
@@ -676,8 +682,6 @@ def analyse_method(method: str, log_paths: dict[tuple[str, int], Path]) -> None:
     )
 
     plot_convergence_time(method, summary_df, experiment_colors)
-    plot_diversity_convergence_time(method, summary_df, experiment_colors)
-    plot_mutations_convergence_time(method, summary_df, experiment_colors)
     plot_min_ess_trajectories(method, ess_trajectories, experiment_colors)
     plot_relative_convergence_time(method, convergence_df, experiments)
 

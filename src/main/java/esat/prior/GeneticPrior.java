@@ -39,12 +39,6 @@ public class GeneticPrior extends GenericTreeLikelihood {
     // the running total drifts by rounding, so it is re-summed from the branches after this many incremental updates
     private static final int RESUM_INTERVAL = 1000;
 
-    /** The coefficients 1/n! of x^(n-2) in the Taylor series of (exp(x) - 1 - x) / x^2. */
-    private static final double[] TAYLOR_COEFFICIENTS = {
-            1.0 / 2.0, 1.0 / 6.0, 1.0 / 24.0, 1.0 / 120.0, 1.0 / 720.0, 1.0 / 5040.0, 1.0 / 40320.0,
-            1.0 / 362880.0, 1.0 / 3628800.0, 1.0 / 39916800.0, 1.0 / 479001600.0, 1.0 / 6227020800.0, 1.0 / 87178291200.0
-    };
-
     TreeInterface tree;
     Alignment alignment;
     NodeStates nodeStates;
@@ -64,6 +58,9 @@ public class GeneticPrior extends GenericTreeLikelihood {
     private double categoryRate;
     private double[] frequencies;
     private double[] logFrequencies;
+
+    // counts the changes of the model above, so that results computed with it can be reused while it stays the same
+    private int modelVersion;
 
     // the log contribution of the branch above each node, which is zero for the root
     private double[] branchLogPs;
@@ -235,18 +232,32 @@ public class GeneticPrior extends GenericTreeLikelihood {
             }
         }
 
+        double[] eigenVectors = eigenDecomposition.getEigenVectors();
+        double[] inverseEigenVectors = eigenDecomposition.getInverseEigenVectors();
+        double[] eigenValues = eigenDecomposition.getEigenValues();
+        double categoryRate = this.siteModel.getRateForCategory(0, root);
+        double[] frequencies = this.substitutionModel.getFrequencies();
+
+        if (this.eigenValues != null && categoryRate == this.categoryRate
+                && Arrays.equals(eigenValues, this.eigenValues)
+                && Arrays.equals(eigenVectors, this.eigenVectors)
+                && Arrays.equals(inverseEigenVectors, this.inverseEigenVectors)
+                && Arrays.equals(frequencies, this.frequencies)) {
+            return;
+        }
+
         // the arrays are copied, as some substitution models update them in place
-        this.eigenVectors = eigenDecomposition.getEigenVectors().clone();
-        this.inverseEigenVectors = eigenDecomposition.getInverseEigenVectors().clone();
-        this.eigenValues = eigenDecomposition.getEigenValues().clone();
+        this.eigenVectors = eigenVectors.clone();
+        this.inverseEigenVectors = inverseEigenVectors.clone();
+        this.eigenValues = eigenValues.clone();
+        this.categoryRate = categoryRate;
+        this.frequencies = frequencies.clone();
 
-        this.categoryRate = this.siteModel.getRateForCategory(0, root);
-
-        this.frequencies = this.substitutionModel.getFrequencies().clone();
         this.logFrequencies = new double[this.numStates];
         for (int state = 0; state < this.numStates; state++) {
             this.logFrequencies[state] = Math.log(this.frequencies[state]);
         }
+        this.modelVersion++;
     }
 
     /** Marks those of the given nodes as dirty whose branch changed since the last calculation. */
@@ -281,7 +292,15 @@ public class GeneticPrior extends GenericTreeLikelihood {
 
     /** Computes Σ N_ab log P_ab(d) over the transition counts of the branch above the given non-root node. */
     private double computeBranchLogP(Node node) {
-        this.getTransitionProbabilities(node, this.transitionProbabilities);
+        return this.computeBranchLogP(node, node.getParent().getHeight() - node.getHeight());
+    }
+
+    /**
+     * Computes Σ N_ab log P_ab(d) over the transition counts of the branch above the given non-root node, for a
+     * branch of the given length instead of its own, using the model as of the last calculation or refresh.
+     */
+    public double computeBranchLogP(Node node, double branchLength) {
+        this.getTransitionProbabilities(node, branchLength, this.transitionProbabilities);
         int[] counts = this.nodeStates.getTransitionCounts(node);
 
         double branchLogP = 0.0;
@@ -292,6 +311,33 @@ public class GeneticPrior extends GenericTreeLikelihood {
             }
         }
         return branchLogP;
+    }
+
+    /**
+     * Computes the derivative of the log contribution of the branch above the given non-root node, as in
+     * {@link #computeBranchLogP(Node, double)}, with respect to the length of the branch. With P'(d) = V diag(λ exp(λ d)) V^-1,
+     * it is the rate of the branch times Σ N_ab P'_ab(d) / P_ab(d).
+     */
+    public double computeBranchLogPSlope(Node node, double branchLength) {
+        double distance = this.computeDistance(node, branchLength);
+        this.computeTransitionProbabilities(distance, this.transitionProbabilities);
+        int[] counts = this.nodeStates.getTransitionCounts(node);
+
+        double slope = 0.0;
+        for (int i = 0; i < counts.length; i++) {
+            if (counts[i] != 0) {
+                int from = i / this.numStates;
+                int to = i % this.numStates;
+
+                double derivative = 0.0;
+                for (int k = 0; k < this.numStates; k++) {
+                    derivative += this.eigenVectors[from * this.numStates + k] * this.eigenValues[k]
+                            * (this.scaledExponentials[k] + 1.0) * this.inverseEigenVectors[k * this.numStates + to];
+                }
+                slope += counts[i] * derivative / this.transitionProbabilities[i];
+            }
+        }
+        return slope * this.computeDistance(node, 1.0);
     }
 
     /**
@@ -356,10 +402,31 @@ public class GeneticPrior extends GenericTreeLikelihood {
      * branches that a proposal considers but that are not in the tree.
      */
     public void getTransitionProbabilities(Node node, double branchLength, double[] transitionProbabilities) {
-        double distance = this.categoryRate * this.branchRateModel.getRateForBranch(node) * branchLength;
+        this.computeTransitionProbabilities(this.computeDistance(node, branchLength), transitionProbabilities);
+    }
 
+    /**
+     * Returns the expected number of substitutions per site along a branch of the given length
+     * at the rate of the branch above the given node, using the model as of the last calculation or refresh.
+     */
+    public double computeDistance(Node node, double branchLength) {
+        return this.categoryRate * this.branchRateModel.getRateForBranch(node) * branchLength;
+    }
+
+    /** Returns a number that changes whenever the evolutionary model, as of the last calculation or refresh, has changed. */
+    public int getModelVersion() {
+        return this.modelVersion;
+    }
+
+    /** Writes the transition probabilities of the given distance in substitutions per site into the given array, as above. */
+    public void computeTransitionProbabilities(double distance, double[] transitionProbabilities) {
         for (int k = 0; k < this.numStates; k++) {
-            this.scaledExponentials[k] = computeExpm1(this.eigenValues[k] * distance);
+            this.scaledExponentials[k] = Math.expm1(this.eigenValues[k] * distance);
+        }
+
+        if (this.numStates == 4) {
+            this.computeNucleotideTransitionProbabilities(transitionProbabilities);
+            return;
         }
 
         for (int from = 0; from < this.numStates; from++) {
@@ -375,20 +442,26 @@ public class GeneticPrior extends GenericTreeLikelihood {
     }
 
     /**
-     * Computes exp(x) - 1 without cancellation. Math.expm1 is accurate too, but several times
-     * slower than Math.exp, which the JVM intrinsifies. Near zero, the Taylor series is accurate
-     * to machine precision after a few terms, and elsewhere the subtraction loses nothing.
+     * Computes the transition probabilities as above for four states, with the loops written
+     * out for a size that the compiler knows, as this runs for every branch a proposal scores.
      */
-    private static double computeExpm1(double x) {
-        if (Math.abs(x) >= 0.5) {
-            return Math.exp(x) - 1.0;
-        }
+    private void computeNucleotideTransitionProbabilities(double[] transitionProbabilities) {
+        double[] vectors = this.eigenVectors;
+        double[] inverseVectors = this.inverseEigenVectors;
+        double[] exponentials = this.scaledExponentials;
 
-        double sum = TAYLOR_COEFFICIENTS[TAYLOR_COEFFICIENTS.length - 1];
-        for (int order = TAYLOR_COEFFICIENTS.length - 2; order >= 0; order--) {
-            sum = TAYLOR_COEFFICIENTS[order] + sum * x;
+        for (int from = 0; from < 4; from++) {
+            double weight0 = vectors[from * 4] * exponentials[0];
+            double weight1 = vectors[from * 4 + 1] * exponentials[1];
+            double weight2 = vectors[from * 4 + 2] * exponentials[2];
+            double weight3 = vectors[from * 4 + 3] * exponentials[3];
+
+            for (int to = 0; to < 4; to++) {
+                transitionProbabilities[from * 4 + to] = (from == to ? 1.0 : 0.0)
+                        + weight0 * inverseVectors[to] + weight1 * inverseVectors[4 + to]
+                        + weight2 * inverseVectors[8 + to] + weight3 * inverseVectors[12 + to];
+            }
         }
-        return x * (1.0 + x * sum);
     }
 
     /**

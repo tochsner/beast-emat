@@ -46,6 +46,30 @@ public final class SubstitutionProcess {
         this.geneticPrior.getTransitionProbabilities(node, branchLength, transitionProbabilities);
     }
 
+    /** Returns the distance in substitutions per site of the branch above the given non-root node. */
+    public double computeDistance(Node node) {
+        this.checkUpdated();
+        return this.geneticPrior.computeDistance(node, node.getParent().getHeight() - node.getHeight());
+    }
+
+    /** Returns the distance in substitutions per site of a branch of the given length at the rate of the branch above the given node. */
+    public double computeDistance(Node node, double branchLength) {
+        this.checkUpdated();
+        return this.geneticPrior.computeDistance(node, branchLength);
+    }
+
+    /** Writes the transition probabilities of the given distance into the given array, row-major by the state at the top. */
+    public void computeTransitionProbabilities(double distance, double[] transitionProbabilities) {
+        this.checkUpdated();
+        this.geneticPrior.computeTransitionProbabilities(distance, transitionProbabilities);
+    }
+
+    /** Returns a number that changes whenever the model has changed since the last update. */
+    public int getModelVersion() {
+        this.checkUpdated();
+        return this.geneticPrior.getModelVersion();
+    }
+
     public double[] getFrequencies() {
         this.checkUpdated();
         return this.frequencies;

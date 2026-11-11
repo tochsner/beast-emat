@@ -9,7 +9,6 @@ import beast.base.inference.Operator;
 import beast.base.inference.State;
 import beast.base.util.Randomizer;
 import esat.EsatFixture;
-import esat.operators.topology.StateDirectedSprOperator.Neighbourhood;
 import esat.prior.GeneticPrior;
 import esat.state.BranchChanges;
 import esat.state.NodeStates;
@@ -58,17 +57,12 @@ public class StateDirectedSprOperatorTest {
 
     @Test
     public void testProposalsKeepPriorConsistentOnTree() {
-        this.runConsistencyChain(EsatFixture.create(NEWICK, SEQUENCES), Neighbourhood.RADIUS);
+        this.runConsistencyChain(EsatFixture.create(NEWICK, SEQUENCES));
     }
 
     @Test
     public void testProposalsKeepPriorConsistentOnIncrementalStoreTree() {
-        this.runConsistencyChain(EsatFixture.create(EsatFixture.parseIncrementalTree(NEWICK), SEQUENCES), Neighbourhood.RADIUS);
-    }
-
-    @Test
-    public void testDifferenceNeighbourhoodKeepsPriorConsistent() {
-        this.runConsistencyChain(EsatFixture.create(EsatFixture.parseIncrementalTree(NEWICK), SEQUENCES), Neighbourhood.DIFFERENCES);
+        this.runConsistencyChain(EsatFixture.create(EsatFixture.parseIncrementalTree(NEWICK), SEQUENCES));
     }
 
     /**
@@ -76,13 +70,13 @@ public class StateDirectedSprOperatorTest {
      * random. After every step, the transition counts must match the states and the
      * incremental prior a computation from scratch, and a restore must bring back the tree.
      */
-    private void runConsistencyChain(EsatFixture fixture, Neighbourhood neighbourhood) {
+    private void runConsistencyChain(EsatFixture fixture) {
         Randomizer.setSeed(11);
         this.initialiseSampledStates(fixture);
         Tree tree = fixture.tree();
 
         // a low annealing power spreads the proposals over more branches
-        StateDirectedSprOperator operator = this.createOperator(fixture, 0.2, 0.3, false, neighbourhood);
+        StateDirectedSprOperator operator = this.createOperator(fixture, 0.2, 0.3, false);
         State state = this.createState(fixture);
         double logP = fixture.geneticPrior().calculateLogP();
         state.setEverythingDirty(false);
@@ -145,21 +139,17 @@ public class StateDirectedSprOperatorTest {
      * other than the root, so they must agree on the mean tree length and the frequencies of
      * the most frequent topologies, within the Monte Carlo error from batch means.
      */
-    @Test
-    public void testAgreesWithUniformSpr() {
-        this.assertAgreesWithUniformSpr(Neighbourhood.RADIUS);
-    }
-
     /**
-     * The difference neighbourhood depends on the attachment point, which the Hastings ratio
-     * corrects through the probability of drawing the same limit in the reverse move.
+     * The neighbourhood depends on the attachment point, which the Hastings ratio corrects
+     * through the probability of drawing the same limit in the reverse move, and the scores only
+     * shape the proposal, so the move has to agree with the uniform SPR.
      */
     @Test
-    public void testDifferenceNeighbourhoodAgreesWithUniformSpr() {
-        this.assertAgreesWithUniformSpr(Neighbourhood.DIFFERENCES);
+    public void testAgreesWithUniformSpr() {
+        this.assertAgreesWithUniformSpr();
     }
 
-    private void assertAgreesWithUniformSpr(Neighbourhood neighbourhood) {
+    private void assertAgreesWithUniformSpr() {
         int numSteps = 200000;
 
         Randomizer.setSeed(12);
@@ -174,7 +164,7 @@ public class StateDirectedSprOperatorTest {
                 "weight", 1.0
         );
         Chain referenceChain = this.runPosteriorChain(fixture, uniformOperator, numSteps, 14);
-        Chain operatorChain = this.runPosteriorChain(fixture, this.createOperator(fixture, 0.01, 0.8, false, neighbourhood), numSteps, 13);
+        Chain operatorChain = this.runPosteriorChain(fixture, this.createOperator(fixture, 0.01, 0.8, false), numSteps, 13);
 
         this.assertMeansAgree(referenceChain.treeLengths(), operatorChain.treeLengths(), "tree length");
         for (String topology : this.findMostFrequentTopologies(referenceChain, 3)) {
@@ -301,25 +291,24 @@ public class StateDirectedSprOperatorTest {
     /* Weight */
 
     @Test
-    public void testWeightScalesWithSqrtNumTips() {
+    public void testWeightScalesWithLogNumTips() {
         EsatFixture fixture = EsatFixture.create(NEWICK, SEQUENCES);
-        assertEquals(1.0, this.createOperator(fixture, 0.01, 0.8, false, Neighbourhood.RADIUS).getWeight(), 1e-12);
-        assertEquals(Math.sqrt(6.0), this.createOperator(fixture, 0.01, 0.8, true, Neighbourhood.RADIUS).getWeight(), 1e-12);
+        assertEquals(1.0, this.createOperator(fixture, 0.01, 0.8, false).getWeight(), 1e-12);
+        assertEquals(Math.log(6.0), this.createOperator(fixture, 0.01, 0.8, true).getWeight(), 1e-12);
     }
 
     /* Fixtures */
 
-    private StateDirectedSprOperator createOperator(EsatFixture fixture, double fullExplorationProbability, double annealing, boolean scaleWeight, Neighbourhood neighbourhood) {
+    private StateDirectedSprOperator createOperator(EsatFixture fixture, double fullExplorationProbability, double annealing, boolean scaleWeight) {
         StateDirectedSprOperator operator = new StateDirectedSprOperator();
         operator.initByName(
                 "tree", fixture.tree(),
                 "nodeStates", fixture.nodeStates(),
                 "geneticPrior", fixture.geneticPrior(),
                 "fullExplorationProbability", fullExplorationProbability,
-                "neighbourhood", neighbourhood,
                 "windowProbability", 0.3,
                 "annealing", annealing,
-                "scaleWeightBySqrtNumTips", scaleWeight,
+                "scaleWeightByLogNumTips", scaleWeight,
                 "weight", 1.0
         );
         return operator;

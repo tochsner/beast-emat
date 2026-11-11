@@ -108,5 +108,6 @@ open module my.beast.example {
             esat.operators.states.PatternStateGibbsOperator,
             esat.operators.topology.StateDirectedSprOperator,
             esat.operators.nodetimes.RatioScaleOperator,
-            esat.operators.nodetimes.RootRatioScaleOperator;
+            esat.operators.nodetimes.RootRatioScaleOperator,
+            esat.operators.nodetimes.BatchNodeDisplacementOperator;
 }

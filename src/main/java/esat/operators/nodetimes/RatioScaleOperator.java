@@ -168,7 +168,8 @@ public class RatioScaleOperator extends TreeOperator {
         }
 
         double oldestTipHeight = Double.NEGATIVE_INFINITY;
-        for (Node child : node.getChildren()) {
+        for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
+            Node child = node.getChild(childIndex);
             this.collectSubtree(child);
             oldestTipHeight = Math.max(oldestTipHeight, this.oldestTipHeights[child.getNr()]);
         }

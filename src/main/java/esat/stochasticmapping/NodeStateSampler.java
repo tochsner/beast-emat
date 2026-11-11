@@ -218,7 +218,8 @@ public class NodeStateSampler {
         if (!node.isRoot()) {
             this.neighbourChanges[numNeighbours++] = this.nodeStates.getChanges(node);
         }
-        for (Node child : node.getChildren()) {
+        for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
+            Node child = node.getChild(childIndex);
             this.neighbourChanges[numNeighbours++] = this.nodeStates.getChanges(child);
         }
         return numNeighbours;

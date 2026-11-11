@@ -1,6 +1,7 @@
 package esat.operators.nodetimes;
 
 import beast.base.evolution.alignment.Sequence;
+import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.State;
@@ -56,6 +57,55 @@ public class RatioScaleOperatorTest {
         this.assertFixedStatesMatchExactPosterior(true, true);
     }
 
+    /**
+     * The batch operator draws from an approximation of the genetic prior, which is either its tangent at the midpoint
+     * of each range or a piecewise exponential interpolation, and corrects for the deviation, so it keeps the exact
+     * posterior, with and without the learned approximation of the tree prior. The root moves with the root operator.
+     */
+    @Test
+    public void testTangentBatchNodeDisplacementMatchesExactPosterior() {
+        this.assertBatchMatchesExactPosterior(false, false);
+    }
+
+    @Test
+    public void testLearnedTangentBatchNodeDisplacementMatchesExactPosterior() {
+        this.assertBatchMatchesExactPosterior(true, false);
+    }
+
+    @Test
+    public void testInterpolatedBatchNodeDisplacementMatchesExactPosterior() {
+        this.assertBatchMatchesExactPosterior(false, true);
+    }
+
+    @Test
+    public void testLearnedInterpolatedBatchNodeDisplacementMatchesExactPosterior() {
+        this.assertBatchMatchesExactPosterior(true, true);
+    }
+
+    private void assertBatchMatchesExactPosterior(boolean learnTreePrior, boolean interpolate) {
+        Randomizer.setSeed(34);
+        EsatFixture fixture = EsatFixture.create(NEWICK, SEQUENCES);
+        SubstitutionProcess substitutionProcess = new SubstitutionProcess(fixture.geneticPrior());
+        substitutionProcess.update();
+        GlobalStateSampler.Sample sample = new GlobalStateSampler(fixture.nodeStates(), substitutionProcess).sample();
+        fixture.nodeStates().initialiseStates(sample.rootSequence(), List.of(sample.changesAtNode()));
+
+        double[] coarseMeans = this.integrateMeanHeights(fixture, substitutionProcess, NUM_GRID_POINTS);
+        double[] fineMeans = this.integrateMeanHeights(fixture, substitutionProcess, 2 * NUM_GRID_POINTS);
+
+        BatchNodeDisplacementOperator batchOperator = new BatchNodeDisplacementOperator();
+        batchOperator.initByName("tree", fixture.tree(), "geneticPrior", fixture.geneticPrior(), "batchSize", 2, "optimise", false,
+                "learnTreePrior", learnTreePrior, "interpolateGeneticPrior", interpolate, "treePriorWarmUp", 200, "weight", 1.0);
+        RootRatioScaleOperator rootOperator = new RootRatioScaleOperator();
+        rootOperator.initByName("tree", fixture.tree(), "optimise", false, "scaleFactor", 0.5, "weight", 1.0);
+
+        double[] sampledMeans = this.runChain(fixture, new TreeOperator[]{rootOperator, rootOperator, batchOperator, batchOperator});
+
+        for (int i = 0; i < sampledMeans.length; i++) {
+            assertEquals(2.0 * fineMeans[i] - coarseMeans[i], sampledMeans[i], 0.01);
+        }
+    }
+
     private void assertFixedStatesMatchExactPosterior(boolean optimise) {
         this.assertFixedStatesMatchExactPosterior(optimise, false);
     }
@@ -83,11 +133,11 @@ public class RatioScaleOperatorTest {
         // a small fixed kernel mixes slowly on this posterior, so the untuned chain starts wider
         RatioScaleOperator operator = new RatioScaleOperator();
         operator.initByName("tree", fixture.tree(), "optimise", optimise, "scaleFactor", 0.5, "weight", 1.0);
-        RatioScaleOperator[] operators = {operator};
+        TreeOperator[] operators = {operator};
         if (withRootOperator) {
             RootRatioScaleOperator rootOperator = new RootRatioScaleOperator();
             rootOperator.initByName("tree", fixture.tree(), "optimise", optimise, "scaleFactor", 0.5, "weight", 1.0);
-            operators = new RatioScaleOperator[]{rootOperator, rootOperator, rootOperator, rootOperator, operator};
+            operators = new TreeOperator[]{rootOperator, rootOperator, rootOperator, rootOperator, operator};
         }
         double[] sampledMeans = this.runChain(fixture, operators);
 
@@ -197,7 +247,7 @@ public class RatioScaleOperatorTest {
      * root height h, whose every step uses one of the given operators drawn uniformly, and
      * returns the mean heights of the cherry, the middle node and the root after the burn-in.
      */
-    private double[] runChain(EsatFixture fixture, RatioScaleOperator[] operators) {
+    private double[] runChain(EsatFixture fixture, TreeOperator[] operators) {
         Tree tree = fixture.tree();
         State state = new State();
         state.initByName("stateNode", tree, "stateNode", fixture.nodeStates());
@@ -210,7 +260,7 @@ public class RatioScaleOperatorTest {
         double[] sumHeights = new double[3];
         for (int i = 0; i < NUM_BURNIN + NUM_SAMPLES; i++) {
             state.store(i);
-            RatioScaleOperator operator = operators[Randomizer.nextInt(operators.length)];
+            TreeOperator operator = operators[Randomizer.nextInt(operators.length)];
             double logHastingsRatio = operator.proposal();
 
             boolean isAccepted = false;

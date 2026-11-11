@@ -363,7 +363,7 @@ public class NodeStatesTest {
         return nodeNrs;
     }
 
-    /** Only tips whose states were set directly are marked for a compatibility check, and every tip after a replacement of all states. */
+    /** Only tips whose states were set directly are marked for a compatibility check, and every tip after a replacement of all states. A change of the parent of a tip keeps its state. */
     @Test
     public void testPendingCompatibilityChecks() {
         // the states are clean after the set up
@@ -381,7 +381,13 @@ public class NodeStatesTest {
         assertEquals(0, this.nodeStates.getCheckNodeCount());
 
         this.nodeStates.setBranchChanges(tipA, this.nodeStates.getChanges(tipA), this.operator);
-        assertEquals(1, this.nodeStates.getCheckNodeCount());
+        assertEquals(0, this.nodeStates.getCheckNodeCount());
+        this.nodeStates.setEverythingDirty(false);
+
+        // marking everything dirty does not change any state, so no tip needs a check
+        this.nodeStates.setEverythingDirty(true);
+        assertFalse(this.nodeStates.isEveryCheckPending());
+        assertEquals(0, this.nodeStates.getCheckNodeCount());
         this.nodeStates.setEverythingDirty(false);
 
         int[][] sequences = this.drawSequences();
