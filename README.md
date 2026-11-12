@@ -13,13 +13,13 @@ Running time until an ESS of at least 200 is reached on all parameters. Median f
 | RSV A                     | 215       | 0.0127                   | 0.0303           | 6min     |
 | RSV B                     | 390       | 0.0082                   | 0.0323           | 38min     |
 | Adenovirus B1             | 735       | 0.0684                   | 0.0799           | 9h 33min |
-| HMPV                      | 986       | 0.1135                   | 0.3275           | \~3d     |
+| HMPV                      | 986       | 0.1135                   | 0.3275           | 78h 23min     |
 | Ebola                     | 1610      | 0.0009                   | 0.0162           | 53min  |
 | Influenza A (H1N1)        | 3746      | 0.0185                   | 0.0006           | 3h 39min  |
 | Influenza A (H3N2)        | 4036      | 0.0115                   | 0.0186           | 4h 31min  |
 | SARS-CoV-2 (2020, COG-UK) | 757       | 0.0002                   | 0.0181           | 12min     |
 | SARS-CoV-2 (2020, COG-UK) | 5000      | 0.0003                   | 0.0134           | 4h 43min  |
-| SARS-CoV-2 (2024 - 2026)  | 5800      | 0.0012                   | 0.0480           | 19h 32min |
+| SARS-CoV-2 (2024 - 2026)  | 5800      | 0.0012                   | 0.0480           | 19h 21min |
 | SARS-CoV-2 (2020, COG-UK) | 10000     | 0.0003                   | 0.0135           | 23h 44min |
 
 

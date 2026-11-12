@@ -8,6 +8,7 @@
         <provider classname="esat.initialisation.SampledStatesInitialiser"/>
         <provider classname="esat.initialisation.ParsimonyStatesInitialiser"/>
         <provider classname="esat.operators.states.PatternStateGibbsOperator"/>
+        <provider classname="esat.operators.states.MissingCladeStateGibbsOperator"/>
         <provider classname="esat.operators.topology.StateDirectedSprOperator"/>
         <provider classname="esat.operators.nodetimes.RatioScaleOperator"/>
         <provider classname="esat.operators.nodetimes.RootRatioScaleOperator"/>

@@ -122,6 +122,7 @@
             <operatorAdapter id="NodeStatesCountAdapter.{{ID}}" spec="esat.adapters.NodeStatesCountAdapter" nodeStates="@nodeStates.{{ID}}"/>
             <referenceAdapter id="TreeLengthAdapter.{{ID}}" spec="adapters.TreeLengthAdapter" tree="@Tree.t:{{ID}}"/>
             <operator id="PatternStateGibbsOperator.{{ID}}" spec="esat.operators.states.PatternStateGibbsOperator" nodeStates="@nodeStates.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" patternSelection="PARSIMONY" weight="100.0"/>
+            <operator id="MissingCladeStateGibbsOperator.{{ID}}" spec="esat.operators.states.MissingCladeStateGibbsOperator" nodeStates="@nodeStates.{{ID}}" geneticPrior="@geneticPrior.{{ID}}" weight="20.0"/>
         </operator>
         <operator id="ClockIntervalScaleOperator.{{ID}}" spec="beast.base.spec.evolution.operator.IntervalScaleOperator" tree="@Tree.t:{{ID}}" weight="10.0">
             <down idref="clockRate.c:{{ID}}"/>
