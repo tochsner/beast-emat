@@ -58,6 +58,7 @@ open module my.beast.example {
     exports emat.state;
     exports emat.stochasticmapping;
     exports emat.tree;
+    exports esat.adapters;
     exports esat.helper;
     exports esat.initialisation;
     exports esat.operators.nodetimes;
@@ -110,5 +111,6 @@ open module my.beast.example {
             esat.operators.nodetimes.RatioScaleOperator,
             esat.operators.nodetimes.RootRatioScaleOperator,
             esat.operators.nodetimes.BatchNodeDisplacementOperator,
-            esat.operators.nodetimes.RootScaleOperator;
+            esat.operators.nodetimes.RootScaleOperator,
+            esat.adapters.NodeStatesCountAdapter;
 }

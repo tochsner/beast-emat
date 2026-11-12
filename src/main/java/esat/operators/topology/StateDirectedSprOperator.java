@@ -25,7 +25,8 @@ import java.util.Arrays;
         "as changes under a Jukes-Cantor model, with the rate and the distances of the evolutionary model. " +
         "The missing sites of a tip, and its ambiguous sites among the states compatible with its data, never count as differences. " +
         "Most proposals only consider the branches connected to the current attachment point through branches at which " +
-        "the subtree differs from both ends at few sites. " +
+        "the subtree differs from both ends at few sites, and the branches within a geometric radius of it that are within " +
+        "that number of sites. " +
         "The height of the parent on the new branch is drawn from a Beta distribution given by the changes " +
         "above and below the parent if it took that majority state. The root is never changed.")
 public class StateDirectedSprOperator extends TreeOperator {
@@ -33,7 +34,7 @@ public class StateDirectedSprOperator extends TreeOperator {
     final public Input<NodeStates> nodeStatesInput = new Input<>("nodeStates", "the node states, of which the move redraws those of the parent of the pruned subtree", Input.Validate.REQUIRED);
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model", Input.Validate.REQUIRED);
     final public Input<Double> fullExplorationProbabilityInput = new Input<>("fullExplorationProbability", "the probability of considering every branch instead of the neighbourhood of the current attachment point", 0.01);
-    final public Input<Double> windowProbabilityInput = new Input<>("windowProbability", "the parameter q of the size of the neighbourhood, which grows by j geometric with probability q^j (1 - q)", 0.5);
+    final public Input<Double> windowProbabilityInput = new Input<>("windowProbability", "the parameter q of the size of the neighbourhood, which grows by j geometric with probability q^j (1 - q), and of the radius of branches around the current one that it always contains, which is drawn the same way", 0.5);
     final public Input<Double> annealingInput = new Input<>("annealing", "the power f to which the scores of the branches and the density of the height are raised, which makes the proposals less eager", 0.8);
     final public Input<Boolean> scaleWeightByLogNumTipsInput = new Input<>("scaleWeightByLogNumTips", "whether to scale the weight by the natural logarithm of the number of tips n, so that the operator is selected with weight * ln(n). Otherwise, the weight is used as given", false);
 
@@ -69,6 +70,17 @@ public class StateDirectedSprOperator extends TreeOperator {
     int[] explorationStamps;
     Node[] candidates;
     int numCandidates;
+
+    // per node: the exploration that added the branch above it to the candidates
+    int[] candidateStamps;
+
+    // the branches within the radius of the start of the last exploration, in breadth-first order with their distances, and the exploration that reached each of them
+    Node[] radiusNodes;
+    int[] radiusDistances;
+    int[] radiusStamps;
+
+    // the branches that meet the branch above a node at its top or bottom
+    final Node[] neighbours = new Node[6];
 
     // the scores of the candidates relative to the largest one, and their sum
     double[] candidateScores;
@@ -111,6 +123,10 @@ public class StateDirectedSprOperator extends TreeOperator {
         this.subtreeNumDifferences = new int[numNodes];
         this.explorationStamps = new int[numNodes];
         this.candidates = new Node[numNodes];
+        this.candidateStamps = new int[numNodes];
+        this.radiusNodes = new Node[numNodes];
+        this.radiusDistances = new int[numNodes];
+        this.radiusStamps = new int[numNodes];
         this.candidateScores = new double[numNodes];
         this.numSites = this.nodeStates.getAlignment().getSiteCount();
         this.numXDifferences = new int[numNodes];
@@ -151,10 +167,11 @@ public class StateDirectedSprOperator extends TreeOperator {
 
         boolean isFullExploration = Randomizer.nextDouble() < this.fullExplorationProbability;
         int limit = isFullExploration ? Integer.MAX_VALUE : this.drawLimit();
+        int radius = isFullExploration ? 0 : this.drawRadius();
 
         // draw the new branch and the new height of P on it
 
-        this.exploreBranches(this.sibling, limit);
+        this.exploreBranches(this.sibling, limit, radius);
         double logForwardTotalScore = this.computeLogTotalScore();
         Node newSibling = this.drawCandidate();
         double logForwardBranchProbability = this.logScores[newSibling.getNr()] - logForwardTotalScore;
@@ -182,7 +199,7 @@ public class StateDirectedSprOperator extends TreeOperator {
         // the reverse move draws the old branch and height from the new attachment point, whose scores are cached
 
         this.sibling = newSibling;
-        this.exploreBranches(newSibling, limit);
+        this.exploreBranches(newSibling, limit, radius);
         double logBackwardTotalScore = this.computeLogTotalScore();
         double logBackwardBranchProbability = this.logScores[oldSibling.getNr()] - logBackwardTotalScore;
         double logBackwardHeightDensity = this.computeLogHeightDensity(oldSibling, oldParentHeight);
@@ -226,6 +243,15 @@ public class StateDirectedSprOperator extends TreeOperator {
     }
 
     /**
+     * Draws the radius of a local exploration from the same geometric distribution as the number of additional
+     * differences of the limit, independently of it. The reverse move draws the same
+     * radius with the same probability, so it does not enter the Hastings ratio.
+     */
+    private int drawRadius() {
+        return this.drawNumAdditionalSteps();
+    }
+
+    /**
      * Returns the log ratio of the probabilities of drawing the limit of the reverse and of the
      * forward exploration. The reverse move has to draw the same limit from the new branch,
      * with j' = T - max(1, N'), which gives the factor q^(max(1, N) - max(1, N')). With q = 0,
@@ -249,11 +275,16 @@ public class StateDirectedSprOperator extends TreeOperator {
      * which form a connected part of the pruned tree around its root. The limit is the number
      * of sites at which X may differ from both ends of a candidate, where the exploration only
      * continues through candidates. The start must be within the limit. The neighbourhood is the
-     * same from every candidate with the same limit.
+     * same from every candidate with the same limit. With a positive radius, the branches
+     * within that many steps of the start are candidates as well if they are within the limit, which
+     * lets the exploration cross branches that are not. Such a branch is as far from the start as the start
+     * from it, so the neighbourhood stays the same from each of them.
      */
-    private void exploreBranches(Node start, int limit) {
+    private void exploreBranches(Node start, int limit, int radius) {
         if (this.explorationStamp == Integer.MAX_VALUE) {
             Arrays.fill(this.explorationStamps, 0);
+            Arrays.fill(this.candidateStamps, 0);
+            Arrays.fill(this.radiusStamps, 0);
             this.explorationStamp = 0;
         }
         this.explorationStamp++;
@@ -261,22 +292,70 @@ public class StateDirectedSprOperator extends TreeOperator {
 
         this.visitBranch(start, limit);
         for (int next = 0; next < this.numCandidates; next++) {
-            Node node = this.candidates[next];
-
-            // the branches meeting at the top, including the one above the top
-            Node top = this.getPrunedParent(node);
-            for (int childIndex = 0; childIndex < top.getChildCount(); childIndex++) {
-                Node child = top.getChild(childIndex);
-                this.visitBranch(this.getPrunedChild(child), limit);
+            int numNeighbours = this.collectNeighbours(this.candidates[next]);
+            for (int i = 0; i < numNeighbours; i++) {
+                this.visitBranch(this.neighbours[i], limit);
             }
-            if (!top.isRoot()) {
-                this.visitBranch(top, limit);
+        }
+
+        if (radius > 0) {
+            this.exploreRadius(start, limit, radius);
+        }
+    }
+
+    /**
+     * Collects the branches that meet the branch above the given node into the neighbours and returns their
+     * number: those below the top, which include the branch itself, the branch above the top, and those below the node.
+     */
+    private int collectNeighbours(Node node) {
+        int numNeighbours = 0;
+
+        Node top = this.getPrunedParent(node);
+        for (int childIndex = 0; childIndex < top.getChildCount(); childIndex++) {
+            this.neighbours[numNeighbours++] = this.getPrunedChild(top.getChild(childIndex));
+        }
+        if (!top.isRoot()) {
+            this.neighbours[numNeighbours++] = top;
+        }
+
+        for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
+            this.neighbours[numNeighbours++] = this.getPrunedChild(node.getChild(childIndex));
+        }
+        return numNeighbours;
+    }
+
+    /**
+     * Adds the branches within the given radius of the start to the candidates, if they are not yet
+     * candidates, are within the limit and have a top older than X. The walk to them may cross any branch with a top older than X.
+     */
+    private void exploreRadius(Node start, int limit, int radius) {
+        int numRadiusNodes = 0;
+        this.radiusStamps[start.getNr()] = this.explorationStamp;
+        this.radiusNodes[numRadiusNodes] = start;
+        this.radiusDistances[numRadiusNodes] = 0;
+        numRadiusNodes++;
+
+        for (int next = 0; next < numRadiusNodes; next++) {
+            Node node = this.radiusNodes[next];
+            if (this.candidateStamps[node.getNr()] != this.explorationStamp) {
+                this.scoreBranch(node);
+                if (this.subtreeNumDifferences[node.getNr()] <= limit) {
+                    this.addCandidate(node);
+                }
             }
 
-            // the branches meeting at the bottom
-            for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
-                Node child = node.getChild(childIndex);
-                this.visitBranch(this.getPrunedChild(child), limit);
+            if (this.radiusDistances[next] == radius) {
+                continue;
+            }
+            int numNeighbours = this.collectNeighbours(node);
+            for (int i = 0; i < numNeighbours; i++) {
+                Node neighbour = this.neighbours[i];
+                if (this.radiusStamps[neighbour.getNr()] != this.explorationStamp && this.getPrunedParent(neighbour).getHeight() > this.x.getHeight()) {
+                    this.radiusStamps[neighbour.getNr()] = this.explorationStamp;
+                    this.radiusNodes[numRadiusNodes] = neighbour;
+                    this.radiusDistances[numRadiusNodes] = this.radiusDistances[next] + 1;
+                    numRadiusNodes++;
+                }
             }
         }
     }
@@ -300,6 +379,11 @@ public class StateDirectedSprOperator extends TreeOperator {
             return;
         }
 
+        this.addCandidate(node);
+    }
+
+    private void addCandidate(Node node) {
+        this.candidateStamps[node.getNr()] = this.explorationStamp;
         this.candidates[this.numCandidates] = node;
         this.numCandidates++;
     }

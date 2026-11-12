@@ -89,6 +89,8 @@ public class NodeStates extends StateNode {
     // the stamp of the sites replaced by the current merge, and the buffers of its result
     private int[] siteMarks;
     private int siteStamp;
+    private int[] markedSites = new int[0];
+    private int numMarkedSites;
     private int[] mergeSites = new int[0];
     private int[] mergeFromStates = new int[0];
     private int[] mergeToStates = new int[0];
@@ -772,6 +774,9 @@ public class NodeStates extends StateNode {
         for (int i = 0; i < numSites; i++) {
             this.siteMarks[sites[i]] = this.siteStamp;
         }
+
+        this.markedSites = sites;
+        this.numMarkedSites = numSites;
     }
 
     private void checkAscending(int[] sites, int numSites) {
@@ -790,6 +795,10 @@ public class NodeStates extends StateNode {
      * given new changes, or the old changes themselves if the result is the same.
      */
     private BranchChanges mergeChangesAtMarkedSites(BranchChanges oldChanges, BranchChanges newChanges) {
+        if (this.isLookupCheaperThanMerge(oldChanges) && this.hasSameEntriesAtMarkedSites(oldChanges, newChanges)) {
+            return oldChanges;
+        }
+
         int maxSize = oldChanges.size() + newChanges.size();
         if (this.mergeSites.length < maxSize) {
             this.mergeSites = new int[2 * maxSize];
@@ -832,6 +841,38 @@ public class NodeStates extends StateNode {
             return oldChanges;
         }
         return BranchChanges.ofSorted(oldChanges.getNodeNr(), this.mergeSites, this.mergeFromStates, this.mergeToStates, size);
+    }
+
+    /** Returns whether binary searching every marked site in the old changes is cheaper than traversing them. */
+    private boolean isLookupCheaperThanMerge(BranchChanges oldChanges) {
+        int numBits = Integer.SIZE - Integer.numberOfLeadingZeros(oldChanges.size());
+        return (long) this.numMarkedSites * numBits < oldChanges.size();
+    }
+
+    /**
+     * Returns whether the old and the new changes list the same entries at the marked sites,
+     * without touching the other entries of the old changes. Returns false if the new changes
+     * have entries elsewhere, which the merge then rejects.
+     */
+    private boolean hasSameEntriesAtMarkedSites(BranchChanges oldChanges, BranchChanges newChanges) {
+        int j = 0;
+        for (int k = 0; k < this.numMarkedSites; k++) {
+            int site = this.markedSites[k];
+            int oldIndex = oldChanges.indexOfSite(site);
+            boolean hasNewChange = j < newChanges.size() && newChanges.getSite(j) == site;
+
+            if (hasNewChange) {
+                if (oldIndex < 0
+                        || oldChanges.getFrom(oldIndex) != newChanges.getFrom(j)
+                        || oldChanges.getTo(oldIndex) != newChanges.getTo(j)) {
+                    return false;
+                }
+                j++;
+            } else if (oldIndex >= 0) {
+                return false;
+            }
+        }
+        return j == newChanges.size();
     }
 
     private boolean areMergedEntriesEqual(BranchChanges changes, int size) {
