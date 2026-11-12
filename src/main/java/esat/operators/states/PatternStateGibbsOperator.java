@@ -29,7 +29,7 @@ public class PatternStateGibbsOperator extends Operator {
     final public Input<NodeStates> nodeStatesInput = new Input<>("nodeStates", "the node states to operate on", Input.Validate.REQUIRED);
     final public Input<GeneticPrior> geneticPriorInput = new Input<>("geneticPrior", "the genetic prior that defines the evolutionary model", Input.Validate.REQUIRED);
     final public Input<PatternSelection> patternSelectionInput = new Input<>("patternSelection", "the strategy for choosing the pattern: UNIFORM picks every pattern with the same probability, " +
-            "PARSIMONY proportional to its Fitch parsimony score on the UPGMA tree of the alignment plus the pseudo count", PatternSelection.UNIFORM, PatternSelection.values());
+            "PARSIMONY proportional to its Fitch parsimony score on the UPGMA tree of the alignment plus the pseudo count", PatternSelection.PARSIMONY, PatternSelection.values());
     final public Input<Double> pseudoCountInput = new Input<>("pseudoCount", "the weight added to the score of every pattern, so that patterns with a score of zero are also resampled. Not used by UNIFORM", 0.5);
     final public Input<Integer> maxNumSamplesInput = new Input<>("maxNumSamples", "the maximum number of sequences used to build the UPGMA tree for the parsimony scores. Larger alignments are uniformly subsampled", 1000);
 
